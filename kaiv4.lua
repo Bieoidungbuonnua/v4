@@ -2897,9 +2897,13 @@ spawn(function()
             task.wait(0.2)
             continue
         end
-        if matchState.main_job_id and matchState.main_job_id ~= game.JobId then
-            status("Joining matched Main server")
-            task.wait(1)
+        if matchState.main_job_id and matchState.main_job_id ~= "" and matchState.main_job_id ~= game.JobId then
+            local targetJobId = tostring(matchState.main_job_id)
+            status("Hopping to group server: " .. targetJobId:sub(1, 8) .. "...")
+            pcall(function()
+                ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", targetJobId)
+            end)
+            task.wait(5)  -- chờ teleport xử lý, tránh spam
             continue
         end
 
