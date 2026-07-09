@@ -1,36 +1,57 @@
-getgenv().Config = {
-    ["Team"] = "Marines",
-    ["Farm Fragments"] = { autoraid = false, autotyrant = false },
-    ["Gear"] = "A-B-B",
-    ["ChangeBestGear"] = true,
-    ["V3 Door Distance"] = 50,
-    ["API Base URL"] = "http://matrix.pikamc.vn:25932",
-    ["V3 Countdown"] = 6,
-    ["V3 File Poll"] = 0.10,
-    ["V3 Ready Freshness"] = 2.0,
-    ["V3 Require Different Races"] = true,
-    ["V3 Fire Count"] = 1,
-    ["V3 Fire Interval"] = 0.05,
-    ["Pair Temple Timeout"] = 35,
+-- ═════════════════════════════════════════════════════
+-- CONFIG — chỉnh tại đây khi dùng full source
+-- Khi dùng loadstring: set getgenv().Config TRƯỚC loadstring(), giá trị ở đây sẽ là fallback
+-- ═════════════════════════════════════════════════════
+local _SRC = {
+    ["Team"]                           = "Marines",
+    ["Farm Fragments"]                 = { autoraid = false, autotyrant = false },
+    ["Gear"]                           = "A-B-B",
+    ["ChangeBestGear"]                 = true,
+    ["V3 Door Distance"]               = 50,
+    ["FM_API"]                         = "",  -- trống = dùng URL mặc định; nhập URL khác để override
+    ["API Base URL"]                   = "http://mbasic7.pikamc.vn:25232",
+    ["V3 Countdown"]                   = 6,
+    ["V3 File Poll"]                   = 0.10,
+    ["V3 Ready Freshness"]             = 2.0,
+    ["V3 Require Different Races"]     = true,
+    ["V3 Fire Count"]                  = 1,
+    ["V3 Fire Interval"]               = 0.05,
+    ["Pair Temple Timeout"]            = 35,
     ["Pair Sticky Until Trial Complete"] = true,
-    ["Pair Release After Trial"] = true,
-    ["Pair Requeue Delay"] = 15,
-    ["Pair Force Temple Interval"] = 0.8,
-    ["Training Islands"] = { "Tiki Outpost", "Ice Cream Island", "Haunted Castle", "Great Tree", "Port Town", "Peanut Island" }
+    ["Pair Release After Trial"]       = true,
+    ["Pair Requeue Delay"]             = 15,
+    ["Pair Force Temple Interval"]     = 0.8,
+    ["LimitMainUpPerGroup"]            = 4,   -- tối đa main/group (max 10)
+    ["Training Islands"]               = { "Tiki Outpost", "Ice Cream Island", "Haunted Castle", "Great Tree", "Port Town", "Peanut Island" },
 }
+do
+    local _ext = getgenv().Config
+    if _ext then
+        -- loadstring mode: giá trị từ getgenv() ưu tiên, _SRC chỉ điền field còn thiếu
+        for k, v in pairs(_SRC) do
+            if _ext[k] == nil then _ext[k] = v end
+        end
+        getgenv().Config = _ext
+    else
+        -- full source mode: dùng _SRC trực tiếp
+        getgenv().Config = _SRC
+    end
+end
 
--- ============================================================
---   CẤU HÌNH GROUP HOP
---   Soluonggroup  = số group chạy song song tối đa
---   Group-1       = tên config group dùng (lookup Namegroup-...)
---   Namegroup-X   = danh sách 2 helper của group đó
--- ============================================================
+-- ConfigGroupHop — chỉnh tại đây khi dùng full source
+-- Khi dùng loadstring: set getgenv().ConfigGroupHop TRƯỚC loadstring() để override
+-- mỗi block = 1 nhóm | thêm/bật block = thêm/bớt nhóm
 getgenv().ConfigGroupHop = getgenv().ConfigGroupHop or {
-    ["Soluonggroup"] = 1,
-    ["Group-1"] = {"NhomA"},
-    ["Namegroup-NhomA"] = {"ohhheh284", "hibrohfbd"},
-    -- ["Group-2"] = {"NhomB"},
-    -- ["Namegroup-NhomB"] = {"helper3", "helper4"},
+    {
+        name    = "NhomA",
+        helpers = {"BrooklynnVort3xPrism", "StevePatton6141"},
+        hopfm   = {"BrooklynnVort3xPrism"},
+    },
+    {
+        name    = "NhomB",
+        helpers = {"Liam_Lion90", "AriaCod3Craft2017"},
+        hopfm   = {"Liam_Lion90"},
+    },
 }
 
 local HttpService = game:GetService("HttpService")
@@ -99,18 +120,6 @@ if not getgenv().Config then
         ["Gear"] = "A-B-B",
         ["Farm Fragments"] = { autoraid = false, autotyrant = true },
         ["V3 Door Distance"] = 50,
-        ["API Base URL"] = "http://localhost:3000",
-        ["V3 Countdown"] = 6,
-        ["V3 File Poll"] = 0.10,
-        ["V3 Ready Freshness"] = 2.0,
-        ["V3 Require Different Races"] = true,
-        ["V3 Fire Count"] = 1,
-        ["V3 Fire Interval"] = 0.05,
-        ["Pair Temple Timeout"] = 35,
-        ["Pair Sticky Until Trial Complete"] = true,
-        ["Pair Release After Trial"] = true,
-        ["Pair Requeue Delay"] = 15,
-        ["Pair Force Temple Interval"] = 0.8,
         ["Training Islands"] = { "Tiki Outpost", "Ice Cream Island", "Haunted Castle", "Great Tree", "Port Town", "Peanut Island" }
     }
 end
@@ -124,18 +133,7 @@ if not getgenv().Config["Gear"] or #getgenv().Config["Gear"] ~= 5 then
     getgenv().Config["Gear"] = getgenv().Config["Gear"] or "A-B-B"
 end
 
--- ============================================================
---   WHITELIST MAIN / HELP THEO USERNAME
---   Paste tên acc vào giữa [[ ]], MỖI TÊN 1 DÒNG
---   Không cần dấu phẩy, không cần ngoặc kép
---
---   QUAN TRỌNG: rawMainList có thể chứa NHIỀU tên (nhiều acc có thể
---   làm Main), nhưng chỉ acc đứng ĐẦU TIÊN trong list MÀ ĐANG CÓ MẶT
---   trong server mới được active làm Main thật. Các acc Main khác
---   (có tên trong whitelist nhưng không phải acc ưu tiên cao nhất
---   đang có mặt) sẽ tự lùi xuống đóng vai Help cho Main đang active,
---   tránh tình trạng 2 acc cùng nhận mình là Main.
--- ============================================================
+-- Whitelist main/help: rawMainList = nhiều acc main, ưu tiên acc đầu tiên có mặt.
 local isUper = false
 local isAlly = false
 local mainAccountName = ""
@@ -144,23 +142,23 @@ local isallies = {}
 
 local MainPriorityList = {}
 local HelpWhitelist = {}
+local HopFMWhitelist = {}  -- rỗng = tất cả đều được hop FM
 
 do
-    -- Helper whitelist lấy từ ConfigGroupHop: gộp tất cả Namegroup-* lại
-    -- Bất kỳ tên nào không có trong danh sách helper → 100% được coi là mainup
-    local ghConfig = getgenv().ConfigGroupHop or {}
-    local soluonggroup = tonumber(ghConfig["Soluonggroup"]) or 1
-
-    for i = 1, soluonggroup do
-        local groupKey      = "Group-" .. i
-        local groupNameList = ghConfig[groupKey] or {}
-        for _, groupName in ipairs(groupNameList) do
-            local helpersKey = "Namegroup-" .. groupName
-            for _, helperName in ipairs(ghConfig[helpersKey] or {}) do
-                helperName = tostring(helperName):gsub("^%s+", ""):gsub("%s+$", "")
-                if helperName ~= "" then
-                    HelpWhitelist[helperName] = true
-                end
+    -- Xây dựng HelpWhitelist và HopFMWhitelist từ ConfigGroupHop mới
+    -- Mỗi entry trong ConfigGroupHop là {name, helpers, hopfm}
+    local ghGroups = getgenv().ConfigGroupHop or {}
+    for _, grp in ipairs(ghGroups) do
+        if type(grp) == "table" then
+            -- Tất cả helpers vào HelpWhitelist
+            for _, h in ipairs(grp.helpers or {}) do
+                h = tostring(h):gsub("^%s+", ""):gsub("%s+$", "")
+                if h ~= "" then HelpWhitelist[h] = true end
+            end
+            -- Account được phép hop FM vào HopFMWhitelist
+            for _, name in ipairs(grp.hopfm or {}) do
+                name = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
+                if name ~= "" then HopFMWhitelist[name] = true end
             end
         end
     end
@@ -470,20 +468,25 @@ local v4Started = false
 function talktoonggianaodo()
     if v4Started then return end
     v4Started = true
-    local thua = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+    local ok, thua = pcall(function()
+        return CommF_:InvokeServer("RaceV4Progress", "Check")
+    end)
+    if not ok then v4Started = false; return end
     if thua == 1 then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
+        pcall(function() CommF_:InvokeServer("RaceV4Progress", "Check") end)
+        pcall(function() CommF_:InvokeServer("RaceV4Progress", "Begin") end)
     elseif thua == 2 then
+        local startAt = tick()
         repeat
-            task.wait()
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
-            topos(CFrame.new(3028, 2281, -7325))
+            task.wait(0.5)
+            pcall(function() CommF_:InvokeServer("RaceV4Progress", "Teleport") end)
+            pcall(function() topos(CFrame.new(3028, 2281, -7325)) end)
         until module:getdis(CFrame.new(28286.35546875, 14896.5078125, 102.62469482422)) <= 15
+            or tick() - startAt > 30  -- timeout 30s
     else
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+        pcall(function() CommF_:InvokeServer("RaceV4Progress", "Check") end)
         task.wait(1)
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
+        pcall(function() CommF_:InvokeServer("RaceV4Progress", "Continue") end)
     end
     v4Started = false
 end
@@ -1001,64 +1004,68 @@ end))
 _G.ShouldSendData = false
 local issobusy = false
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/SkibidiHub111/fast/refs/heads/main/.luau"))()
-loadstring(game:HttpGet("https://raw.githubusercontent.com/SkibidiHub111/luau/refs/heads/main/abcyzojeb"))()
+pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/SkibidiHub111/fast/refs/heads/main/.luau"))() end)
+pcall(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/SkibidiHub111/luau/refs/heads/main/abcyzojeb"))() end)
 
 local JOB_ID = game.JobId
 local USERNAME = Players.LocalPlayer.Name
 local readySent = false
 local abilityCooldown = 0
 
--- ============================================================
---   LOCAL GROUP (thay thế hệ thống ghép cặp qua server API)
---   matchState giờ luôn = 1 object cố định, không gọi API nữa.
---   Main = chính username trong MainWhitelist phía trên.
---   Help = tất cả username trong HelpWhitelist.
---   isallies đã được set sẵn từ block whitelist phía trên.
--- ============================================================
--- ============================================================
---   BIẾN GROUP (được gán bởi API server khi script execute)
--- ============================================================
+-- ─── LOCAL GROUP STATE (set từ ConfigGroupHop ngay khi load, không chờ API) ───
 local myGroupId           = ""
 local myGroupHelpers      = {}
 local myGroupMainUsername = mainAccountName
+
+-- Đọc group config và set local group ngay lập tức
+local function initLocalGroup()
+    if not (isUper or isAlly) then return end
+    local ghGroups = getgenv().ConfigGroupHop or {}
+    for _, grp in ipairs(ghGroups) do
+        if type(grp) ~= "table" or not grp.name then continue end
+        local helpers = grp.helpers or {}
+        -- Helper: check nếu mình thuộc nhóm này
+        if isAlly then
+            for _, h in ipairs(helpers) do
+                if tostring(h) == USERNAME then
+                    myGroupId = grp.name    -- ID = tên nhóm (NhomA, NhomB,...)
+                    myGroupHelpers = helpers
+                    myGroupMainUsername = mainAccountName
+                    return
+                end
+            end
+        end
+        -- Main: KHÔNG tự gán group tại đây!
+        -- Server sẽ assign dựa trên LimitMainUpPerGroup để phân phối đều
+        -- myGroupId sẽ được điền từ processSyncResponse sau khi API trả về
+    end
+end
+initLocalGroup()
+
 local matchState = {
-    assigned      = false,
-    group_id      = "",
-    main_username = mainAccountName,
-    main_job_id   = game.JobId,
-    helpers       = {},
-    all_in_job    = false,
+    assigned      = (myGroupId ~= ""),
+    group_id      = myGroupId,
+    main_username = myGroupMainUsername,
+    main_job_id   = game.JobId,  -- luôn init bằng jobId hiện tại (như old.lua)
+    helpers       = myGroupHelpers,
+    all_in_job    = true,
 }
+local lastHopAt     = 0
+local lastHopTarget = ""
+local currentFullMoon = false
+local pairAllInJobAt  = tick()
+local lastPairGroupId = myGroupId
+local SCRIPT_START_AT = tick()   -- dùng để block hop trong vài giây đầu
+local HOP_STARTUP_DELAY = 15     -- giây chờ trước khi cho phép hop
 
 task.spawn(function()
     while task.wait(2) do
         if getgenv().UpdateRoles then
             getgenv().UpdateRoles()
         end
-
-        -- Gán group qua API nếu chưa có và acc có role hợp lệ
-        if myGroupId == "" and (isUper or isAlly) then
-            pcall(assignToGroup)
-        end
-
-        if matchState then
-            local v4s = nil
-            pcall(function() v4s = getV4Status(true) end)
-            local needsIndependentWork = v4s and (v4s.needsTraining or v4s.needsPurchase)
-            local alreadyReady = v4s and (v4s.canTrial or v4s.complete)
-
-            if needsIndependentWork and not alreadyReady then
-                matchState.assigned = false
-            else
-                matchState.assigned = (myGroupId ~= "")
-            end
-            matchState.group_id      = myGroupId
-            matchState.main_username = myGroupMainUsername
-
-            local list = {}
-            for _, h in ipairs(myGroupHelpers) do table.insert(list, h) end
-            matchState.helpers = list
+        -- Re-init group nếu role thay đổi
+        if matchState and myGroupId == "" and (isUper or isAlly) then
+            initLocalGroup()
         end
     end
 end)
@@ -1069,10 +1076,9 @@ local handledRoundId = ""
 local lastReadyWrite = 0
 local currentTaskStatus = "starting"
 local pairAssignedAt = tick()
-local pairAllInJobAt = tick()
+-- pairAllInJobAt và lastPairGroupId đã khai báo trước task.spawn
 local pairTempleReadyAt = 0
 local lastTempleReadyCount = 0
-local lastPairGroupId = ""
 local localRequeueBlockUntil = 0
 local releasingGroup = false
 local gearClaimInProgress = false
@@ -1091,13 +1097,174 @@ local PAIR_RELEASE_AFTER_TRIAL = getgenv().Config["Pair Release After Trial"] ~=
 local PAIR_REQUEUE_DELAY = math.max(5, tonumber(getgenv().Config["Pair Requeue Delay"]) or 15)
 local PAIR_FORCE_TEMPLE_INTERVAL = math.max(0.25, tonumber(getgenv().Config["Pair Force Temple Interval"]) or 0.8)
 local V3_DOOR_DISTANCE = math.max(10, tonumber(getgenv().Config["V3 Door Distance"]) or 50)
-local API_BASE = tostring(getgenv().Config["API Base URL"] or "http://localhost:3000")
-local V3_COUNTDOWN = math.max(1, tonumber(getgenv().Config["V3 Countdown"]) or 6)
-local V3_FILE_POLL = math.max(0.05, tonumber(getgenv().Config["V3 File Poll"]) or 0.10)
+local API_BASE    = tostring(getgenv().Config["API Base URL"] or "http://localhost:3000")
+local FM_API_BASE = (function()
+    local _DEFAULT_FM_URL = "http://103.77.241.31:1901/server/api/moon?X-API-Key=trietgay_2mV0EbvgjwblbGTRxATml8RNDLgRR0l80wM5AM1M"
+    local cfgUrl = tostring(getgenv().Config["FM_API"] or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    -- Nếu config để trống → dùng URL gốc mặc định của script
+    -- Nếu config có nhập URL → dùng URL đó
+    return (cfgUrl ~= "") and cfgUrl or _DEFAULT_FM_URL
+end)()
+local V3_FILE_ROOT     = tostring(getgenv().Config["V3 File Folder"] or "KaitunV4Sync")
+
+local LIMIT_MAIN_PER_GROUP = math.max(1, math.min(10, tonumber(getgenv().Config["LimitMainUpPerGroup"]) or 4))
+
+-- ══ FM JOIN CACHE ══
+-- username-fmcache.json: lưu jobId đã join thành công
+-- Rewrite mỗi 3 phút (purge cũ) → tránh re-join sv đã full
+-- Mỗi entry có timestamp; nếu (now - ts) < 180s thì vẫn còn hiệu lực
+local FM_CACHE_PATH   = USERNAME .. "-fmcache.json"
+local FM_CACHE_EXPIRE = 180   -- 3 phút
+local fmJoinedCache   = {}    -- { [jobId] = timestamp }
+local lastFmCacheWriteAt = 0  -- lần cuối rewrite file
+
+local function saveFMCache()
+    if not FILE_SYNC_AVAILABLE then return end
+    pcall(function()
+        local now = math.floor(v3ServerNow() or os.time())
+        -- Purge entry cũ trước khi ghi
+        local fresh = {}
+        for jid, ts in pairs(fmJoinedCache) do
+            if now - ts < FM_CACHE_EXPIRE then fresh[jid] = ts end
+        end
+        fmJoinedCache = fresh
+        lastFmCacheWriteAt = now
+        safeWriteJson(FM_CACHE_PATH, { ts = now, entries = fresh })
+    end)
+end
+
+local function loadFMCache()
+    if not FILE_SYNC_AVAILABLE then return end
+    pcall(function()
+        local d = safeReadJson(FM_CACHE_PATH)
+        if type(d) ~= "table" or type(d.entries) ~= "table" then return end
+        local now = math.floor(v3ServerNow() or os.time())
+        for jid, ts in pairs(d.entries) do
+            if now - ts < FM_CACHE_EXPIRE then fmJoinedCache[jid] = ts end
+        end
+    end)
+end
+
+local function markFMJoined(jobId)
+    if not jobId or jobId == "" then return end
+    local now = math.floor(v3ServerNow() or os.time())
+    fmJoinedCache[jobId] = now
+    saveFMCache()
+end
+
+local function isFMCached(jobId)
+    local ts = fmJoinedCache[jobId]
+    if not ts then return false end
+    local now = math.floor(v3ServerNow() or os.time())
+    return (now - ts) < FM_CACHE_EXPIRE
+end
+
+-- Load cache ngay khi script khởi động
+pcall(loadFMCache)
+
+-- ══ FM SERVER FINDER ══
+-- Gọi FM_API để tìm server đang có Full Moon
+-- Ưu tiên: IsNight=true + player 3-7 (optimal) + chưa cached
+-- Fallback: 3+ player → bất kỳ IsNight server
+-- ClockTime priority đã bị bỏ
+local lastFmApiAt     = 0
+local lastFmApiResult = nil   -- cache kết quả để tránh gọi API liên tục
+local FM_API_INTERVAL = 10    -- gọi lại mỗi 10s
+local FM_HOP_DELAY    = 5     -- startup delay riêng cho FM hop
+
+local function findFMServer()
+    if FM_API_BASE == "" then return nil end
+    local r = req()
+    if not r then return nil end
+    local ok, res = pcall(function()
+        return r({ Url = FM_API_BASE, Method = "GET", Headers = {} })
+    end)
+    if not ok or not res or res.StatusCode ~= 200 then return nil end
+    local ok2, parsed = pcall(jsonDecode, res.Body)
+    if not ok2 or type(parsed) ~= "table" then return nil end
+
+    local servers = parsed.data or parsed
+    if type(servers) ~= "table" then return nil end
+
+    -- Lọc: IsNight=true + khác server hiện tại + chưa trong FM cache
+    local best37  = nil   -- 3-7 player (optimal)
+    local best3p  = nil   -- 3+ player (fallback)
+    local bestAny = nil   -- bất kỳ IsNight (fallback cuối)
+
+    for _, s in ipairs(servers) do
+        if type(s) ~= "table" then continue end
+        local jobId   = tostring(s.JobId or s.jobId or "")
+        local isNight = s.IsNight == true or s.isNight == true
+        if jobId == "" or jobId == game.JobId then continue end
+        if not isNight then continue end
+        if isFMCached(jobId) then continue end  -- bỏ qua sv đã join/thất bại
+
+        local playersStr  = tostring(s.Players or s.players or "0/12")
+        local playerCount = tonumber(playersStr:match("^(%d+)")) or 0
+
+        if playerCount >= 3 and playerCount <= 7 and not best37 then
+            best37 = jobId
+        end
+        if playerCount >= 3 and not best3p then
+            best3p = jobId
+        end
+        if not bestAny then
+            bestAny = jobId
+        end
+
+        if best37 and best3p and bestAny then break end
+    end
+
+    return best37 or best3p or bestAny
+end
+
+
+local V3_COUNTDOWN     = math.max(1, tonumber(getgenv().Config["V3 Countdown"]) or 6)
+local V3_FILE_POLL     = math.max(0.05, tonumber(getgenv().Config["V3 File Poll"]) or 0.10)
 local V3_READY_FRESHNESS = math.max(0.8, tonumber(getgenv().Config["V3 Ready Freshness"]) or 2.0)
 local V3_REQUIRE_DIFFERENT_RACES = getgenv().Config["V3 Require Different Races"] ~= false
-local V3_FIRE_COUNT = math.max(1, math.floor(tonumber(getgenv().Config["V3 Fire Count"]) or 1))
+local V3_FIRE_COUNT    = math.max(1, math.floor(tonumber(getgenv().Config["V3 Fire Count"]) or 1))
 local V3_FIRE_INTERVAL = math.max(0.03, tonumber(getgenv().Config["V3 Fire Interval"]) or 0.05)
+
+-- ══ FM SIGNAL (workspace file) ══
+-- Gắn kết workspace + API thành 1 luồng dữ liệu duy nhất
+-- Khi detect FM: ghi file này NGAY + gửi API tức thì
+-- Khi check hop: đọc file này TRƯỚC (cục bộ, nhanh) → API backup
+local FM_SIGNAL_PATH  = V3_FILE_ROOT .. "/fm_active.json"
+local FM_FRESH_SEC    = 20   -- stale sau 20s nếu không có ai update
+local lastApiSyncAt   = 0    -- timestamp lần cuối gửi API (trong main loop)
+local lastFmState     = false -- trạng thái FM lần kiểm tra trước
+local urgentSyncNeeded = false -- FM vừa đổi trạng thái → gửi API ngay
+
+local function writeFMSignal()
+    if not FILE_SYNC_AVAILABLE then return end
+    pcall(function()
+        safeWriteJson(FM_SIGNAL_PATH, {
+            username = USERNAME,
+            jobId    = game.JobId,
+            groupId  = myGroupId,
+            ts       = math.floor(v3ServerNow() or os.time()),
+        })
+    end)
+end
+
+local function clearFMSignal()
+    if not FILE_SYNC_AVAILABLE then return end
+    -- Ghi payload rỗng để overwrite (delfile không phải lúc nào cũng có)
+    pcall(function() safeWriteJson(FM_SIGNAL_PATH, { ts = 0, jobId = "", cleared = true }) end)
+end
+
+local function readFMSignal()
+    if not FILE_SYNC_AVAILABLE then return nil end
+    local ok, d = pcall(safeReadJson, FM_SIGNAL_PATH)
+    if not ok or type(d) ~= "table" then return nil end
+    if d.cleared then return nil end
+    local now = math.floor(v3ServerNow() or os.time())
+    local age = now - (tonumber(d.ts) or 0)
+    if age < 0 or age > FM_FRESH_SEC then return nil end  -- stale
+    return d
+end
+
 
 function req()
     return http_request or http and http.request or request or syn and syn.request
@@ -1117,9 +1284,8 @@ function getRole()
     return "none"
 end
 
--- ============================================================
---   STATUS API — thay thế hoàn toàn cơ chế workspace file sync
--- ============================================================
+-- ── STATUS API ──
+
 function apiPost(path, body)
     local r = req()
     if not r then return nil end
@@ -1159,49 +1325,45 @@ function apiGet(path)
     return nil
 end
 
+-- apiPostForced: blocking, không bị block bởi rate-limit nội bộ
+local function apiPostForced(path, body)
+    local r = req()
+    if not r then return nil end
+    local ok, result = pcall(function()
+        local response = r({
+            Url     = API_BASE .. path,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = jsonEncode(body)
+        })
+        if response and response.StatusCode == 200 then
+            local ok2, data = pcall(jsonDecode, response.Body)
+            if ok2 then return data end
+        end
+        return nil
+    end)
+    if ok then return result end
+    return nil
+end
+
 -- Phân tích ConfigGroupHop thành danh sách group để gửi lên API
 function parseGroupHopConfig()
-    local ghConfig    = getgenv().ConfigGroupHop or {}
-    local soluonggroup = tonumber(ghConfig["Soluonggroup"]) or 1
-    local groups      = {}
-    for i = 1, soluonggroup do
-        local groupKey      = "Group-" .. i
-        local groupNameList = ghConfig[groupKey] or {}
-        for _, groupName in ipairs(groupNameList) do
-            local helpersKey = "Namegroup-" .. groupName
-            local helpers    = ghConfig[helpersKey] or {}
+    local ghGroups = getgenv().ConfigGroupHop or {}
+    local groups   = {}
+    for _, grp in ipairs(ghGroups) do
+        if type(grp) == "table" and grp.name then
             table.insert(groups, {
-                id      = groupKey,
-                name    = groupName,
-                helpers = helpers
+                id      = grp.name,    -- ID = tên nhóm
+                name    = grp.name,
+                helpers = grp.helpers or {}
             })
         end
     end
-    return soluonggroup, groups
+    return #groups, groups
 end
 
--- Gán acc vào group qua API — gọi khi script load hoặc khi mất group
-function assignToGroup()
-    local role = getRole()
-    if role == "none" then return end
-    local soluonggroup, groups = parseGroupHopConfig()
-    local result = apiPost("/api/group/assign", {
-        username    = USERNAME,
-        role        = role,
-        soluonggroup = soluonggroup,
-        groups      = groups
-    })
-    if result and result.groupId then
-        myGroupId           = tostring(result.groupId)
-        myGroupHelpers      = result.helpers or {}
-        myGroupMainUsername = tostring(result.mainUsername or mainAccountName)
-        matchState.group_id      = myGroupId
-        matchState.main_username = myGroupMainUsername
-        matchState.helpers       = myGroupHelpers
-        matchState.assigned      = true
-        matchState.main_job_id   = tostring(result.mainJobId or game.JobId)
-    end
-end
+-- assignToGroup không còn cần thiết — sync loop /v4info xử lý
+function assignToGroup() end
 
 function resetLocalPairState()
     mainJobId        = game.JobId
@@ -1262,34 +1424,12 @@ function updateDynamicGroupConfig(response)
 end
 
 function refreshMatch()
-    -- Luôn đẩy status lên API
-    pcall(writeOwnDoorFile, false)
-
-    if myGroupId == "" then return matchState end
-
-    -- Kiểm tra xem ai trong group đang có Full Moon
-    -- Nếu có, toàn bộ (kể cả Main) hop về server đó
-    local moonData = apiGet("/api/group/" .. myGroupId .. "/fullmoon")
-    if moonData and moonData.found and moonData.jobId and moonData.jobId ~= "" then
-        local moonJobId = tostring(moonData.jobId)
-        -- Chỉ redirect nếu không phải chính mình đang có Full Moon
-        if tostring(moonData.username or "") ~= tostring(USERNAME) then
-            if matchState then matchState.main_job_id = moonJobId end
-            status("[Hop] Full Moon tại " .. tostring(moonData.username) .. " → joining")
-        end
-    elseif isAlly and myGroupMainUsername ~= "" and myGroupMainUsername ~= USERNAME then
-        -- Không ai có Full Moon → helper theo Main như cũ
-        local mainStatus = apiGet("/api/status/" .. myGroupMainUsername)
-        if mainStatus and mainStatus.jobId then
-            if matchState then matchState.main_job_id = tostring(mainStatus.jobId) end
-        end
-    end
-
+    -- matchState.main_job_id được cập nhật bởi sync loop bên dưới
     return matchState
 end
 
 function sendMainJob()
-    return refreshMatch()
+    return matchState
 end
 
 function getMainJob()
@@ -1297,24 +1437,202 @@ function getMainJob()
     if matchState and matchState.main_job_id and matchState.main_job_id ~= "" then
         return matchState.main_job_id
     end
-    if myGroupMainUsername ~= "" and myGroupMainUsername ~= USERNAME then
-        local mainStatus = apiGet("/api/status/" .. myGroupMainUsername)
-        if mainStatus and mainStatus.jobId then return tostring(mainStatus.jobId) end
-    end
     return mainJobId
 end
 
-task.spawn(function()
-    while task.wait(2) do
-        pcall(refreshMatch)
+-- ── SYNC LOOP (request duy nhất mỗi 3s) ──
+-- Gửi toàn bộ status lên API, nhận về group info + members status trong 1 response.
+-- Thay thế hoàn toàn: heartbeat + assignToGroup + refreshMatch + startup flush.
+local function buildGroupConfig()
+    local ghGroups = getgenv().ConfigGroupHop or {}
+    local groups   = {}
+    for _, grp in ipairs(ghGroups) do
+        if type(grp) == "table" and grp.name then
+            groups[#groups + 1] = {
+                id      = grp.name,    -- ID = tên nhóm (NhomA, NhomB,...)
+                name    = grp.name,
+                helpers = grp.helpers or {}
+            }
+        end
     end
+    return #groups, groups
+end
+
+local function processSyncResponse(resp)
+    if not resp then return end
+
+    -- Cập nhật myGroupId từ API response
+    -- Quan trọng cho MAIN accounts: server mới là nơi quyết định assign group
+    if resp.group and type(resp.group.id) == "string" and resp.group.id ~= "" then
+        if myGroupId ~= resp.group.id then
+            myGroupId = resp.group.id
+            -- Cập nhật helpers của group từ API
+            if type(resp.group.helpers) == "table" then
+                myGroupHelpers = resp.group.helpers
+            end
+            -- Cập nhật main của group (quan trọng cho helper accounts)
+            if isAlly and type(resp.group.mains) == "table" and resp.group.mains[1] then
+                myGroupMainUsername = tostring(resp.group.mains[1])
+            elseif isUper then
+                myGroupMainUsername = USERNAME
+            end
+            matchState.group_id = myGroupId
+            matchState.assigned = true
+        end
+    end
+
+    local accounts = resp.accounts or {}
+    local nowTs = math.floor(v3ServerNow() or os.time())
+    local FM_FRESH_SECONDS = 25  -- chỉ trust FM data nếu account update trong 25s qua
+
+    -- [1] Mình đang có FM → ở yên server hiện tại
+    if currentFullMoon then
+        matchState.main_job_id = game.JobId
+        return
+    end
+
+    -- [1b] FIX: Đang training hoặc cần mua upgrade → ở yên, không hop
+    local v4sSync = nil
+    pcall(function() v4sSync = getV4Status(false) end)
+    if v4sSync and (v4sSync.needsTraining or v4sSync.needsPurchase) then
+        matchState.main_job_id = game.JobId
+        return
+    end
+
+    -- [2] Kiểm tra group: ai đang có FM hoặc Near FM (fresh data)
+    local allNames = {myGroupMainUsername}
+    for _, h in ipairs(myGroupHelpers) do table.insert(allNames, h) end
+    for _, name in ipairs(allNames) do
+        if name ~= USERNAME then
+            local s = accounts[name]
+            if s and s.jobId and s.jobId ~= "" then
+                local age = nowTs - (tonumber(s.updatedAt) or 0)
+                if age >= 0 and age <= FM_FRESH_SECONDS then
+                    -- Full Moon: hop ngay
+                    if s.fullMoon == true then
+                        matchState.main_job_id = tostring(s.jobId)
+                        return
+                    end
+                    -- Near FM (isnight=true, chưa FM): hop vào sẵn để chờ
+                    if s.nearFM == true then
+                        matchState.main_job_id = tostring(s.jobId)
+                        return
+                    end
+                end
+            end
+        end
+    end
+
+    -- [3] Không ai có FM/Near FM (hoặc data stale) → ở yên
+    matchState.main_job_id = game.JobId
+end
+
+-- Build JSON array cho groups config gửi lên API
+local function groupsToJson()
+    local ghGroups = getgenv().ConfigGroupHop or {}
+    local parts    = {}
+    for _, grp in ipairs(ghGroups) do
+        if type(grp) ~= "table" or not grp.name then continue end
+        local hParts = {}
+        for _, h in ipairs(grp.helpers or {}) do
+            hParts[#hParts + 1] = '"' .. tostring(h) .. '"'
+        end
+        parts[#parts + 1] = string.format(
+            '{"id":"%s","name":"%s","helpers":[%s]}',
+            grp.name, grp.name, table.concat(hParts, ",")
+        )
+    end
+    return #parts, "[" .. table.concat(parts, ",") .. "]"
+end
+
+-- sendSync: build full status JSON thủ công + gửi thẳng, không dùng jsonEncode
+-- includeGroups=true khi chưa có group (cần server assign)
+local function sendSync(includeGroups)
+    local r = req()
+    if not r then return nil end
+
+    local v4s = nil
+    pcall(function() v4s = getV4Status(false) end)
+    local frags = 0
+    pcall(function() frags = tonumber(Players.LocalPlayer.Data.Fragments.Value) or 0 end)
+    local race = ""
+    pcall(function() race = tostring(Players.LocalPlayer.Data.Race.Value) end)
+    local doorState = { alive = true, nearDoor = false, timerVisible = false, distance = math.huge }
+    pcall(function() doorState = localDoorState() end)
+
+    local doorDist = (not doorState.distance or doorState.distance == math.huge)
+        and -1 or math.floor(doorState.distance * 100) / 100
+
+    local function b(v) return v and "true" or "false" end
+    local function n(v) return tostring(tonumber(v) or 0) end
+
+    local isNightLocal = false
+    pcall(function() isNightLocal = isnight() end)
+    local nearFM = isNightLocal and not currentFullMoon
+
+    local body = string.format(
+        '{"v":1,"username":"%s","role":"%s","groupId":"%s","placeId":"%s","jobId":"%s",' ..
+        '"fullMoon":%s,"nearFM":%s,"alive":%s,"ready":%s,"race":"%s",' ..
+        '"canTrial":%s,"needsTraining":%s,"needsPurchase":%s,"complete":%s,' ..
+        '"energy":%s,"transformed":%s,"fragments":%s,' ..
+        '"doorDistance":%s,"timerVisible":%s,' ..
+        '"updatedAt":%d,"firedRound":"%s"}',
+        tostring(USERNAME or ""),
+        tostring(getRole() or "none"),
+        tostring(currentGroupId() or ""),
+        tostring(game.PlaceId),
+        tostring(game.JobId),
+        b(currentFullMoon), b(nearFM), b(doorState.alive), b(readySent),
+        race,
+        b(v4s and v4s.canTrial),
+        b(v4s and v4s.needsTraining),
+        b(v4s and v4s.needsPurchase),
+        b(v4s and v4s.complete),
+        n(v4s and v4s.energy), b(v4s and v4s.transformed),
+        n(frags), n(doorDist),
+        b(doorState.timerVisible),
+        math.floor(v3ServerNow() or os.time()),
+        tostring(handledRoundId or "")
+    )
+
+    if includeGroups then
+        local soluong, groupsJson = groupsToJson()
+        body = body:sub(1, -2) .. string.format(
+            ',"soluonggroup":%d,"limitMainUp":%d,"groups":%s}',
+            soluong, LIMIT_MAIN_PER_GROUP, groupsJson
+        )
+    else
+        -- Luôn gửi soluonggroup để server biết tổng số group cần tạo
+        -- (cần thiết sau server restart, account đã có group nhưng server chưa biết maxG)
+        local soluong = #(getgenv().ConfigGroupHop or {})
+        body = body:sub(1, -2) .. string.format(
+            ',"soluonggroup":%d,"limitMainUp":%d}',
+            soluong, LIMIT_MAIN_PER_GROUP
+        )
+    end
+
+    local ok, resp = pcall(function()
+        local res = r({ Url = API_BASE .. "/v4info", Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = body })
+        if res and res.StatusCode == 200 then
+            local ok2, d = pcall(jsonDecode, res.Body)
+            if ok2 then return d end
+        end
+        return nil
+    end)
+    return ok and resp or nil
+end
+
+-- Sync loop 2s: gửi full status mỗi cycle
+-- Startup sync: gửi ngay khi load để xóa jobId cũ
+task.spawn(function()
+    task.wait(0.2)
+    pcall(function()
+        local resp = sendSync(true)
+        if resp then processSyncResponse(resp) end
+    end)
 end)
 
--- Gán group ngay khi load (sau 0.5s để đợi hàm assignToGroup được định nghĩa)
-task.spawn(function()
-    task.wait(0.5)
-    if isUper or isAlly then pcall(assignToGroup) end
-end)
+
 
 function autoEquipGear()
     local gearConfig = getgenv().Config["Gear"]
@@ -1665,16 +1983,61 @@ function sanitizeFilePart(value)
     return value
 end
 
--- ============================================================
---   API-based group utilities (thay thế hoàn toàn file sync)
--- ============================================================
+-- ── WORKSPACE FILE HELPERS ──
+local FILE_SYNC_AVAILABLE = type(writefile) == "function"
+    and type(readfile) == "function"
+    and type(isfile) == "function"
+    and type(makefolder) == "function"
+    and type(isfolder) == "function"
+
+function safeMakeFolder(path)
+    if not FILE_SYNC_AVAILABLE then return false end
+    if isfolder(path) then return true end
+    return pcall(makefolder, path)
+end
+
+function safeReadJson(path)
+    if not FILE_SYNC_AVAILABLE or not isfile(path) then return nil end
+    local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+    if ok and type(data) == "table" then return data end
+    return nil
+end
+
+function safeWriteJson(path, data)
+    if not FILE_SYNC_AVAILABLE then return false end
+    local ok = pcall(function() writefile(path, HttpService:JSONEncode(data)) end)
+    return ok
+end
+
+function groupDirectory()
+    local groupId = currentGroupId()
+    if groupId == "" then return nil end
+    if not safeMakeFolder(V3_FILE_ROOT) then return nil end
+    local folder = V3_FILE_ROOT .. "/" .. sanitizeFilePart(groupId)
+    if not safeMakeFolder(folder) then return nil end
+    return folder
+end
+
+function ownReadyPath()
+    local folder = groupDirectory()
+    if not folder then return nil end
+    return folder .. "/ready_" .. sanitizeFilePart(USERNAME) .. ".json"
+end
+
+function commandPath()
+    local folder = groupDirectory()
+    if not folder then return nil end
+    return folder .. "/command.json"
+end
+
+-- ── GROUP UTILS ──
 
 function currentGroupId()
     return myGroupId
 end
 
 function currentGroupMembers()
-    -- 1 main + 2 helper = 3 member cần cho V3 fire sync
+    -- 1 main + 2 helper cần cho V3 fire
     local members = {}
     local seen    = {}
     local function add(name)
@@ -1698,8 +2061,8 @@ isCurrentGroupInThisServer = function()
 end
 
 function writeOwnDoorFile(force)
-    -- Gửi status lên API luôn dù có group hay chưa
-    -- (bỏ gate myGroupId=='' trước, nếu không có API sẽ không bao giờ nhận được request)
+    if not isCurrentGroupInThisServer() then readySent = false; return false end
+    if not FILE_SYNC_AVAILABLE then status("Executor workspace file API unavailable"); readySent = false; return false end
     if not force and tick() - lastReadyWrite < V3_FILE_POLL then return readySent end
     lastReadyWrite = tick()
 
@@ -1711,66 +2074,82 @@ function writeOwnDoorFile(force)
         and doorState.nearDoor
         and not doorState.timerVisible
 
-    local v4s = nil
-    pcall(function() v4s = getV4Status(false) end)
-    local frags = 0
-    pcall(function() frags = tonumber(Players.LocalPlayer.Data.Fragments.Value) or 0 end)
-    local fullMoon = false
-    pcall(function() fullMoon = isnight() and isfullmoon() end)
-
     readySent = ready
-    -- POST status lên API
-    apiPost("/api/status", {
-        version      = 1,
-        groupId      = currentGroupId(),
-        placeId      = game.PlaceId,
-        jobId        = game.JobId,
-        username     = USERNAME,
-        role         = getRole(),
-        race         = race,
-        ready        = ready,
-        fullMoon     = fullMoon,
-        doorDistance = doorState.distance == math.huge and -1 or math.floor(doorState.distance * 100) / 100,
-        timerVisible = doorState.timerVisible,
-        alive        = doorState.alive,
-        canTrial     = v4s and v4s.canTrial     or false,
-        needsTraining = v4s and v4s.needsTraining or false,
-        needsPurchase = v4s and v4s.needsPurchase or false,
-        complete     = v4s and v4s.complete      or false,
-        energy       = v4s and v4s.energy        or 0,
-        transformed  = v4s and v4s.transformed   or false,
-        fragments    = frags,
-        updatedAt    = v3ServerNow(),
-        firedRound   = handledRoundId
-    })
+
+    -- Workspace file (real-time, cho trial detection)
+    if isCurrentGroupInThisServer() then
+        local path = ownReadyPath()
+        if path then
+            if handledRoundId == "" then
+                local prev = safeReadJson(path)
+                if prev and tostring(prev.fired_round or "") ~= "" then
+                    handledRoundId = tostring(prev.fired_round)
+                end
+            end
+            safeWriteJson(path, {
+                version      = 1,
+                group_id     = currentGroupId(),
+                job_id       = game.JobId,
+                username     = USERNAME,
+                role         = getRole(),
+                race         = race,
+                ready        = ready,
+                door_distance = doorState.distance == math.huge and -1 or math.floor(doorState.distance * 100) / 100,
+                timer_visible = doorState.timerVisible,
+                updated_at   = v3ServerNow(),
+                fired_round  = handledRoundId,
+            })
+        end
+    end
+
     return ready
 end
--- Alias để các đoạn code cũ gọi được
+-- Alias
 apiPostStatus = writeOwnDoorFile
 
 function readReadyFiles()
-    -- Query API thay vì đọc workspace file
-    if myGroupId == "" then return 0, false, {}, "no_group" end
+    local members = currentGroupMembers()
+    local now = v3ServerNow()
+    local readyCount = 0
+    local races = {}
+    local records = {}
 
-    local url = "/api/group/" .. myGroupId .. "/ready"
-        .. "?jobId="     .. tostring(game.JobId)
-        .. "&freshness=" .. tostring(V3_READY_FRESHNESS)
-        .. "&requireDiffRaces=" .. tostring(V3_REQUIRE_DIFFERENT_RACES)
+    if #members ~= 3 then return 0, false, {}, "need_exactly_3_members" end
 
-    local result = apiGet(url)
-    if not result then return 0, false, {}, "api_error" end
+    local folder = groupDirectory()
+    if not folder then return 0, false, {}, "workspace_folder_unavailable" end
 
-    local readyCount = tonumber(result.readyCount) or 0
-    local allReady   = result.allReady == true
-    local records    = result.records or {}
-    local reason     = tostring(result.reason or "unknown")
+    for _, name in ipairs(members) do
+        local path = folder .. "/ready_" .. sanitizeFilePart(name) .. ".json"
+        local data = safeReadJson(path)
+        records[name] = data
+        local valid = data
+            and tostring(data.group_id or "") == currentGroupId()
+            and tostring(data.job_id or "") == tostring(game.JobId)
+            and tostring(data.username or "") == tostring(name)
+            and data.ready == true
+            and tonumber(data.updated_at)
+            and math.abs(now - tonumber(data.updated_at)) <= V3_READY_FRESHNESS
+        if valid then
+            readyCount = readyCount + 1
+            local r = tostring(data.race or "")
+            if r ~= "" then races[r] = true end
+        end
+    end
 
-    return readyCount, allReady, records, reason
+    if readyCount < 3 then return readyCount, false, records, "waiting_files" end
+    if V3_REQUIRE_DIFFERENT_RACES then
+        local rc = 0
+        for _ in pairs(races) do rc = rc + 1 end
+        if rc < 3 then return readyCount, false, records, "duplicate_race" end
+    end
+    return readyCount, true, records, "ready"
 end
 
 function readV3Command()
-    if myGroupId == "" then return nil end
-    local data = apiGet("/api/command/" .. myGroupId)
+    local path = commandPath()
+    if not path then return nil end
+    local data = safeReadJson(path)
     if not data then return nil end
     if tostring(data.group_id or "") ~= currentGroupId() then return nil end
     if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
@@ -1781,9 +2160,9 @@ function readV3Command()
 end
 
 function writeV3Command(command)
-    if myGroupId == "" then return false end
-    local result = apiPost("/api/command/" .. myGroupId, command)
-    return result ~= nil
+    local path = commandPath()
+    if not path then return false end
+    return safeWriteJson(path, command)
 end
 
 function mainCreateRound()
@@ -1795,16 +2174,13 @@ function mainCreateRound()
     local count, allReady, _, reason = readReadyFiles()
     if not allReady then
         if reason == "duplicate_race" then
-            status("V3 API 3/3 but races are duplicated")
+            status("V3 files 3/3 but races are duplicated")
         elseif reason == "need_exactly_3_members" then
-            status("V3 API needs exactly 1 Main + 2 Help")
-        elseif reason == "api_error" or reason == "no_group" then
-            status("Status API unavailable — check server")
-        elseif reason == "group_not_found" then
-            status("Group not found on API — re-assigning")
-            pcall(assignToGroup)
+            status("V3 file sync needs exactly 1 Main + 2 Help")
+        elseif reason == "workspace_folder_unavailable" then
+            status("Cannot open shared executor workspace folder")
         else
-            status("V3 API ready " .. tostring(count) .. "/3")
+            status("V3 workspace ready " .. tostring(count) .. "/3")
         end
         return nil
     end
@@ -1990,12 +2366,13 @@ local TrainingIslandOrder = getgenv().Config["Training Islands"] or {
 
 local MAX_ACCS_PER_ISLAND = 2
 local myAssignedIsland = nil
+local isCurrentlyTraining = false  -- flag block hop khi đang training
 
 local ISLAND_LEASE_SECONDS = 60
 
 -- Đọc island list từ API (thay thế readIslandSyncFile từ file)
 function readIslandSyncFile()
-    local result = apiGet("/api/island/list")
+    local result = apiGet("/v4info/island")
     if type(result) ~= "table" then return {} end
     -- Convert format API → format cũ { island: {count, users, lastUpdate} }
     local formatted = {}
@@ -2014,6 +2391,21 @@ function writeIslandSyncFile(data)
 end
 
 function assignTrainingIsland()
+    -- Nếu đã có island được assign và vẫn trong tầm → trả về luôn, không query API
+    if myAssignedIsland then
+        local data = TrainingIslandData[myAssignedIsland]
+        if data then
+            local refPos
+            if data.Positions then refPos = data.Positions[1]
+            elseif data.Position then refPos = data.Position end
+            if refPos and getdis(refPos) < 2000 then
+                -- Vẫn trong tầm đảo → giữ nguyên, chỉ heartbeat API
+                return myAssignedIsland
+            end
+        end
+    end
+
+    -- Chưa có hoặc đã rời đảo → query API và chọn đảo mới
     local assignments = readIslandSyncFile()
 
     local bestIsland = nil
@@ -2041,14 +2433,14 @@ function assignTrainingIsland()
     myAssignedIsland = bestIsland
 
     -- Đăng ký assignment với API
-    apiPost("/api/island/assign", { username = USERNAME, island = bestIsland })
+    apiPost("/v4info/island", { username = USERNAME, island = bestIsland })
 
     return bestIsland
 end
 
 function updateIslandHeartbeat()
     if not myAssignedIsland then return end
-    apiPost("/api/island/assign", { username = USERNAME, island = myAssignedIsland })
+    apiPost("/v4info/island", { username = USERNAME, island = myAssignedIsland })
 end
 
 task.spawn(function()
@@ -2717,11 +3109,12 @@ function runRaceTrainingWork(trainingState, roleLabel)
         status(roleLabel .. " Race V4 completed")
         return true
     end
-    if initialV4State.canTrial then
+    if initialV4State.canTrial and not isAlly then
+        -- Helper luôn canTrial=true (faked), nên skip check này cho helper
         status(roleLabel .. " training complete - ready for trial")
         return true
     end
-    if initialV4State.needsPurchase then
+    if initialV4State.needsPurchase and not isAlly then
         buyPendingV4Upgrade(initialV4State, roleLabel)
         return false
     end
@@ -2735,9 +3128,12 @@ function runRaceTrainingWork(trainingState, roleLabel)
 
     if tyrantFarmingActive then stopTyrantFarming() end
 
+    -- Set flag: đang training → block hop trong main loop
+    isCurrentlyTraining = true
+
     local fullMoonTraining = isnight() and isfullmoon()
     local remainingText = type(trainingState) == "number" and (" (" .. tostring(trainingState) .. " left)") or ""
-    status(roleLabel .. (fullMoonTraining and " Full Moon - continue training" or " training") .. remainingText)
+    status(roleLabel .. (fullMoonTraining and " Full Moon - training" or " training") .. remainingText)
 
     local nextReadyCheck = 0
     local cycleFinished = false
@@ -2745,6 +3141,18 @@ function runRaceTrainingWork(trainingState, roleLabel)
         if cycleFinished then return true end
         if tick() < nextReadyCheck then return false end
         nextReadyCheck = tick() + 0.8
+
+        -- Helper: check RaceTransformed còn tồn tại không (= đang train)
+        -- Không dùng canTrial vì helper luôn canTrial=true (faked)
+        if isAlly then
+            local char = Players.LocalPlayer.Character
+            if not char or not char:FindFirstChild("RaceTransformed") then
+                cycleFinished = true
+                status(roleLabel .. " training session ended")
+                return true
+            end
+            return false
+        end
 
         local state = getV4Status(true)
         if state.canTrial then
@@ -2774,8 +3182,21 @@ function runRaceTrainingWork(trainingState, roleLabel)
         end
     end)
 
+    -- Lấy island 1 lần, không re-query trong suốt cycle
     local islandName = assignTrainingIsland()
+    if not islandName then
+        -- Tất cả island bận hoặc API lỗi → reset flag và chờ vòng sau
+        status(roleLabel .. " no island available - retry next cycle")
+        isCurrentlyTraining = false
+        return false
+    end
     local islandData = TrainingIslandData[islandName]
+    if not islandData then
+        status(roleLabel .. " unknown island: " .. tostring(islandName) .. " - retry")
+        forceReassignIsland()  -- xóa cache island sắt
+        isCurrentlyTraining = false
+        return false
+    end
     local trainingPositions = nil
     if islandData.Positions then
         trainingPositions = islandData.Positions
@@ -2783,6 +3204,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
         trainingPositions = { islandData.Position }
     else
         status("Island has no position data")
+        isCurrentlyTraining = false
         return false
     end
 
@@ -2800,6 +3222,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
     if getdis(trainingPosition) >= 1500 then
         status(roleLabel .. " moving to [" .. tostring(islandName) .. "] for training")
         topos(trainingPosition)
+        isCurrentlyTraining = false
         return false
     end
 
@@ -2807,6 +3230,9 @@ function runRaceTrainingWork(trainingState, roleLabel)
     for name in pairs(islandData.Mobs) do
         table.insert(mobNames, name)
     end
+
+    local ATTACK_RANGE = 15  -- khoảng cách đánh
+    local lastTweenAt  = 0   -- tránh tween quá thường xuyên
 
     while not shouldStopTrainingCycle() do
         local mob = CheckMonster(table.unpack(mobNames))
@@ -2823,20 +3249,23 @@ function runRaceTrainingWork(trainingState, roleLabel)
                 module:haki()
                 pcall(function()
                     local currentCharacter = Players.LocalPlayer.Character
-                    local transformed = currentCharacter and currentCharacter:FindFirstChild("RaceTransformed")
                     local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
-                    if transformed and transformed.Value then
-                        AttackConfig.AutoClickEnabled = false
-                        status(roleLabel .. " [" .. tostring(islandName) .. "] wait transform end")
-                        topos(mob.HumanoidRootPart.CFrame * CFrame.new(0, 150, 0))
-                    else
-                        AttackConfig.AutoClickEnabled = true
-                        status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
-                        topos(mob.HumanoidRootPart.CFrame * CFrame.new(0, 20, 0))
-                        if energy and energy.Value >= 1 then
-                            VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-                            VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+                    AttackConfig.AutoClickEnabled = true
+                    status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
+                    -- Chỉ tween khi xa mob VÀ đã qua 0.5s kể từ tween trước
+                    -- Tránh liên tục cancel tween mỗi frame → bay qua bay lại
+                    local hrp = mob:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local dist = getdis(hrp.CFrame)
+                        local nowT = tick()
+                        if dist > ATTACK_RANGE and nowT - lastTweenAt > 0.5 then
+                            lastTweenAt = nowT
+                            topos(hrp.CFrame * CFrame.new(0, 5, 0))
                         end
+                    end
+                    if energy and energy.Value >= 1 then
+                        VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+                        VirtualInputManager:SendKeyEvent(false, "Y", false, game)
                     end
                 end)
             until not checkmob_(mob) or shouldStopTrainingCycle()
@@ -2846,13 +3275,29 @@ function runRaceTrainingWork(trainingState, roleLabel)
     AttackConfig.AutoClickEnabled = true
     invalidateV4Status()
     forceReassignIsland()
+    isCurrentlyTraining = false
     return cycleFinished
 end
 
 function runWaitingAccountWork()
     local roleLabel = isUper and "Main" or "Help"
     local fullMoonNow = isnight() and isfullmoon()
+    -- Luôn đọc fresh: sau invalidateV4Status(), cache đã clear → fetch mới từ server
     local v4State = getV4Status(false)
+
+    -- FIX: ưu tiên training/needsPurchase TRƯỚC canTrial
+    -- Tránh cache stale (canTrial=true cũ) chặn training loop
+    if v4State.needsTraining or v4State.needsPurchase then
+        if v4State.needsPurchase then
+            buyPendingV4Upgrade(v4State, roleLabel)
+            return
+        end
+        if tyrantFarmingActive then stopTyrantFarming() end
+        local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
+        local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
+        if trainingDone then invalidateV4Status() end
+        return
+    end
 
     if v4State.canTrial then
         if tyrantFarmingActive then stopTyrantFarming() end
@@ -2870,19 +3315,38 @@ function runWaitingAccountWork()
         return
     end
 
-    if v4State.needsPurchase then
-        buyPendingV4Upgrade(v4State, roleLabel)
-        return
-    end
-
     if tyrantFarmingActive then stopTyrantFarming() end
     local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
     local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
-    -- FIX: sau khi training xong, invalidate cache ngay để vòng lặp kế tiếp
-    -- nhận canTrial=true và matchState.assigned được bật lại → trigger teleport Temple of Time
     if trainingDone then
         invalidateV4Status()
     end
+end
+
+-- ══════════════════════════════════════════════════════════════
+-- DEDICATED API SYNC LOOP — hoàn toàn độc lập với main loop
+-- Đảm bảo account luôn live trên API mỗi 2s, kể cả khi:
+--   • runRaceTrainingWork() đang block main loop hàng phút
+--   • task.wait(5) của hop teleport
+--   • bất kỳ task.wait() nào khác trong main loop
+-- ══════════════════════════════════════════════════════════════
+if isUper or isAlly then
+    task.spawn(function()
+        task.wait(1.5)  -- đợi script init xong hoàn toàn
+        while task.wait(2) do
+            pcall(function()
+                -- Cập nhật FM state trong sync loop để batch luônđúng
+                -- (vì main loop có thể đang bị block trong training)
+                local fmCheck = false
+                pcall(function() fmCheck = isnight() and isfullmoon() end)
+                if fmCheck ~= currentFullMoon then
+                    currentFullMoon = fmCheck
+                end
+                local resp = sendSync(myGroupId == "")
+                if resp then processSyncResponse(resp) end
+            end)
+        end
+    end)
 end
 
 spawn(function()
@@ -2892,29 +3356,238 @@ spawn(function()
             task.wait(2)
             continue
         end
-        -- ── Kiểm tra hop TRƯỚC TIÊN, bất kể assigned hay không ──
-        -- Nếu API báo có member đang ở server khác (Full Moon anchor hoặc Main),
-        -- ép teleport ngay, không chờ bất kỳ điều kiện nào khác.
-        if matchState and matchState.main_job_id
-            and matchState.main_job_id ~= ""
-            and matchState.main_job_id ~= game.JobId then
-            local targetJobId = tostring(matchState.main_job_id)
-            status("Hopping → " .. targetJobId:sub(1, 8) .. "...")
-            pcall(function()
-                ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", targetJobId)
-            end)
-            task.wait(5)
-            continue
+
+        local nowTick = tick()
+
+        -- ════════════════════════════════════════════════════
+        -- [1] FM DETECT → workspace + API tức thì (1 cục)
+        -- Chạy trong main loop để đảm bảo detect ngay khi xảy ra
+        -- ════════════════════════════════════════════════════
+        local fmNow = false
+        local isNightNow = false
+        pcall(function()
+            isNightNow = isnight()
+            fmNow = isNightNow and isfullmoon()
+        end)
+
+        -- Near FM: đêm nhưng chưa full moon → đang chờ phase chuyển
+        local nearFMNow = isNightNow and not fmNow
+
+        if fmNow ~= lastFmState then
+            lastFmState = fmNow
+            currentFullMoon = fmNow
+            urgentSyncNeeded = true   -- trigger API sync tức thì
+            if fmNow then
+                writeFMSignal()       -- workspace ngay
+            else
+                clearFMSignal()       -- xóa signal khi FM kết thúc
+            end
+        elseif fmNow then
+            currentFullMoon = true
+            -- Refresh workspace signal mỗi 5s để không stale
+            if nowTick - lastReadyWrite > 5 then writeFMSignal() end
+        else
+            currentFullMoon = false
         end
 
+        -- Near FM: bản broadcast jobId hiện tại để các account khác hop vào đợi
+        if nearFMNow and not fmNow then
+            status("⏳ Near FullMoon - báo các account hop vào...")
+            urgentSyncNeeded = true  -- gửi nearFM=true lên API ngay
+            -- Ghi workspace signal với nearFM=true (các account cùng máy hòp vào)
+            if FILE_SYNC_AVAILABLE then
+                pcall(function()
+                    safeWriteJson(FM_SIGNAL_PATH, {
+                        username = USERNAME,
+                        jobId    = game.JobId,
+                        groupId  = myGroupId,
+                        nearFM   = true,
+                        ts       = math.floor(v3ServerNow() or os.time()),
+                    })
+                end)
+            end
+        end
+
+        -- ════════════════════════════════════════════════════
+        -- [3] API SYNC — chỉ urgent sync tại đây (FM thay đổi tức thì)
+        -- Normal sync 2s đã do dedicated loop ở trên xử lý
+        -- ════════════════════════════════════════════════════
+        if (isUper or isAlly) and urgentSyncNeeded then
+            urgentSyncNeeded = false
+            task.spawn(function()
+                pcall(function()
+                    local resp = sendSync(myGroupId == "")
+                    if resp then processSyncResponse(resp) end
+                end)
+            end)
+        end
+
+        -- ════════════════════════════════════════════════════
+        -- [2] V4 STATE + matchState.assigned (trực tiếp trong loop)
+        -- ════════════════════════════════════════════════════
+        if matchState then
+            if myGroupId == "" and (isUper or isAlly) then initLocalGroup() end
+            local v4s = nil
+            pcall(function() v4s = getV4Status(false) end)
+            local needsIndependentWork = v4s and (v4s.needsTraining or v4s.needsPurchase)
+            if needsIndependentWork then
+                matchState.assigned = false
+            else
+                matchState.assigned = (myGroupId ~= "")
+            end
+            matchState.group_id      = myGroupId
+            matchState.main_username = myGroupMainUsername
+            local list = {}
+            for _, h in ipairs(myGroupHelpers) do table.insert(list, h) end
+            matchState.helpers = list
+        end
+
+        -- ════════════════════════════════════════════════════
+        -- [3] API SYNC — chỉ urgent sync tại đây (FM thay đổi tức thì)
+        -- Normal sync mỗi 2s đã do dedicated loop ở trên xử lý
+        -- ════════════════════════════════════════════════════
+        if (isUper or isAlly) and urgentSyncNeeded then
+            urgentSyncNeeded = false
+            task.spawn(function()
+                pcall(function()
+                    local resp = sendSync(myGroupId == "")
+                    if resp then processSyncResponse(resp) end
+                end)
+            end)
+        end
+
+
+        -- ════════════════════════════════════════════════════
+        -- [4] HOP CHECK: FM_API → workspace → API backup
+        -- Skip hop khi đang training/needsPurchase
+        -- isCurrentlyTraining: flag từ runRaceTrainingWork (block cả helper)
+        -- 6s timeout: join thất bại → cache jobId + tìm sv mới (3-7 player)
+        -- 2min timeout: main không vào được sv helper → clear FM signal
+        -- ════════════════════════════════════════════════════
+        local v4sForHop = nil
+        pcall(function() v4sForHop = getV4Status(false) end)
+        -- isCurrentlyTraining bắt cả helper (helper có needsTraining=false vì faked)
+        local skipHopForWork = isCurrentlyTraining
+            or (v4sForHop and (v4sForHop.needsTraining or v4sForHop.needsPurchase))
+
+        -- Rewrite FM cache mỗi 3 phút để purge entry cũ
+        if FILE_SYNC_AVAILABLE and (nowTick - lastFmCacheWriteAt) >= FM_CACHE_EXPIRE then
+            task.spawn(saveFMCache)
+        end
+
+        if not skipHopForWork and nowTick - SCRIPT_START_AT > HOP_STARTUP_DELAY then
+            local hopTarget = nil
+            local canHopFM = next(HopFMWhitelist) == nil or HopFMWhitelist[USERNAME] == true
+
+            -- [4a] FM_API: chỉ HopFM whitelist account
+            -- Đánh dấu cache khi đã vào đúng sv FM thành công
+            if lastFmApiResult == game.JobId then
+                markFMJoined(game.JobId)
+                lastFmApiResult = nil
+            end
+            if not currentFullMoon and FM_API_BASE ~= "" and canHopFM
+                and nowTick - SCRIPT_START_AT > FM_HOP_DELAY then
+                if nowTick - lastFmApiAt >= FM_API_INTERVAL then
+                    lastFmApiAt = nowTick
+                    status("FM API: tìm server FM...")
+                    task.spawn(function()
+                        local found = findFMServer()
+                        if found and found ~= game.JobId then
+                            lastFmApiResult = found
+                        else
+                            lastFmApiResult = nil
+                        end
+                    end)
+                end
+                if lastFmApiResult and lastFmApiResult ~= game.JobId then
+                    hopTarget = lastFmApiResult
+                    status("FM API → hop " .. tostring(hopTarget):sub(1,8) .. "...")
+                end
+            end
+
+            -- [4b] Workspace FM signal (cùng máy)
+            if not hopTarget then
+                local fmSig = readFMSignal()
+                if fmSig and fmSig.jobId ~= ""
+                    and fmSig.jobId ~= game.JobId
+                    and fmSig.username ~= USERNAME
+                    and (fmSig.groupId == myGroupId or myGroupId == "") then
+                    hopTarget = fmSig.jobId
+                    local sigLabel = fmSig.nearFM and "⏳ Near FM" or "🌕 Full Moon"
+                    status(sigLabel .. " → hop " .. fmSig.username .. " @ " .. tostring(fmSig.jobId):sub(1,8))
+                end
+            end
+
+            -- [4c] API nội bộ: matchState.main_job_id
+            if not hopTarget and matchState
+                and matchState.main_job_id and matchState.main_job_id ~= ""
+                and matchState.main_job_id ~= game.JobId then
+                hopTarget = matchState.main_job_id
+            end
+
+            if hopTarget then
+                if hopTarget ~= lastHopTarget then
+                    -- Target mới: bắt đầu timer, teleport ngay
+                    lastHopAt     = nowTick
+                    lastHopTarget = hopTarget
+                    status("Hopping → " .. tostring(hopTarget):sub(1, 8) .. "...")
+                    pcall(function()
+                        ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
+                    end)
+                    task.wait(5)
+                    continue
+                else
+                    local elapsed = nowTick - lastHopAt
+                    if elapsed >= 6 then
+                        -- 6s: vẫn chưa vào được → cache jobId thất bại, refetch ngay
+                        status("⏱ FM join timeout 6s → bỏ " .. tostring(hopTarget):sub(1,8) .. " + tìm sv mới")
+                        markFMJoined(hopTarget)   -- cache sv failed, bỏ qua lần sau
+                        lastFmApiResult = nil      -- force refetch FM API
+                        lastFmApiAt     = 0
+                        lastHopTarget   = ""
+                        -- 2min: main không thể vào sv helper → báo HopFM tìm sv mới
+                        if elapsed >= 120 and not canHopFM then
+                            clearFMSignal()
+                            if matchState then matchState.main_job_id = game.JobId end
+                            status("⚠ 2min timeout - yêu cầu HopFM tìm server mới (ít player hơn)")
+                        end
+                    else
+                        -- Retry teleport
+                        status("Retry hop → " .. tostring(hopTarget):sub(1, 8) .. "...")
+                        pcall(function()
+                            ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
+                        end)
+                        task.wait(5)
+                        continue
+                    end
+                end
+            end
+        end
+
+        -- ════════════════════════════════════════════════════
+        -- [5] TRAINING / TRIAL (dựa vào matchState.assigned từ [2])
+        -- ════════════════════════════════════════════════════
         if not matchState or not matchState.assigned then
-            runWaitingAccountWork()
+            -- pcall: tránh 1 lỗi nhỏ làm crash toàn bộ main loop
+            local wok, werr = pcall(runWaitingAccountWork)
+            if not wok then
+                isCurrentlyTraining = false  -- safety reset
+                status("⚠ training err: " .. tostring(werr):sub(1, 60))
+                task.wait(1)
+            end
             task.wait(0.2)
             continue
         end
 
+        -- FIX: dùng fresh V4 check thay vì cache
+        -- Tránh stale canTrial=true sau khi training reset
         local pairedV4State = getV4Status(false)
-        local pairedReady = pairedV4State.canTrial == true
+        -- Nếu cache có thể stale (canTrial=true nhưng needsTraining=true), force fresh
+        if pairedV4State.canTrial and pairedV4State.needsTraining then
+            invalidateV4Status()
+            pairedV4State = getV4Status(true)
+        end
+        local pairedReady = pairedV4State.canTrial == true and not pairedV4State.needsTraining
         local pairedTrainingState = pairedV4State.remainingTraining
             or (pairedV4State.needsTraining and "training" or pairedV4State.key)
 
@@ -2953,7 +3626,12 @@ spawn(function()
             else
                 if tyrantFarmingActive then stopTyrantFarming() end
                 status("Paired but not trial-ready - continue training")
-                runRaceTrainingWork(pairedTrainingState, isUper and "Main" or "Help")
+                -- pcall: tránh crash main loop khi training có lỗi
+                local tok, terr = pcall(runRaceTrainingWork, pairedTrainingState, isUper and "Main" or "Help")
+                if not tok then
+                    isCurrentlyTraining = false
+                    status("⚠ pair train err: " .. tostring(terr):sub(1, 50))
+                end
                 task.wait(0.2)
             end
             continue
@@ -2963,6 +3641,16 @@ spawn(function()
         if not fullMoonNow then
             pairTempleReadyAt = 0
             lastTempleReadyCount = 0
+            -- FIX: dù pairedReady=true, nếu account vẫn cần training → training ngay
+            -- Tránh stuck "waiting Full Moon" khi cache stale canTrial=true
+            local freshV4 = getV4Status(true)  -- force fresh để không tin vào cache
+            if freshV4.needsTraining or freshV4.needsPurchase then
+                invalidateV4Status()       -- reset cache
+                matchState.assigned = false  -- thoát paired mode, về runWaitingAccountWork
+                runWaitingAccountWork()
+                task.wait(0.2)
+                continue
+            end
             if PAIR_STICKY_UNTIL_TRIAL_COMPLETE then
                 status("Trial-ready pair locked until this Trial is completed")
             elseif isUper and isMyUpgearTurn() and pairAssignedAt > 0 and tick() - pairAssignedAt > 8 then
@@ -3255,27 +3943,6 @@ function Pc(x, L)
     end
     return H
 end
---https://fi12.bot-hosting.cloud:20777/noguchi?name=
-function gettimeserver()
-    return tonumber(game:HttpGet("https://fi12.bot-hosting.cloud:20777/timeserver"))
-end
-
-spawn(function()
-    while task.wait(1) do
-        if _G.ShouldSendData then
-            (http_request or http and http.request or request)({
-                Url = "https://baorph.x10.mx/data/apiv4.php?route=baor",
-                Method = "POST",
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = HttpService:JSONEncode({ 
-                    username = Players.LocalPlayer.Name, 
-                    jobid = game.JobId 
-                })
-            })
-        end
-    end
-end)
-
 
 function hopRandom()
     local ServerBrowser = ReplicatedStorage:WaitForChild("__ServerBrowser")
@@ -3324,30 +3991,21 @@ spawn(function()
                 pcall(getgenv().UpdateRoles)
             end
 
-            -- Chờ 10s rồi reset character để respawn gần spawn point
-            -- → rút ngắn khoảng cách tween đến training island sau trial
-            task.spawn(function()
-                task.wait(10)
-                pcall(function()
-                    local char = Players.LocalPlayer.Character
-                    local hum = char and char:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then
-                        status("Auto-reset sau trial → rút ngắn tween đến training island")
-                        hum.Health = 0
-                    end
-                end)
-            end)
+            -- Invalidate cache ngay để 2s loop đọc trạng thái mới nhất từ server
+            invalidateV4Status()
 
-            matchState = {
-                assigned = false,
-                group_id = "",
-                main_username = mainAccountName,
-                main_job_id = game.JobId,
-                helpers = {},
-                all_in_job = false,
-            }
-            releaseCurrentGroup("trial_done_hop")
-            task.wait(1)
+            matchState.assigned = false
+            matchState.group_id = ""
+            releaseCurrentGroup("trial_done")
+
+            -- Chờ 15s để server cập nhật trạng thái V4 (training/purchase) rồi mới hop
+            status("Trial xong - chờ 15s rồi hop sang server khác...")
+            task.wait(15)
+            invalidateV4Status()
+
+            -- Hop sang server khác để giải phóng slot cho acc Main khác join vào
+            status("Hopping sang server khác cho Main tiếp theo...")
+            pcall(hopRandom)
         end
 
         -- *** CHỈ reset trialDoneHandled, KHÔNG reset postTrialHopDone ***
@@ -3384,7 +4042,7 @@ function createUI()
     Title.Size = UDim2.new(1, 0, 0.12, 0)
     Title.Position = UDim2.new(0, 0, 0.10, 0)
     Title.BackgroundTransparency = 1
-    Title.Text = "kaitunv4"
+    Title.Text = "PiggyV4 - Mtrchill"
     Title.TextColor3 = Color3.fromRGB(255, 255, 255)
     Title.TextScaled = true
     Title.Font = Enum.Font.Arcade
