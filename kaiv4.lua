@@ -8,7 +8,7 @@ local _SRC = {
     ["Gear"]                           = "A-B-B",
     ["ChangeBestGear"]                 = true,
     ["V3 Door Distance"]               = 50,
-    ["FM_API"]                         = "",  -- trống = dùng URL mặc định; nhập URL khác để override
+    ["FM_API"]                         = "http://103.77.241.31:1901/server/api/moon?X-API-Key=trietgay_2mV0EbvgjwblbGTRxATml8RNDLgRR0l80wM5AM1M",  -- trống = dùng URL mặc định; nhập URL khác để override
     ["API Base URL"]                   = "http://mbasic7.pikamc.vn:25232",
     ["V3 Countdown"]                   = 6,
     ["V3 File Poll"]                   = 0.10,
