@@ -9,7 +9,7 @@ local _SRC = {
     ["Gear"]                           = "A-B-B",
     ["ChangeBestGear"]                 = true,
     ["V3 Door Distance"]               = 50,
-    ["FM_API"]                         = "",  -- trống = dùng URL mặc định; nhập URL khác để override
+    ["FM_API"]                         = "http://103.77.241.31:1901/server/api/moon?X-API-Key=trietgay_2mV0EbvgjwblbGTRxATml8RNDLgRR0l80wM5AM1M",  -- trống = dùng URL mặc định; nhập URL khác để override
     ["API Base URL"]                   = "http://mbasic7.pikamc.vn:25232",
     ["V3 Countdown"]                   = 6,
     ["V3 File Poll"]                   = 0.10,
@@ -1242,6 +1242,7 @@ local V3_FIRE_INTERVAL = math.max(0.03, tonumber(getgenv().Config["V3 Fire Inter
 -- Khi detect FM: ghi file này NGAY + gửi API tức thì
 -- Khi check hop: đọc file này TRƯỚC (cục bộ, nhanh) → API backup
 local FM_SIGNAL_PATH  = V3_FILE_ROOT .. "/fm_active.json"
+local MAIN_HOP_CMD_PATH = V3_FILE_ROOT .. "/main_hop_cmd.json"
 local FM_FRESH_SEC    = 20   -- stale sau 20s nếu không có ai update
 local lastApiSyncAt   = 0    -- timestamp lần cuối gửi API (trong main loop)
 local lastFmState     = false -- trạng thái FM lần kiểm tra trước
@@ -1250,19 +1251,33 @@ local urgentSyncNeeded = false -- FM vừa đổi trạng thái → gửi API ng
 local function writeFMSignal()
     if not FILE_SYNC_AVAILABLE then return end
     pcall(function()
+        local ts = math.floor(v3ServerNow() or os.time())
         safeWriteJson(FM_SIGNAL_PATH, {
             username = USERNAME,
             jobId    = game.JobId,
             groupId  = myGroupId,
-            ts       = math.floor(v3ServerNow() or os.time()),
+            ts       = ts,
         })
+        -- Helper: ghi thêm lệnh yêu cầu Main hop sang cùng server
+        if isAlly then
+            safeWriteJson(MAIN_HOP_CMD_PATH, {
+                jobId = game.JobId,
+                sender = USERNAME,
+                ts = ts,
+            })
+        end
     end)
 end
 
 local function clearFMSignal()
     if not FILE_SYNC_AVAILABLE then return end
     -- Ghi payload rỗng để overwrite (delfile không phải lúc nào cũng có)
-    pcall(function() safeWriteJson(FM_SIGNAL_PATH, { ts = 0, jobId = "", cleared = true }) end)
+    pcall(function() 
+        safeWriteJson(FM_SIGNAL_PATH, { ts = 0, jobId = "", cleared = true })
+        if isAlly then
+            safeWriteJson(MAIN_HOP_CMD_PATH, { ts = 0, jobId = "", cleared = true })
+        end
+    end)
 end
 
 local function readFMSignal()
@@ -1273,6 +1288,17 @@ local function readFMSignal()
     local now = math.floor(v3ServerNow() or os.time())
     local age = now - (tonumber(d.ts) or 0)
     if age < 0 or age > FM_FRESH_SEC then return nil end  -- stale
+    return d
+end
+
+local function readMainHopCommand()
+    if not FILE_SYNC_AVAILABLE then return nil end
+    local ok, d = pcall(safeReadJson, MAIN_HOP_CMD_PATH)
+    if not ok or type(d) ~= "table" then return nil end
+    if d.cleared or not d.jobId or d.jobId == "" then return nil end
+    local now = math.floor(v3ServerNow() or os.time())
+    local age = now - (tonumber(d.ts) or 0)
+    if age < 0 or age > 60 then return nil end  -- nới rộng lên 60s tránh lệch giờ giả lập
     return d
 end
 
@@ -3456,13 +3482,22 @@ spawn(function()
             -- Ghi workspace signal với nearFM=true (các account cùng máy hòp vào)
             if FILE_SYNC_AVAILABLE then
                 pcall(function()
+                    local ts = math.floor(v3ServerNow() or os.time())
                     safeWriteJson(FM_SIGNAL_PATH, {
                         username = USERNAME,
                         jobId    = game.JobId,
                         groupId  = myGroupId,
                         nearFM   = true,
-                        ts       = math.floor(v3ServerNow() or os.time()),
+                        ts       = ts,
                     })
+                    -- Helper: ghi thêm lệnh yêu cầu Main hop sang cùng server
+                    if isAlly then
+                        safeWriteJson(MAIN_HOP_CMD_PATH, {
+                            jobId = game.JobId,
+                            sender = USERNAME,
+                            ts = ts,
+                        })
+                    end
                 end)
             end
         end
@@ -3529,12 +3564,15 @@ spawn(function()
         local skipHopForWork = isCurrentlyTraining
             or (v4sForHop and (v4sForHop.needsTraining or v4sForHop.needsPurchase))
 
-        -- Mode 1 FIX: nếu có FM signal / API target đến server khác → override training block
+        -- Mode 1 FIX: nếu có FM signal / API target / Lệnh gọi Main đến server khác → override training block
         -- Tránh stuck: ac đang training vẫn hop được khi cần (V3 workspace 0/3 bug)
         if SCRIPT_MODE == 1 and skipHopForWork then
             local _fmSigCheck = nil
             pcall(function() _fmSigCheck = readFMSignal() end)
+            local _hopCmdCheck = nil
+            pcall(function() _hopCmdCheck = readMainHopCommand() end)
             local _hasRemoteTarget = (_fmSigCheck and _fmSigCheck.jobId ~= "" and _fmSigCheck.jobId ~= game.JobId)
+                or (_hopCmdCheck and _hopCmdCheck.jobId ~= "" and _hopCmdCheck.jobId ~= game.JobId)
                 or (matchState and matchState.main_job_id and matchState.main_job_id ~= "" and matchState.main_job_id ~= game.JobId)
             if _hasRemoteTarget then
                 skipHopForWork = false  -- FM uu tiên hơn training
@@ -3581,14 +3619,21 @@ spawn(function()
 
             -- [4b] Workspace FM signal (cùng máy)
             if not hopTarget then
-                local fmSig = readFMSignal()
-                if fmSig and fmSig.jobId ~= ""
-                    and fmSig.jobId ~= game.JobId
-                    and fmSig.username ~= USERNAME
-                    and (fmSig.groupId == myGroupId or myGroupId == "") then
-                    hopTarget = fmSig.jobId
-                    local sigLabel = fmSig.nearFM and "⏳ Near FM" or "🌕 Full Moon"
-                    status(sigLabel .. " → hop " .. fmSig.username .. " @ " .. tostring(fmSig.jobId):sub(1,8))
+                -- Đọc lệnh gọi từ Helper trước để ưu tiên tuyệt đối
+                local hopCmd = readMainHopCommand()
+                if hopCmd and hopCmd.jobId ~= "" and hopCmd.jobId ~= game.JobId then
+                    hopTarget = hopCmd.jobId
+                    status("Workspace Hop Cmd → hop " .. hopCmd.sender .. " @ " .. tostring(hopTarget):sub(1,8))
+                else
+                    local fmSig = readFMSignal()
+                    if fmSig and fmSig.jobId ~= ""
+                        and fmSig.jobId ~= game.JobId
+                        and fmSig.username ~= USERNAME
+                        and (fmSig.groupId == myGroupId or myGroupId == "") then
+                        hopTarget = fmSig.jobId
+                        local sigLabel = fmSig.nearFM and "⏳ Near FM" or "🌕 Full Moon"
+                        status(sigLabel .. " → hop " .. fmSig.username .. " @ " .. tostring(fmSig.jobId):sub(1,8))
+                    end
                 end
             end
 
