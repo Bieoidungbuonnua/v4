@@ -1120,47 +1120,14 @@ local V3_FILE_ROOT     = tostring(getgenv().Config["V3 File Folder"] or "KaitunV
 local LIMIT_MAIN_PER_GROUP = math.max(1, math.min(10, tonumber(getgenv().Config["LimitMainUpPerGroup"]) or 4))
 local SCRIPT_MODE = math.max(1, math.min(2, tonumber(getgenv().Config["Mode"]) or 1))
 
--- ══ FM JOIN CACHE ══
--- username-fmcache.json: lưu jobId đã join thành công
--- Rewrite mỗi 3 phút (purge cũ) → tránh re-join sv đã full
--- Mỗi entry có timestamp; nếu (now - ts) < 180s thì vẫn còn hiệu lực
-local FM_CACHE_PATH   = USERNAME .. "-fmcache.json"
-local FM_CACHE_EXPIRE = 180   -- 3 phút
-local fmJoinedCache   = {}    -- { [jobId] = timestamp }
-local lastFmCacheWriteAt = 0  -- lần cuối rewrite file
-
-local function saveFMCache()
-    if not FILE_SYNC_AVAILABLE then return end
-    pcall(function()
-        local now = math.floor(v3ServerNow() or os.time())
-        -- Purge entry cũ trước khi ghi
-        local fresh = {}
-        for jid, ts in pairs(fmJoinedCache) do
-            if now - ts < FM_CACHE_EXPIRE then fresh[jid] = ts end
-        end
-        fmJoinedCache = fresh
-        lastFmCacheWriteAt = now
-        safeWriteJson(FM_CACHE_PATH, { ts = now, entries = fresh })
-    end)
-end
-
-local function loadFMCache()
-    if not FILE_SYNC_AVAILABLE then return end
-    pcall(function()
-        local d = safeReadJson(FM_CACHE_PATH)
-        if type(d) ~= "table" or type(d.entries) ~= "table" then return end
-        local now = math.floor(v3ServerNow() or os.time())
-        for jid, ts in pairs(d.entries) do
-            if now - ts < FM_CACHE_EXPIRE then fmJoinedCache[jid] = ts end
-        end
-    end)
-end
+-- ══ FM JOIN CACHE (in-memory only) ══
+local FM_CACHE_EXPIRE = 180
+local fmJoinedCache   = {}
 
 local function markFMJoined(jobId)
     if not jobId or jobId == "" then return end
     local now = math.floor(v3ServerNow() or os.time())
     fmJoinedCache[jobId] = now
-    saveFMCache()
 end
 
 local function isFMCached(jobId)
@@ -1169,9 +1136,6 @@ local function isFMCached(jobId)
     local now = math.floor(v3ServerNow() or os.time())
     return (now - ts) < FM_CACHE_EXPIRE
 end
-
--- Load cache ngay khi script khởi động
-pcall(loadFMCache)
 
 -- ══ FM SERVER FINDER ══
 -- Gọi FM_API để tìm server đang có Full Moon
@@ -1237,71 +1201,8 @@ local V3_REQUIRE_DIFFERENT_RACES = getgenv().Config["V3 Require Different Races"
 local V3_FIRE_COUNT    = math.max(1, math.floor(tonumber(getgenv().Config["V3 Fire Count"]) or 1))
 local V3_FIRE_INTERVAL = math.max(0.03, tonumber(getgenv().Config["V3 Fire Interval"]) or 0.05)
 
--- ══ FM SIGNAL (workspace file) ══
--- Gắn kết workspace + API thành 1 luồng dữ liệu duy nhất
--- Khi detect FM: ghi file này NGAY + gửi API tức thì
--- Khi check hop: đọc file này TRƯỚC (cục bộ, nhanh) → API backup
-local FM_SIGNAL_PATH  = V3_FILE_ROOT .. "/fm_active.json"
-local MAIN_HOP_CMD_PATH = V3_FILE_ROOT .. "/main_hop_cmd.json"
-local FM_FRESH_SEC    = 20   -- stale sau 20s nếu không có ai update
-local lastApiSyncAt   = 0    -- timestamp lần cuối gửi API (trong main loop)
-local lastFmState     = false -- trạng thái FM lần kiểm tra trước
-local urgentSyncNeeded = false -- FM vừa đổi trạng thái → gửi API ngay
-
-local function writeFMSignal()
-    if not FILE_SYNC_AVAILABLE then return end
-    if isUper then return end  -- Main không ghi FM signal, để helper ghi (tránh race condition ghi đè)
-    pcall(function()
-        local ts = math.floor(v3ServerNow() or os.time())
-        safeWriteJson(FM_SIGNAL_PATH, {
-            username = USERNAME,
-            jobId    = game.JobId,
-            groupId  = myGroupId,
-            ts       = ts,
-        })
-        -- Helper: ghi thêm lệnh yêu cầu Main hop sang cùng server
-        if isAlly then
-            safeWriteJson(MAIN_HOP_CMD_PATH, {
-                jobId = game.JobId,
-                sender = USERNAME,
-                ts = ts,
-            })
-        end
-    end)
-end
-
-local function clearFMSignal()
-    if not FILE_SYNC_AVAILABLE then return end
-    -- Ghi payload rỗng để overwrite (delfile không phải lúc nào cũng có)
-    pcall(function() 
-        safeWriteJson(FM_SIGNAL_PATH, { ts = 0, jobId = "", cleared = true })
-        if isAlly then
-            safeWriteJson(MAIN_HOP_CMD_PATH, { ts = 0, jobId = "", cleared = true })
-        end
-    end)
-end
-
-local function readFMSignal()
-    if not FILE_SYNC_AVAILABLE then return nil end
-    local ok, d = pcall(safeReadJson, FM_SIGNAL_PATH)
-    if not ok or type(d) ~= "table" then return nil end
-    if d.cleared then return nil end
-    local now = math.floor(v3ServerNow() or os.time())
-    local age = now - (tonumber(d.ts) or 0)
-    if age < 0 or age > FM_FRESH_SEC then return nil end  -- stale
-    return d
-end
-
-local function readMainHopCommand()
-    if not FILE_SYNC_AVAILABLE then return nil end
-    local ok, d = pcall(safeReadJson, MAIN_HOP_CMD_PATH)
-    if not ok or type(d) ~= "table" then return nil end
-    if d.cleared or not d.jobId or d.jobId == "" then return nil end
-    local now = math.floor(v3ServerNow() or os.time())
-    local age = now - (tonumber(d.ts) or 0)
-    if age < 0 or age > 60 then return nil end  -- nới rộng lên 60s tránh lệch giờ giả lập
-    return d
-end
+local lastFmState     = false
+local urgentSyncNeeded = false
 
 
 function req()
@@ -2004,53 +1905,6 @@ function sanitizeFilePart(value)
     return value
 end
 
--- ── WORKSPACE FILE HELPERS ──
-local FILE_SYNC_AVAILABLE = type(writefile) == "function"
-    and type(readfile) == "function"
-    and type(isfile) == "function"
-    and type(makefolder) == "function"
-    and type(isfolder) == "function"
-
-function safeMakeFolder(path)
-    if not FILE_SYNC_AVAILABLE then return false end
-    if isfolder(path) then return true end
-    return pcall(makefolder, path)
-end
-
-function safeReadJson(path)
-    if not FILE_SYNC_AVAILABLE or not isfile(path) then return nil end
-    local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
-    if ok and type(data) == "table" then return data end
-    return nil
-end
-
-function safeWriteJson(path, data)
-    if not FILE_SYNC_AVAILABLE then return false end
-    local ok = pcall(function() writefile(path, HttpService:JSONEncode(data)) end)
-    return ok
-end
-
-function groupDirectory()
-    local groupId = currentGroupId()
-    if groupId == "" then return nil end
-    if not safeMakeFolder(V3_FILE_ROOT) then return nil end
-    local folder = V3_FILE_ROOT .. "/" .. sanitizeFilePart(groupId)
-    if not safeMakeFolder(folder) then return nil end
-    return folder
-end
-
-function ownReadyPath()
-    local folder = groupDirectory()
-    if not folder then return nil end
-    return folder .. "/ready_" .. sanitizeFilePart(USERNAME) .. ".json"
-end
-
-function commandPath()
-    local folder = groupDirectory()
-    if not folder then return nil end
-    return folder .. "/command.json"
-end
-
 -- ── GROUP UTILS ──
 
 function currentGroupId()
@@ -2096,32 +1950,6 @@ function writeOwnDoorFile(force)
 
     readySent = ready
 
-    -- Workspace file (real-time, cho trial detection)
-    if isCurrentGroupInThisServer() then
-        local path = ownReadyPath()
-        if path then
-            if handledRoundId == "" then
-                local prev = safeReadJson(path)
-                if prev and tostring(prev.fired_round or "") ~= "" then
-                    handledRoundId = tostring(prev.fired_round)
-                end
-            end
-            safeWriteJson(path, {
-                version      = 1,
-                group_id     = currentGroupId(),
-                job_id       = game.JobId,
-                username     = USERNAME,
-                role         = getRole(),
-                race         = race,
-                ready        = ready,
-                door_distance = doorState.distance == math.huge and -1 or math.floor(doorState.distance * 100) / 100,
-                timer_visible = doorState.timerVisible,
-                updated_at   = v3ServerNow(),
-                fired_round  = handledRoundId,
-            })
-        end
-    end
-
     return ready
 end
 -- Alias
@@ -2146,38 +1974,6 @@ function readReadyFiles()
     end)
 
     if not ok or not res or res.StatusCode ~= 200 then
-        -- Fallback về workspace files nếu API có sự cố tạm thời
-        local folder = groupDirectory()
-        if folder then
-            local readyCount = 0
-            local races = {}
-            local records = {}
-            local now = v3ServerNow()
-            for _, name in ipairs(members) do
-                local path = folder .. "/ready_" .. sanitizeFilePart(name) .. ".json"
-                local data = safeReadJson(path)
-                records[name] = data
-                local valid = data
-                    and tostring(data.group_id or "") == currentGroupId()
-                    and tostring(data.job_id or "") == tostring(game.JobId)
-                    and tostring(data.username or "") == tostring(name)
-                    and data.ready == true
-                    and tonumber(data.updated_at)
-                    and math.abs(now - tonumber(data.updated_at)) <= V3_READY_FRESHNESS
-                if valid then
-                    readyCount = readyCount + 1
-                    local raceStr = tostring(data.race or "")
-                    if raceStr ~= "" then races[raceStr] = true end
-                end
-            end
-            if readyCount < 3 then return readyCount, false, records, "waiting_files" end
-            if V3_REQUIRE_DIFFERENT_RACES then
-                local rc = 0
-                for _ in pairs(races) do rc = rc + 1 end
-                if rc < 3 then return readyCount, false, records, "duplicate_race" end
-            end
-            return readyCount, true, records, "ready"
-        end
         return 0, false, {}, "api_error"
     end
 
@@ -2205,17 +2001,7 @@ function readReadyFiles()
 end
 
 function readV3Command()
-    -- 1. Ưu tiên đọc command từ API (đã được đồng bộ trong sync loop)
     local data = currentApiV3Command
-    
-    -- 2. Fallback đọc từ file cục bộ nếu API rỗng
-    if not data then
-        pcall(function()
-            local path = commandPath()
-            if path then data = safeReadJson(path) end
-        end)
-    end
-
     if not data then return nil end
     if tostring(data.group_id or "") ~= currentGroupId() then return nil end
     if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
@@ -2227,12 +2013,6 @@ end
 
 function writeV3Command(command)
     if myGroupId == "" then return false end
-    -- Ghi file cục bộ làm backup
-    pcall(function()
-        local path = commandPath()
-        if path then safeWriteJson(path, command) end
-    end)
-    -- Gửi lên API server
     local res = apiPost("/v4info/command/" .. tostring(myGroupId), command)
     return res ~= nil
 end
@@ -3449,15 +3229,6 @@ if isUper and SCRIPT_MODE == 1 then
                     status("📡 Main hop → FM " .. tostring(target):sub(1,8) .. " (API)")
                 end
 
-                -- Fallback: workspace cmd từ helper (nếu workspace hoạt động)
-                if not target then
-                    local cmd = readMainHopCommand()
-                    if cmd and cmd.jobId ~= "" and cmd.jobId ~= game.JobId then
-                        target = cmd.jobId
-                        status("📡 Main hop → FM " .. tostring(target):sub(1,8) .. " (Workspace)")
-                    end
-                end
-
                 if target then
                     task.wait(0.5)
                     pcall(function()
@@ -3495,34 +3266,22 @@ spawn(function()
             lastFmState = fmNow
             currentFullMoon = fmNow
             urgentSyncNeeded = true
-            if fmNow then
-                writeFMSignal()
-            else
-                clearFMSignal()
-                if SCRIPT_MODE == 2 then
-                    task.spawn(function()
-                        local _exitTimeout = tick() + 180
-                        while tick() < _exitTimeout do
-                            local _inTrial = false
-                            pcall(function() _inTrial = isInsideOwnTrial() end)
-                            if not _inTrial and not isCurrentlyTraining then break end
-                            task.wait(3)
-                        end
-                        status("⚠ Mode 2: FM kết thúc — rời server...")
-                        task.wait(2)
-                        pcall(function()
-                            TeleportService:Teleport(game.PlaceId)
-                        end)
-                    end)
-                end
-            end
-        elseif fmNow then
-            currentFullMoon = true
-            if not isUper and nowTick - lastReadyWrite > 5 then
-                writeFMSignal()
+            if not fmNow and SCRIPT_MODE == 2 then
+                task.spawn(function()
+                    local _exitTimeout = tick() + 180
+                    while tick() < _exitTimeout do
+                        local _inTrial = false
+                        pcall(function() _inTrial = isInsideOwnTrial() end)
+                        if not _inTrial and not isCurrentlyTraining then break end
+                        task.wait(3)
+                    end
+                    status("⚠ Mode 2: FM kết thúc — rời server...")
+                    task.wait(2)
+                    pcall(function() TeleportService:Teleport(game.PlaceId) end)
+                end)
             end
         else
-            currentFullMoon = false
+            currentFullMoon = fmNow
         end
 
         -- ════════════════════════════════════════════════════
@@ -3587,28 +3346,8 @@ spawn(function()
         local skipHopForWork = isCurrentlyTraining
             or (v4sForHop and (v4sForHop.needsTraining or v4sForHop.needsPurchase))
 
-        -- Mode 1 FIX: nếu có FM signal / API target / Lệnh gọi Main đến server khác → override training block
-        -- Tránh stuck: ac đang training vẫn hop được khi cần (V3 workspace 0/3 bug)
-        if SCRIPT_MODE == 1 and skipHopForWork then
-            local _fmSigCheck = nil
-            pcall(function() _fmSigCheck = readFMSignal() end)
-            local _hopCmdCheck = nil
-            pcall(function() _hopCmdCheck = readMainHopCommand() end)
-            local _hasRemoteTarget = (_fmSigCheck and _fmSigCheck.jobId ~= "" and _fmSigCheck.jobId ~= game.JobId)
-                or (_hopCmdCheck and _hopCmdCheck.jobId ~= "" and _hopCmdCheck.jobId ~= game.JobId)
-                or (matchState and matchState.main_job_id and matchState.main_job_id ~= "" and matchState.main_job_id ~= game.JobId)
-            if _hasRemoteTarget then
-                skipHopForWork = false  -- FM uu tiên hơn training
-            end
-        end
-
-        -- Mode 2: không hop (trờ trong server chờ FM)
+        -- Mode 2: không hop (treo trong server chờ FM)
         if SCRIPT_MODE == 2 then skipHopForWork = true end
-
-        -- Rewrite FM cache mỗi 3 phút để purge entry cũ
-        if FILE_SYNC_AVAILABLE and (nowTick - lastFmCacheWriteAt) >= FM_CACHE_EXPIRE then
-            task.spawn(saveFMCache)
-        end
 
         if not skipHopForWork and nowTick - SCRIPT_START_AT > HOP_STARTUP_DELAY then
             local hopTarget = nil
@@ -3640,27 +3379,7 @@ spawn(function()
                 end
             end
 
-            -- [4b] Workspace FM signal (cùng máy)
-            if not hopTarget then
-                -- Đọc lệnh gọi từ Helper trước để ưu tiên tuyệt đối
-                local hopCmd = readMainHopCommand()
-                if hopCmd and hopCmd.jobId ~= "" and hopCmd.jobId ~= game.JobId then
-                    hopTarget = hopCmd.jobId
-                    status("Workspace Hop Cmd → hop " .. hopCmd.sender .. " @ " .. tostring(hopTarget):sub(1,8))
-                else
-                    local fmSig = readFMSignal()
-                    if fmSig and fmSig.jobId ~= ""
-                        and fmSig.jobId ~= game.JobId
-                        and fmSig.username ~= USERNAME
-                        and (fmSig.groupId == myGroupId or myGroupId == "") then
-                        hopTarget = fmSig.jobId
-                        local sigLabel = fmSig.nearFM and "⏳ Near FM" or "🌕 Full Moon"
-                        status(sigLabel .. " → hop " .. fmSig.username .. " @ " .. tostring(fmSig.jobId):sub(1,8))
-                    end
-                end
-            end
-
-            -- [4c] API nội bộ: matchState.main_job_id
+            -- [4b] API matchState.main_job_id (sync từ processSyncResponse)
             if not hopTarget and matchState
                 and matchState.main_job_id and matchState.main_job_id ~= ""
                 and matchState.main_job_id ~= game.JobId then
@@ -3683,15 +3402,13 @@ spawn(function()
                     if elapsed >= 6 then
                         -- 6s: vẫn chưa vào được → cache jobId thất bại, refetch ngay
                         status("⏱ FM join timeout 6s → bỏ " .. tostring(hopTarget):sub(1,8) .. " + tìm sv mới")
-                        markFMJoined(hopTarget)   -- cache sv failed, bỏ qua lần sau
-                        lastFmApiResult = nil      -- force refetch FM API
+                        markFMJoined(hopTarget)
+                        lastFmApiResult = nil
                         lastFmApiAt     = 0
                         lastHopTarget   = ""
-                        -- 2min: main không thể vào sv helper → báo HopFM tìm sv mới
                         if elapsed >= 120 and not canHopFM then
-                            clearFMSignal()
                             if matchState then matchState.main_job_id = game.JobId end
-                            status("⚠ 2min timeout - yêu cầu HopFM tìm server mới (ít player hơn)")
+                            status("⚠ 2min timeout - HopFM tìm server mới")
                         end
                     else
                         -- Retry teleport
