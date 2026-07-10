@@ -1520,14 +1520,6 @@ local function processSyncResponse(resp)
         return
     end
 
-    -- [1b] FIX: Đang training hoặc cần mua upgrade → ở yên, không hop
-    local v4sSync = nil
-    pcall(function() v4sSync = getV4Status(false) end)
-    if v4sSync and (v4sSync.needsTraining or v4sSync.needsPurchase) then
-        matchState.main_job_id = game.JobId
-        return
-    end
-
     -- [2] Kiểm tra group: ai đang có FM hoặc Near FM (fresh data)
     local allNames = {myGroupMainUsername}
     for _, h in ipairs(myGroupHelpers) do table.insert(allNames, h) end
@@ -3433,8 +3425,26 @@ spawn(function()
             end
         elseif fmNow then
             currentFullMoon = true
-            -- Refresh workspace signal mỗi 5s để không stale
-            if nowTick - lastReadyWrite > 5 then writeFMSignal() end
+            -- Refresh workspace signal mỗi 5s — nhưng kông overwrite nếu helper đã write signal mới hơn
+            -- (tránh race condition: main ghi đè signal của helper khiến main không thể đọc được)
+            if nowTick - lastReadyWrite > 5 then
+                local _canWrite = true
+                if SCRIPT_MODE == 1 then
+                    pcall(function()
+                        local _ex = readFMSignal()
+                        if _ex and _ex.username ~= USERNAME
+                            and (_ex.groupId == myGroupId or myGroupId == "")
+                            and _ex.jobId ~= ""
+                            and _ex.jobId ~= game.JobId then
+                            local _sigAge = nowTick - (tonumber(_ex.ts) or 0)
+                            if _sigAge < 15 then
+                                _canWrite = false  -- helper mới write signal dến server khác, giữ nguyên
+                            end
+                        end
+                    end)
+                end
+                if _canWrite then writeFMSignal() end
+            end
         else
             currentFullMoon = false
         end
