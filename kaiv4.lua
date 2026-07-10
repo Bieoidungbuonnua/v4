@@ -3723,108 +3723,145 @@ _G[Players.LocalPlayer.Name] = true
 getgenv().UseSeaUi = true
 
 function createUI()
+    local UserInputService = game:GetService("UserInputService")
+    
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NoNameHubUI"
-    ScreenGui.IgnoreGuiInset = true
+    ScreenGui.Name = "KaitunPiggyUI"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.Parent = CoreGui
 
+    -- Main Panel
     local Frame = Instance.new("Frame")
-    Frame.Size = UDim2.new(1, 0, 1, 0)
-    Frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    Frame.BackgroundTransparency = 0.3
+    Frame.Size = UDim2.new(0, 320, 0, 195)
+    Frame.Position = UDim2.new(0.5, -160, 0, 10)
+    Frame.BackgroundColor3 = Color3.fromRGB(25, 18, 22)
+    Frame.BackgroundTransparency = 0.25
+    Frame.BorderSizePixel = 0
     Frame.Parent = ScreenGui
 
+    -- UI Corner
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 10)
+    Corner.Parent = Frame
+
+    -- UI Stroke (Viền màu hồng neon)
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Color = Color3.fromRGB(255, 105, 180) -- Hot Pink
+    Stroke.Thickness = 2
+    Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    Stroke.Parent = Frame
+
+    -- Title
     local Title = Instance.new("TextLabel")
-    Title.Size = UDim2.new(1, 0, 0.12, 0)
-    Title.Position = UDim2.new(0, 0, 0.10, 0)
+    Title.Size = UDim2.new(1, 0, 0, 30)
+    Title.Position = UDim2.new(0, 0, 0, 5)
     Title.BackgroundTransparency = 1
-    Title.Text = "PiggyV4 - Mtrchill"
-    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Title.TextScaled = true
+    Title.Text = "Kaitun Piggy V4"
+    Title.TextColor3 = Color3.fromRGB(255, 120, 190)
+    Title.TextSize = 16
     Title.Font = Enum.Font.Arcade
     Title.Parent = Frame
 
-    local Icon = Instance.new("ImageLabel")
-    Icon.Size = UDim2.new(0, 220, 0, 220)
-    Icon.Position = UDim2.new(0.5, -110, 0.12, 0)
-    Icon.BackgroundTransparency = 1
-    Icon.Image = "rbxassetid://"
-    Icon.Parent = Frame
+    -- Grid / List container
+    local Container = Instance.new("Frame")
+    Container.Size = UDim2.new(0.92, 0, 0.8, 0)
+    Container.Position = UDim2.new(0.04, 0, 0.18, 0)
+    Container.BackgroundTransparency = 1
+    Container.Parent = Frame
 
-    local PlayerInfo = Instance.new("TextLabel")
-    PlayerInfo.Size = UDim2.new(1, 0, 0.055, 0)
-    PlayerInfo.Position = UDim2.new(0, 0, 0.49, 0)
-    PlayerInfo.BackgroundTransparency = 1
-    PlayerInfo.Text = "Player: Loading..."
-    PlayerInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
-    PlayerInfo.TextScaled = true
-    PlayerInfo.Font = Enum.Font.Arcade
-    PlayerInfo.Parent = Frame
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 3)
+    layout.Parent = Container
 
-    local FragmentInfo = Instance.new("TextLabel")
-    FragmentInfo.Size = UDim2.new(1, 0, 0.05, 0)
-    FragmentInfo.Position = UDim2.new(0, 0, 0.54, 0)
-    FragmentInfo.BackgroundTransparency = 1
-    FragmentInfo.Text = "Fragments: 0"
-    FragmentInfo.TextColor3 = Color3.fromRGB(255, 255, 255)
-    FragmentInfo.TextScaled = true
-    FragmentInfo.Font = Enum.Font.Arcade
-    FragmentInfo.Parent = Frame
+    -- Các dòng label
+    local function createLabel(name, defaultVal, order)
+        local Line = Instance.new("Frame")
+        Line.Size = UDim2.new(1, 0, 0, 16)
+        Line.BackgroundTransparency = 1
+        Line.LayoutOrder = order
+        Line.Parent = Container
 
-    local V4Info = Instance.new("TextLabel")
-    V4Info.Size = UDim2.new(0.94, 0, 0.07, 0)
-    V4Info.Position = UDim2.new(0.03, 0, 0.595, 0)
-    V4Info.BackgroundTransparency = 1
-    V4Info.Text = "V4: Checking..."
-    V4Info.TextColor3 = Color3.fromRGB(255, 220, 90)
-    V4Info.TextScaled = true
-    V4Info.TextWrapped = true
-    V4Info.Font = Enum.Font.Arcade
-    V4Info.Parent = Frame
+        local Label = Instance.new("TextLabel")
+        Label.Size = UDim2.new(0.26, 0, 1, 0)
+        Label.BackgroundTransparency = 1
+        Label.Text = name
+        Label.TextColor3 = Color3.fromRGB(240, 200, 210)
+        Label.TextSize = 13
+        Label.TextXAlignment = Enum.TextXAlignment.Left
+        Label.Font = Enum.Font.Arcade
+        Label.Parent = Line
 
-    local Status = Instance.new("TextLabel")
-    Status.Size = UDim2.new(0.94, 0, 0.075, 0)
-    Status.Position = UDim2.new(0.03, 0, 0.67, 0)
-    Status.BackgroundTransparency = 1
-    Status.Text = "Status: Loading..."
-    Status.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Status.TextScaled = true
-    Status.TextWrapped = true
-    Status.Font = Enum.Font.Arcade
-    Status.Parent = Frame
+        local Val = Instance.new("TextLabel")
+        Val.Size = UDim2.new(0.74, 0, 1, 0)
+        Val.Position = UDim2.new(0.26, 0, 0, 0)
+        Val.BackgroundTransparency = 1
+        Val.Text = defaultVal
+        Val.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Val.TextSize = 13
+        Val.TextXAlignment = Enum.TextXAlignment.Left
+        Val.Font = Enum.Font.Arcade
+        Val.Parent = Line
 
-    local JobIdBox = Instance.new("TextBox")
-    JobIdBox.Size = UDim2.new(0.46, 0, 0.065, 0)
-    JobIdBox.Position = UDim2.new(0.27, 0, 0.78, 0)
-    JobIdBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    JobIdBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    JobIdBox.PlaceholderText = "Input Job ID"
-    JobIdBox.PlaceholderColor3 = Color3.fromRGB(170, 170, 170)
-    JobIdBox.Text = ""
-    JobIdBox.Font = Enum.Font.Arcade
-    JobIdBox.TextScaled = true
-    JobIdBox.ClearTextOnFocus = false
-    JobIdBox.Parent = Frame
+        return Val
+    end
 
-    local JoinButton = Instance.new("TextButton")
-    JoinButton.Size = UDim2.new(0.24, 0, 0.065, 0)
-    JoinButton.Position = UDim2.new(0.38, 0, 0.86, 0)
-    JoinButton.BackgroundColor3 = Color3.fromRGB(0, 100, 200)
-    JoinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    JoinButton.Text = "Join Job ID"
-    JoinButton.Font = Enum.Font.Arcade
-    JoinButton.TextScaled = true
-    JoinButton.Parent = Frame
+    local PlayerVal   = createLabel("Player :", "Loading...", 1)
+    local RoleVal     = createLabel("Role :", "Loading...", 2)
+    local RaceVal     = createLabel("Race :", "Loading...", 3)
+    local FragVal     = createLabel("Frag :", "0", 4)
+    local PairVal     = createLabel("Pair :", "WAITING", 5)
+    local MoonVal     = createLabel("Moon :", "NO FULL MOON", 6)
+    local V4Val       = createLabel("V4 :", "Checking...", 7)
+    local StatusVal   = createLabel("Status :", "Loading...", 8)
 
-    return ScreenGui, Status, JobIdBox, JoinButton, PlayerInfo, FragmentInfo, V4Info
+    -- Đổi màu giá trị cho đồng điệu màu hồng
+    PlayerVal.TextColor3 = Color3.fromRGB(255, 180, 200)
+    RoleVal.TextColor3 = Color3.fromRGB(255, 105, 180)
+    RaceVal.TextColor3 = Color3.fromRGB(255, 180, 200)
+    FragVal.TextColor3 = Color3.fromRGB(255, 220, 100)
+    PairVal.TextColor3 = Color3.fromRGB(255, 105, 180)
+    MoonVal.TextColor3 = Color3.fromRGB(255, 180, 200)
+    V4Val.TextColor3 = Color3.fromRGB(255, 180, 200)
+    StatusVal.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+    -- Cho phép drag thả UI
+    local dragging, dragInput, dragStart, startPos
+    Frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = Frame.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    Frame.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    return ScreenGui, StatusVal, PlayerVal, RoleVal, RaceVal, FragVal, PairVal, MoonVal, V4Val
 end
 
-local UI, StatusLabel, JobIdBox, JoinButton, PlayerInfoLabel, FragmentInfoLabel, V4InfoLabel = createUI()
+local UI, StatusVal, PlayerVal, RoleVal, RaceVal, FragVal, PairVal, MoonVal, V4Val = createUI()
 
 function status(text)
     currentTaskStatus = tostring(text or "idle")
-    if StatusLabel then StatusLabel.Text = "Status: " .. currentTaskStatus end
+    if StatusVal then StatusVal.Text = currentTaskStatus end
 end
 
 status("idle")
@@ -3859,7 +3896,7 @@ function formatV4Info(v4State)
         detail = " | Quest: " .. tostring(v4State.progress)
     end
 
-    return "V4: " .. tostring(v4State.label or "UNKNOWN")
+    return tostring(v4State.label or "UNKNOWN")
         .. detail
         .. " | Energy: " .. tostring(energyPercent) .. "%"
         .. " | Transform: " .. transformText
@@ -3885,23 +3922,16 @@ task.spawn(function()
         local pairText = matchState and matchState.assigned and "PAIRED" or "WAITING"
         local moonText = (isnight() and isfullmoon()) and "FULL MOON" or "NO FULL MOON"
         local v4State = getV4Status(false)
-        if PlayerInfoLabel then
-            PlayerInfoLabel.Text = "Player: " .. USERNAME .. " | Role: " .. roleText .. " | Race: " .. tostring(race)
-        end
-        if FragmentInfoLabel then
-            FragmentInfoLabel.Text = "Fragments: " .. formatNumber(fragments) .. " | Pair: " .. pairText .. " | " .. moonText
-        end
-        if V4InfoLabel then
-            V4InfoLabel.Text = formatV4Info(v4State)
-            V4InfoLabel.TextColor3 = getV4StatusColor(v4State)
+        
+        if PlayerVal then PlayerVal.Text = USERNAME end
+        if RoleVal then RoleVal.Text = roleText end
+        if RaceVal then RaceVal.Text = tostring(race) end
+        if FragVal then FragVal.Text = formatNumber(fragments) end
+        if PairVal then PairVal.Text = pairText end
+        if MoonVal then MoonVal.Text = moonText end
+        if V4Val then
+            V4Val.Text = formatV4Info(v4State)
+            V4Val.TextColor3 = getV4StatusColor(v4State)
         end
     end
-end)
-
-JoinButton.MouseButton1Click:Connect(function()
-    local raw = JobIdBox.Text:gsub("%s+", "")
-    if raw == "" then status("Input empty"); return end
-    status("Joining...")
-    local ok = pcall(function() ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", raw) end)
-    if not ok then status("Join failed") else status("Teleporting...") end
 end)
