@@ -3380,23 +3380,35 @@ spawn(function()
         -- ════════════════════════════════════════════════════
         local v4sForHop = nil
         pcall(function() v4sForHop = getV4Status(false) end)
+
+        local mainNeedsWork = false
+        if not isUper and myGroupMainUsername ~= "" then
+            local mainSync = currentApiAccounts[myGroupMainUsername]
+            if mainSync then
+                if mainSync.needsTraining == true or tostring(mainSync.needsTraining) == "true"
+                   or mainSync.needsPurchase == true or tostring(mainSync.needsPurchase) == "true" then
+                    mainNeedsWork = true
+                end
+            end
+        end
+
         -- isCurrentlyTraining bắt cả helper (helper có needsTraining=false vì faked)
         local skipHopForWork = isCurrentlyTraining
             or (v4sForHop and (v4sForHop.needsTraining or v4sForHop.needsPurchase))
+            or mainNeedsWork
 
         -- Mode 2: không hop (treo trong server chờ FM)
         if SCRIPT_MODE == 2 then skipHopForWork = true end
 
         if not skipHopForWork and nowTick - SCRIPT_START_AT > HOP_STARTUP_DELAY then
-            local hopTarget = nil
-            local canHopFM = next(HopFMWhitelist) == nil or HopFMWhitelist[USERNAME] == true
-
             -- [4a] FM_API: chỉ HopFM whitelist account
             -- Đánh dấu cache khi đã vào đúng sv FM thành công
             if lastFmApiResult == game.JobId then
                 markFMJoined(game.JobId)
                 lastFmApiResult = nil
             end
+        end
+
         -- ════════════════════════════════════════════════════
         -- [5] TRAINING / TRIAL / RESET LOGIC (ĐÃ ĐƠN GIẢN HÓA & ĐỒNG NHẤT 1-1)
         -- ════════════════════════════════════════════════════
@@ -3408,7 +3420,21 @@ spawn(function()
         if matchState and matchState.main_job_id 
             and matchState.main_job_id ~= "" 
             and matchState.main_job_id ~= game.JobId then
-            if not isCurrentlyTraining then
+            
+            local canHop = true
+            if isUper then
+                -- Nếu là Main, đang train, cần train hoặc cần mua upgrade thì không được hop đi đâu cả
+                if isCurrentlyTraining or myV4.needsTraining or myV4.needsPurchase then
+                    canHop = false
+                end
+            else
+                -- Nếu là Helper, mà Main đang cần train hoặc mua upgrade thì cũng không hop đi theo
+                if mainNeedsWork then
+                    canHop = false
+                end
+            end
+            
+            if canHop then
                 hopTarget = matchState.main_job_id
             end
         end
