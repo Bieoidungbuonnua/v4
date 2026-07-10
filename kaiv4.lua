@@ -1496,8 +1496,26 @@ local function processSyncResponse(resp)
     local nowTs = math.floor(v3ServerNow() or os.time())
     local FM_FRESH_SECONDS = 25  -- chỉ trust FM data nếu account update trong 25s qua
 
-    -- [1] Mình đang có FM → ở yên server hiện tại
+    -- [1] Mình đang có FM
     if currentFullMoon then
+        -- Kiểm tra group member ở FM server KHÁC → cần hop vào cùng server để trial
+        -- (bug: main có FM trong sv riêng, helpers ở sv FM khác → V3 workspace 0/3)
+        local allNames = {myGroupMainUsername}
+        for _, h in ipairs(myGroupHelpers) do table.insert(allNames, h) end
+        for _, name in ipairs(allNames) do
+            if name ~= USERNAME then
+                local s = accounts[name]
+                if s and s.jobId and s.jobId ~= "" and s.jobId ~= game.JobId then
+                    local age = nowTs - (tonumber(s.updatedAt) or 0)
+                    if age >= 0 and age <= FM_FRESH_SECONDS and s.fullMoon == true then
+                        -- Group member đang ở FM server khác → hop vào
+                        matchState.main_job_id = tostring(s.jobId)
+                        return
+                    end
+                end
+            end
+        end
+        -- Không ai ở FM server khác → ở yên
         matchState.main_job_id = game.JobId
         return
     end
