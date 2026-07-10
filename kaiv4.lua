@@ -2915,38 +2915,6 @@ function handleFragmentFarming(requiredFragments)
         return false
     end
 
-    if type(farmConfig) == "table" and farmConfig.autotyrant then
-        startTyrantFarming(target)
-        return tyrantFarmingActive
-    end
-    return false
-end
-
-function buyPendingV4Upgrade(v4State, roleLabel)
-    if not v4State or not v4State.needsPurchase then return false end
-    roleLabel = tostring(roleLabel or "Account")
-    local fragments = tonumber(LocalPlayer.Data.Fragments.Value) or 0
-    local cost = tonumber(v4State.cost) or 0
-
-    if cost > 0 and fragments < cost then
-        if handleFragmentFarming(cost) then return true end
-        status(roleLabel .. " needs " .. tostring(cost - fragments) .. " more fragments for V4")
-        return true
-    end
-
-    if tyrantFarmingActive then stopTyrantFarming() end
-    status(roleLabel .. " buying V4 upgrade")
-    local ok, bought = pcall(function() return invokeUpgradeRace("Buy") end)
-    invalidateV4Status()
-    if ok and bought then
-        status(roleLabel .. " V4 upgrade purchased")
-    else
-        status(roleLabel .. " V4 purchase failed - retrying")
-    end
-    task.wait(0.6)
-    return true
-end
-
 function runRaceTrainingWork(trainingState, roleLabel)
     roleLabel = tostring(roleLabel or "Account")
     local character = Players.LocalPlayer.Character
@@ -2962,7 +2930,6 @@ function runRaceTrainingWork(trainingState, roleLabel)
         return true
     end
     if initialV4State.canTrial and not isAlly then
-        -- Helper luôn canTrial=true (faked), nên skip check này cho helper
         status(roleLabel .. " training complete - ready for trial")
         return true
     end
@@ -2979,102 +2946,34 @@ function runRaceTrainingWork(trainingState, roleLabel)
     end
 
     if tyrantFarmingActive then stopTyrantFarming() end
-
-    -- Set flag: đang training → block hop trong main loop
     isCurrentlyTraining = true
 
-    local fullMoonTraining = isnight() and isfullmoon()
-    local remainingText = type(trainingState) == "number" and (" (" .. tostring(trainingState) .. " left)") or ""
-    status(roleLabel .. (fullMoonTraining and " Full Moon - training" or " training") .. remainingText)
-
-    local nextReadyCheck = 0
-    local cycleFinished = false
-    function shouldStopTrainingCycle()
-        if cycleFinished then return true end
-        if tick() < nextReadyCheck then return false end
-        nextReadyCheck = tick() + 0.8
-
-        -- Helper: check RaceTransformed còn tồn tại không (= đang train)
-        -- Không dùng canTrial vì helper luôn canTrial=true (faked)
-        if isAlly then
-            local char = Players.LocalPlayer.Character
-            if not char or not char:FindFirstChild("RaceTransformed") then
-                cycleFinished = true
-                status(roleLabel .. " training session ended")
-                return true
-            end
-            return false
-        end
-
-        local state = getV4Status(true)
-        if state.canTrial then
-            cycleFinished = true
-            status(roleLabel .. " training complete - ready for trial")
-            return true
-        end
-        if state.complete then
-            cycleFinished = true
-            status(roleLabel .. " Race V4 completed")
-            return true
-        end
-        if state.needsPurchase then
-            cycleFinished = true
-            status(roleLabel .. " training complete - V4 upgrade available")
-            return true
-        end
-        return false
-    end
-
-    pcall(function()
-        local energy = Players.LocalPlayer.Character:FindFirstChild("RaceEnergy")
-        local transformed = Players.LocalPlayer.Character:FindFirstChild("RaceTransformed")
-        if energy and energy.Value >= 1 and transformed and not transformed.Value then
-            VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-            VirtualInputManager:SendKeyEvent(false, "Y", false, game)
-        end
-    end)
-
-    -- Lấy island 1 lần, không re-query trong suốt cycle
-    local islandName = assignTrainingIsland()
-    if not islandName then
-        -- Tất cả island bận hoặc API lỗi → reset flag và chờ vòng sau
-        status(roleLabel .. " no island available - retry next cycle")
-        isCurrentlyTraining = false
-        return false
-    end
+    -- Lấy đảo training đầu tiên trong config
+    local islandList = getgenv().Config["Training Islands"] or { "Tiki Outpost" }
+    local islandName = islandList[1] or "Tiki Outpost"
     local islandData = TrainingIslandData[islandName]
     if not islandData then
-        status(roleLabel .. " unknown island: " .. tostring(islandName) .. " - retry")
-        forceReassignIsland()  -- xóa cache island sắt
+        status(roleLabel .. " unknown island: " .. tostring(islandName))
         isCurrentlyTraining = false
+        task.wait(1)
         return false
     end
-    local trainingPositions = nil
-    if islandData.Positions then
-        trainingPositions = islandData.Positions
-    elseif islandData.Position then
-        trainingPositions = { islandData.Position }
-    else
+
+    local trainingPositions = islandData.Positions or { islandData.Position }
+    local trainingPosition = trainingPositions[1]
+    if not trainingPosition then
         status("Island has no position data")
         isCurrentlyTraining = false
+        task.wait(1)
         return false
     end
 
-    local currentPosIndex = 1
-    function getCurrentPos()
-        return trainingPositions[currentPosIndex]
-    end
-
-    function advancePosition()
-        currentPosIndex = currentPosIndex + 1
-        if currentPosIndex > #trainingPositions then currentPosIndex = 1 end
-    end
-
-    local trainingPosition = getCurrentPos()
+    -- Tween đến đảo
     if getdis(trainingPosition) >= 1500 then
         status(roleLabel .. " moving to [" .. tostring(islandName) .. "] for training")
         topos(trainingPosition)
         isCurrentlyTraining = false
+        task.wait(2)
         return false
     end
 
@@ -3083,97 +2982,129 @@ function runRaceTrainingWork(trainingState, roleLabel)
         table.insert(mobNames, name)
     end
 
-    local ATTACK_RANGE = 15  -- khoảng cách đánh
-    local lastTweenAt  = 0   -- tránh tween quá thường xuyên
+    local ATTACK_RANGE = 15
+    local lastTweenAt  = 0
+    local nextCheck = 0
 
-    while not shouldStopTrainingCycle() do
+    while true do
+        task.wait(0.1)
+        -- Kiểm tra xong training chưa
+        if tick() >= nextCheck then
+            nextCheck = tick() + 1
+            local state = getV4Status(true)
+            if state.canTrial or state.complete or state.needsPurchase then
+                break
+            end
+            -- Nếu biến mất RaceTransformed (hết dạng transform) -> kết thúc session
+            local char = Players.LocalPlayer.Character
+            if not char or not char:FindFirstChild("RaceTransformed") then
+                break
+            end
+        end
+
+        -- Tiến hành sạc nộ và chém quái
+        pcall(function()
+            local currentCharacter = Players.LocalPlayer.Character
+            local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
+            if energy and energy.Value >= 1 then
+                VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+                VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+            end
+        end)
+
         local mob = CheckMonster(table.unpack(mobNames))
         if not mob then
             AttackConfig.AutoClickEnabled = true
             status(roleLabel .. " [" .. tostring(islandName) .. "] waiting for mobs...")
-            topos(getCurrentPos())
-            task.wait(0.8)
-            advancePosition()
+            topos(trainingPosition)
+            task.wait(0.5)
         else
+            module:eq()
+            module:haki()
+            pcall(function()
+                local hrp = mob:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local dist = getdis(hrp.CFrame)
+                    local nowT = tick()
+                    if dist > ATTACK_RANGE and nowT - lastTweenAt > 0.5 then
+                        lastTweenAt = nowT
+                        topos(hrp.CFrame * CFrame.new(0, 5, 0))
+                    end
+                end
+            end)
+        end
+    end
+
+    invalidateV4Status()
+    isCurrentlyTraining = false
+    return true
+end
+
+-- ════════════════════════════════════════════════════
+-- TRIAL HELPERS
+-- ════════════════════════════════════════════════════
+function runTrialMinigame(myrace, race_trial_place)
+    if myrace == "Mink" then
+        topos(workspace.Map.MinkTrial.Ceiling.CFrame * CFrame.new(0, -20, 0))
+    elseif myrace == "Skypiea" then
+        pcall(function() topos(workspace.Map.SkyTrial.Model.FinishPart.CFrame) end)
+    elseif myrace == "Cyborg" then
+        pcall(function() topos(workspace.Map.CyborgTrial.Floor.CFrame * CFrame.new(0, 500, 0)) end)
+    elseif myrace == "Human" or myrace == "Ghoul" then
+        for i, v in pairs(workspace.Enemies:GetChildren()) do
+            if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+                if getdis(v.HumanoidRootPart.CFrame, race_trial_place.CFrame) < 1500 then
+                    repeat
+                        task.wait(); module:eq(); module:haki()
+                        pcall(function() topos(v:FindFirstChild("HumanoidRootPart").CFrame * CFrame.new(0, 30, 0)) end)
+                    until not v or not v:FindFirstChild("HumanoidRootPart") or not v:FindFirstChild("Humanoid") or v.Humanoid.Health <= 0
+                end
+            end
+        end
+    elseif myrace == "Fishman" then
+        for i, v in pairs(workspace.SeaBeasts:GetChildren()) do
+            pcall(function()
+                if v:FindFirstChild("Health") and v.Health.Value > 0 and v:FindFirstChild("HumanoidRootPart") and getdis(v.HumanoidRootPart.CFrame, race_trial_place) < 1500 then
+                    repeat
+                        task.wait()
+                        if not Players.LocalPlayer.Backpack:FindFirstChild("Sharkman Karate") then
+                            ReplicatedStorage.Remotes.CommF_:InvokeServer("BuySharkmanKarate")
+                        end
+                        topos(v.HumanoidRootPart.CFrame * CFrame.new(0, 500, 0))
+                        _G.SHOULDSPAMSKILLS = true
+                    until not v or not v:FindFirstChild("Health") or v.Health.Value <= 0 or not v:FindFirstChild("HumanoidRootPart")
+                    _G.SHOULDSPAMSKILLS = false
+                end
+            end)
+        end
+    end
+end
+
+function killHelpersToWin()
+    for plr, i in pairs(getplayers(true)) do
+        if plr then
             repeat
                 task.wait()
-                module:eq()
-                module:haki()
                 pcall(function()
-                    local currentCharacter = Players.LocalPlayer.Character
-                    local energy = currentCharacter and currentCharacter:FindFirstChild("RaceEnergy")
-                    AttackConfig.AutoClickEnabled = true
-                    status(roleLabel .. " [" .. tostring(islandName) .. "] killing mobs + charge")
-                    -- Chỉ tween khi xa mob VÀ đã qua 0.5s kể từ tween trước
-                    -- Tránh liên tục cancel tween mỗi frame → bay qua bay lại
-                    local hrp = mob:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        local dist = getdis(hrp.CFrame)
-                        local nowT = tick()
-                        if dist > ATTACK_RANGE and nowT - lastTweenAt > 0.5 then
-                            lastTweenAt = nowT
-                            topos(hrp.CFrame * CFrame.new(0, 5, 0))
-                        end
-                    end
-                    if energy and energy.Value >= 1 then
-                        VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-                        VirtualInputManager:SendKeyEvent(false, "Y", false, game)
-                    end
+                    topos(plr.HumanoidRootPart.CFrame * CFrame.new((function()
+                        local x, y, z = 0, 3, 0
+                        x = math.random(1, 4); z = math.random(1, 4)
+                        if math.random(1, 2) == 1 then x = x * -1 end
+                        if math.random(1, 2) == 1 then z = z * -1 end
+                        return x, y, z
+                    end)()))
                 end)
-            until not checkmob_(mob) or shouldStopTrainingCycle()
+            until not plr or not plr.Parent or not plr:FindFirstChild("Humanoid")
+                or not plr:FindFirstChild("HumanoidRootPart") or plr.Humanoid.Health <= 0
+                or workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 1
         end
     end
-
-    AttackConfig.AutoClickEnabled = true
-    invalidateV4Status()
-    forceReassignIsland()
-    isCurrentlyTraining = false
-    return cycleFinished
 end
 
-function runWaitingAccountWork()
-    local roleLabel = isUper and "Main" or "Help"
-    local fullMoonNow = isnight() and isfullmoon()
-    -- Luôn đọc fresh: sau invalidateV4Status(), cache đã clear → fetch mới từ server
-    local v4State = getV4Status(false)
 
-    -- FIX: ưu tiên training/needsPurchase TRƯỚC canTrial
-    -- Tránh cache stale (canTrial=true cũ) chặn training loop
-    if v4State.needsTraining or v4State.needsPurchase then
-        if v4State.needsPurchase then
-            buyPendingV4Upgrade(v4State, roleLabel)
-            return
-        end
-        if tyrantFarmingActive then stopTyrantFarming() end
-        local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
-        local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
-        if trainingDone then invalidateV4Status() end
-        return
-    end
 
-    if v4State.canTrial then
-        if tyrantFarmingActive then stopTyrantFarming() end
-        if fullMoonNow then
-            status("Full Moon + trial-ready - waiting auto pair 1 Main + 2 Help")
-        else
-            status("Ready for trial - waiting Full Moon and auto pair")
-        end
-        return
-    end
 
-    if v4State.complete then
-        if tyrantFarmingActive then stopTyrantFarming() end
-        status("Race V4 completed - no more training needed")
-        return
-    end
 
-    if tyrantFarmingActive then stopTyrantFarming() end
-    local trainingState = v4State.remainingTraining or (v4State.needsTraining and "training" or v4State.key)
-    local trainingDone = runRaceTrainingWork(trainingState, roleLabel)
-    if trainingDone then
-        invalidateV4Status()
-    end
-end
 
 -- ══════════════════════════════════════════════════════════════
 -- DEDICATED API SYNC LOOP — hoàn toàn độc lập với main loop
@@ -3362,352 +3293,94 @@ spawn(function()
             if not currentFullMoon and FM_API_BASE ~= "" and canHopFM
                 and nowTick - SCRIPT_START_AT > FM_HOP_DELAY then
                 if nowTick - lastFmApiAt >= FM_API_INTERVAL then
-                    lastFmApiAt = nowTick
-                    status("FM API: tìm server FM...")
-                    task.spawn(function()
-                        local found = findFMServer()
-                        if found and found ~= game.JobId then
-                            lastFmApiResult = found
-                        else
-                            lastFmApiResult = nil
-                        end
-                    end)
-                end
-                if lastFmApiResult and lastFmApiResult ~= game.JobId then
-                    hopTarget = lastFmApiResult
-                    status("FM API → hop " .. tostring(hopTarget):sub(1,8) .. "...")
-                end
-            end
+                    las        -- ════════════════════════════════════════════════════
+        -- [5] TRAINING / TRIAL / RESET LOGIC (ĐÃ ĐƠN GIẢN HÓA)
+        -- ════════════════════════════════════════════════════
+        local myV4 = getV4Status(false)
+        local fullMoonNow = isnight() and isfullmoon()
 
-            -- [4b] API matchState.main_job_id (sync từ processSyncResponse)
-            if not hopTarget and matchState
-                and matchState.main_job_id and matchState.main_job_id ~= ""
-                and matchState.main_job_id ~= game.JobId then
-                hopTarget = matchState.main_job_id
-            end
+        if isUper then
+            -- ════════════ MAIN ACCOUNT LOGIC ════════════
+            if myV4.complete then
+                status("Main V4 completed!")
+                task.wait(5)
+            elseif myV4.needsPurchase then
+                status("Main cần mua Upgrade -> Đang mua...")
+                buyPendingV4Upgrade(myV4, "Main")
+                task.wait(1)
+            elseif myV4.needsTraining then
+                status("Main cần Training -> Đang train...")
+                runRaceTrainingWork(myV4.remainingTraining or "training", "Main")
+            elseif myV4.canTrial then
+                if fullMoonNow then
+                    status("Main: Đang thực hiện Trial...")
+                    if tyrantFarmingActive then stopTyrantFarming() end
+                    
+                    -- 1. Teleport lên Temple of Time + bay đến đúng door của race
+                    forceMatchedAccountToTemple()
 
-            if hopTarget then
-                if hopTarget ~= lastHopTarget then
-                    -- Target mới: bắt đầu timer, teleport ngay
-                    lastHopAt     = nowTick
-                    lastHopTarget = hopTarget
-                    status("Hopping → " .. tostring(hopTarget):sub(1, 8) .. "...")
-                    pcall(function()
-                        ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
-                    end)
-                    task.wait(5)
-                    continue
-                else
-                    local elapsed = nowTick - lastHopAt
-                    if elapsed >= 6 then
-                        -- 6s: vẫn chưa vào được → cache jobId thất bại, refetch ngay
-                        status("⏱ FM join timeout 6s → bỏ " .. tostring(hopTarget):sub(1,8) .. " + tìm sv mới")
-                        markFMJoined(hopTarget)
-                        lastFmApiResult = nil
-                        lastFmApiAt     = 0
-                        lastHopTarget   = ""
-                        if elapsed >= 120 and not canHopFM then
-                            if matchState then matchState.main_job_id = game.JobId end
-                            status("⚠ 2min timeout - HopFM tìm server mới")
-                        end
+                    -- 2. Đã ở door -> kích hoạt race
+                    tryActivateAbility()
+
+                    -- 3. Thực hiện minigame trial hoặc tiêu diệt helpers khi FFA bắt đầu
+                    local myrace = Players.LocalPlayer.Data.Race.Value
+                    local trialPlace = races_trial_place[myrace]
+                    if trialPlace and getdis(trialPlace.CFrame) < 1500 then
+                        runTrialMinigame(myrace, trialPlace)
                     else
-                        -- Retry teleport
-                        status("Retry hop → " .. tostring(hopTarget):sub(1, 8) .. "...")
+                        local ffaStarted = false
                         pcall(function()
-                            ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
+                            ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+                        end)
+                        if ffaStarted then
+                            status("Main: Đang PvP tiêu diệt Helper để thắng trial...")
+                            killHelpersToWin()
+                        end
+                    end
+                else
+                    status("Main ready trial - Đang chờ Full Moon...")
+                    task.wait(1)
+                end
+            end
+        else
+            -- ════════════ HELPER ACCOUNT LOGIC ════════════
+            if fullMoonNow then
+                status("Helper: Đang hỗ trợ Trial...")
+                if tyrantFarmingActive then stopTyrantFarming() end
+
+                -- 1. Teleport lên Temple + bay đến door
+                forceMatchedAccountToTemple()
+
+                -- 2. Kích hoạt race cùng lúc
+                tryActivateAbility()
+
+                -- 3. Thực hiện minigame trial hoặc tự reset khi vào phase FFA
+                local myrace = Players.LocalPlayer.Data.Race.Value
+                local trialPlace = races_trial_place[myrace]
+                if trialPlace and getdis(trialPlace.CFrame) < 1500 then
+                    runTrialMinigame(myrace, trialPlace)
+                else
+                    local ffaStarted = false
+                    pcall(function()
+                        ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+                    end)
+                    if ffaStarted then
+                        status("Helper: Chờ 2s rồi tự reset để Main win...")
+                        task.wait(2)
+                        pcall(function()
+                            Players.LocalPlayer.Character.Humanoid.Health = 0
                         end)
                         task.wait(5)
-                        continue
                     end
-                end
-            end
-        end
-
-        -- ════════════════════════════════════════════════════
-        -- [5] TRAINING / TRIAL (dựa vào matchState.assigned từ [2])
-        -- ════════════════════════════════════════════════════
-        if not matchState or not matchState.assigned then
-            -- pcall: tránh 1 lỗi nhỏ làm crash toàn bộ main loop
-            local wok, werr = pcall(runWaitingAccountWork)
-            if not wok then
-                isCurrentlyTraining = false  -- safety reset
-                status("⚠ training err: " .. tostring(werr):sub(1, 60))
-                task.wait(1)
-            end
-            task.wait(0.2)
-            continue
-        end
-
-        -- FIX: dùng fresh V4 check thay vì cache
-        -- Tránh stale canTrial=true sau khi training reset
-        local pairedV4State = getV4Status(false)
-        -- Nếu cache có thể stale (canTrial=true nhưng needsTraining=true), force fresh
-        if pairedV4State.canTrial and pairedV4State.needsTraining then
-            invalidateV4Status()
-            pairedV4State = getV4Status(true)
-        end
-        local pairedReady = pairedV4State.canTrial == true and not pairedV4State.needsTraining
-        local pairedTrainingState = pairedV4State.remainingTraining
-            or (pairedV4State.needsTraining and "training" or pairedV4State.key)
-
-        if isUper and isMyUpgearTurn() then
-            local trialOrTimerActive = isInsideOwnTrial()
-            local ffaStarted = false
-            pcall(function()
-                ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-            end)
-            if trialOrTimerActive or ffaStarted then
-                pairTrialCycleStarted = true
-            end
-        end
-
-        if not pairedReady then
-            pairTempleReadyAt = 0
-            lastTempleReadyCount = 0
-            local trialCycleConfirmed = pairTrialCycleStarted or pairV3ActivatedAt > 0 or handledRoundId ~= "" or isInsideOwnTrial()
-            local postTrialWorkAvailable = pairedV4State.needsTraining == true or pairedV4State.needsPurchase == true
-            if PAIR_RELEASE_AFTER_TRIAL and isUper and isMyUpgearTurn() and trialCycleConfirmed and postTrialWorkAvailable then
-                pairTrialCycleStarted = true
-                status("Trial completed - releasing pair for next Main")
-                releaseCurrentGroup("trial_completed")
-                task.wait(1)
-                continue
-            end
-
-            if pairedV4State.complete then
-                if tyrantFarmingActive then stopTyrantFarming() end
-                status("Paired account has completed Race V4")
-                if isUper and isMyUpgearTurn() then releaseCurrentGroup("race_v4_completed") end
-                task.wait(1)
-            elseif pairedV4State.needsPurchase then
-                buyPendingV4Upgrade(pairedV4State, isUper and "Main" or "Help")
-                task.wait(0.2)
-            else
-                if tyrantFarmingActive then stopTyrantFarming() end
-                status("Paired but not trial-ready - continue training")
-                -- pcall: tránh crash main loop khi training có lỗi
-                local tok, terr = pcall(runRaceTrainingWork, pairedTrainingState, isUper and "Main" or "Help")
-                if not tok then
-                    isCurrentlyTraining = false
-                    status("⚠ pair train err: " .. tostring(terr):sub(1, 50))
-                end
-                task.wait(0.2)
-            end
-            continue
-        end
-
-        local fullMoonNow = isnight() and isfullmoon()
-        if not fullMoonNow then
-            pairTempleReadyAt = 0
-            lastTempleReadyCount = 0
-            -- FIX: dù pairedReady=true, nếu account vẫn cần training → training ngay
-            -- Tránh stuck "waiting Full Moon" khi cache stale canTrial=true
-            local freshV4 = getV4Status(true)  -- force fresh để không tin vào cache
-            if freshV4.needsTraining or freshV4.needsPurchase then
-                invalidateV4Status()       -- reset cache
-                matchState.assigned = false  -- thoát paired mode, về runWaitingAccountWork
-                runWaitingAccountWork()
-                task.wait(0.2)
-                continue
-            end
-            if PAIR_STICKY_UNTIL_TRIAL_COMPLETE then
-                status("Trial-ready pair locked until this Trial is completed")
-            elseif isUper and isMyUpgearTurn() and pairAssignedAt > 0 and tick() - pairAssignedAt > 8 then
-                releaseCurrentGroup("full_moon_ended")
-            else
-                status("Trial-ready pair reserved - waiting Full Moon")
-            end
-            task.wait(1)
-            continue
-        end
-
-        if tyrantFarmingActive then stopTyrantFarming() end
-
-        if pairAllInJobAt > 0 and pairTempleReadyAt <= 0 then
-            pairTempleReadyAt = tick()
-            lastTempleReadyCount = 0
-        end
-
-        forceMatchedAccountToTemple()
-        if isUper and isMyUpgearTurn() and pairTempleReadyAt > 0 then
-            local timeoutAnchor = math.max(pairTempleReadyAt, lastTempleProgressAt or 0)
-            if tick() - timeoutAnchor > PAIR_TEMPLE_TIMEOUT then
-                local readyCount = 0
-                pcall(function() readyCount = select(1, readReadyFiles()) end)
-
-                if readyCount > lastTempleReadyCount then
-                    lastTempleReadyCount = readyCount
-                    pairTempleReadyAt = tick()
-                elseif readyCount < 3 and not isInsideOwnTrial() then
-                    if PAIR_STICKY_UNTIL_TRIAL_COMPLETE then
-                        pairTempleReadyAt = tick()
-                        lastTempleProgressAt = tick()
-                        lastTempleDistance = math.huge
-                        readySent = false
-                        status("Temple ready timeout - keeping pair until Trial completes")
-                    else
-                        releaseCurrentGroup("temple_ready_timeout")
-                        task.wait(1)
-                        continue
-                    end
-                end
-            end
-        end
-
-        local doorCallOk, doorResult = pcall(function()
-            return ReplicatedStorage.Remotes.CommF_:InvokeServer("CheckTempleDoor")
-        end)
-        local checktempledoor = doorCallOk and doorResult == true
-        if not checktempledoor then
-            status(doorCallOk and "Temple door is not available yet" or "CheckTempleDoor remote failed")
-            task.wait(0.5)
-        else
-            _G.ShouldSendData = false
-            local ab, AB = trialable()
-            if not ab then
-                if AB == "raiding" then
-                    local boss = workspace.Enemies:FindFirstChild("Cake Prince") 
-                        or workspace.Enemies:FindFirstChild("Dough King")
-                    if boss then
-                        repeat wait()
-                            pcall(function() topos(boss.HumanoidRootPart.CFrame * CFrame.new(0, 25, 0)) end)
-                            module:eq()
-                            module:haki()
-                        until not checkmob_(boss)
-                    end
-                elseif AB == "training" or type(AB) == "number" then
-                    -- Sau trial, needsTraining -> chạy training đúng island
-                    status("Not trial-ready -> running training work")
-                    runWaitingAccountWork()
-                    task.wait(0.5)
-                else
-                    -- Các state khác (needsPurchase, v.v.)
-                    runWaitingAccountWork()
-                    task.wait(0.5)
-                end
-            end
-            _G.ShouldSendData = true
-            if not workspace.Map:FindFirstChild("Temple of Time") then
-                local templeRef = ReplicatedStorage.MapStash:FindFirstChild("Temple of Time")
-                if templeRef then templeRef.Parent = workspace.Map end
-            elseif workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0 then
-                if isMain then
-                    status("Killing players after trial...")
-                    for plr, i in pairs(getplayers(true)) do
-                        if plr then
-                            repeat
-                                task.wait()
-                                pcall(function()
-                                    topos(plr.HumanoidRootPart.CFrame * CFrame.new((function()
-                                        local x, y, z = 0, 3, 0
-                                        x = math.random(1, 4); z = math.random(1, 4)
-                                        if math.random(1, 2) == 1 then x = x * -1 end
-                                        if math.random(1, 2) == 1 then z = z * -1 end
-                                        return x, y, z
-                                    end)()))
-                                end)
-                            until not plr or not plr.Parent or not plr:FindFirstChild("Humanoid")
-                                or not plr:FindFirstChild("HumanoidRootPart") or plr.Humanoid.Health <= 0
-                                or workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 1
-                        end
-                    end
-                -- Main (isUper and isMyUpgearTurn()) KHÔNG BAO GIỜ tự reset
-                -- character trong lúc trial đang chạy, bất kể vai trò cũ
-                -- của API trả về đúng/sai. Chỉ Help (Ally hoặc Helper không
-                -- phải lượt) mới reset để dọn đường cho Main.
-                elseif isUper and isMyUpgearTurn() then
-                    status("Main is in trial - never auto-reset")
-                elseif isAlly then
-                    status("Resetting after trial...")
-                    Players.LocalPlayer.Character.Humanoid.Health = 0
-                elseif isUper and not isMyUpgearTurn() then
-                    status("Helper - resetting after trial...")
-                    Players.LocalPlayer.Character.Humanoid.Health = 0
                 end
             else
-                local race_trial_place
-                if races_trial_place[Players.LocalPlayer.Data.Race.Value] then
-                    race_trial_place = races_trial_place[Players.LocalPlayer.Data.Race.Value]
-                end
-                if race_trial_place and getdis(race_trial_place.CFrame) < 1500 then
-                    status("Doing trial")
-                    local myrace = Players.LocalPlayer.Data.Race.Value
-                    if myrace == "Mink" then
-                        topos(workspace.Map.MinkTrial.Ceiling.CFrame * CFrame.new(0, -20, 0))
-                    elseif myrace == "Skypiea" then
-                        pcall(function() topos(workspace.Map.SkyTrial.Model.FinishPart.CFrame) end)
-                    elseif myrace == "Cyborg" then
-                        pcall(function() topos(workspace.Map.CyborgTrial.Floor.CFrame * CFrame.new(0, 500, 0)) end)
-                    elseif myrace == "Human" or myrace == "Ghoul" then
-                        for i, v in pairs(workspace.Enemies:GetChildren()) do
-                            if v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
-                                if getdis(v.HumanoidRootPart.CFrame, race_trial_place.CFrame) < 1500 then
-                                    repeat
-                                        task.wait(); module:eq(); module:haki()
-                                        pcall(function() topos(v:FindFirstChild("HumanoidRootPart").CFrame * CFrame.new(0, 30, 0)) end)
-                                    until not v or not v:FindFirstChild("HumanoidRootPart") or not v:FindFirstChild("Humanoid") or v.Humanoid.Health <= 0
-                                end
-                            end
-                        end
-                    elseif myrace == "Fishman" then
-                        for i, v in pairs(workspace.SeaBeasts:GetChildren()) do
-                            pcall(function()
-                                if v:FindFirstChild("Health") and v.Health.Value > 0 and v:FindFirstChild("HumanoidRootPart") and getdis(v.HumanoidRootPart.CFrame, race_trial_place) < 1500 then
-                                    repeat
-                                        task.wait()
-                                        if not Players.LocalPlayer.Backpack:FindFirstChild("Sharkman Karate") then
-                                            ReplicatedStorage.Remotes.CommF_:InvokeServer("BuySharkmanKarate")
-                                        end
-                                        topos(v.HumanoidRootPart.CFrame * CFrame.new(0, 500, 0))
-                                        _G.SHOULDSPAMSKILLS = true
-                                    until not v or not v:FindFirstChild("Health") or v.Health.Value <= 0 or not v:FindFirstChild("HumanoidRootPart")
-                                    _G.SHOULDSPAMSKILLS = false
-                                end
-                            end)
-                        end
-                    end
-                else
-                    if Players.LocalPlayer.PlayerGui.Main.Timer.Visible == false then
-                        local khang = nil
-                        local timeout = 0
-                        repeat
-                            task.wait(); khang = getdoor(); timeout = timeout + 1
-                            if timeout > 300 then break end
-                        until khang ~= nil
-                        if khang and getdis(khang.CFrame) < 1500 then
-                            topos(khang.CFrame)
-                            status("At door - waiting")
-                            if trialable() then
-                                if isUper then
-                                    if isMyUpgearTurn() then
-                                        readySent = true
-                                        status("Ready trials")
-                                    else
-                                        readySent = false
-                                        status("waiting my turn")
-                                        task.wait(1)
-                                    end
-                                elseif isAlly then
-                                    readySent = true
-                                    status("Helper ready")
-                                end
-                            else
-                                if isUper and not isMyUpgearTurn() then
-                                    status("waiting turn")
-                                    task.wait(1)
-                                end
-                            end
-                        else
-                            ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", Vector3.new(28310.0234, 14895.1123, 109.456741))
-                        end
-                    end
-                end
+                status("Helper ready - Đang chờ Full Moon...")
+                task.wait(1)
             end
-
-            if tryActivateAbility() then task.wait(0.2) end
         end
     end
 end)
+
 
 local fruits = {
     ["Buddha-Buddha"] = true, ["T-Rex-T-Rex"] = true, ["Dragon-Dragon"] = true, ["Yeti-Yeti"] = true,
