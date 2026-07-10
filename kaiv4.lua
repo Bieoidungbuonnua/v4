@@ -1250,6 +1250,7 @@ local urgentSyncNeeded = false -- FM vừa đổi trạng thái → gửi API ng
 
 local function writeFMSignal()
     if not FILE_SYNC_AVAILABLE then return end
+    if isUper then return end  -- Main không ghi FM signal, để helper ghi (tránh race condition ghi đè)
     pcall(function()
         local ts = math.floor(v3ServerNow() or os.time())
         safeWriteJson(FM_SIGNAL_PATH, {
@@ -1522,31 +1523,7 @@ local function processSyncResponse(resp)
     local nowTs = math.floor(v3ServerNow() or os.time())
     local FM_FRESH_SECONDS = 25  -- chỉ trust FM data nếu account update trong 25s qua
 
-    -- [1] Mình đang có FM
-    if currentFullMoon then
-        -- Kiểm tra group member ở FM server KHÁC → cần hop vào cùng server để trial
-        -- (bug: main có FM trong sv riêng, helpers ở sv FM khác → V3 workspace 0/3)
-        local allNames = {myGroupMainUsername}
-        for _, h in ipairs(myGroupHelpers) do table.insert(allNames, h) end
-        for _, name in ipairs(allNames) do
-            if name ~= USERNAME then
-                local s = accounts[name]
-                if s and s.jobId and s.jobId ~= "" and s.jobId ~= game.JobId then
-                    local age = nowTs - (tonumber(s.updatedAt) or 0)
-                    if age >= 0 and age <= FM_FRESH_SECONDS and s.fullMoon == true then
-                        -- Group member đang ở FM server khác → hop vào
-                        matchState.main_job_id = tostring(s.jobId)
-                        return
-                    end
-                end
-            end
-        end
-        -- Không ai ở FM server khác → ở yên
-        matchState.main_job_id = game.JobId
-        return
-    end
-
-    -- [2] Kiểm tra group: ai đang có FM hoặc Near FM (fresh data)
+    -- [2] Kiểm tra group: ai đang có FM (fresh data) — logic đồng nhất cho cả main lẫn helper
     local allNames = {myGroupMainUsername}
     for _, h in ipairs(myGroupHelpers) do table.insert(allNames, h) end
     for _, name in ipairs(allNames) do
@@ -1555,12 +1532,11 @@ local function processSyncResponse(resp)
             if s and s.jobId and s.jobId ~= "" then
                 local age = nowTs - (tonumber(s.updatedAt) or 0)
                 if age >= 0 and age <= FM_FRESH_SECONDS then
-                    -- Full Moon: hop ngay
                     if s.fullMoon == true then
                         matchState.main_job_id = tostring(s.jobId)
                         return
                     end
-                    -- Near FM: helper hop vào trước để chờ; main không hop nearFM (tránh kờ trong sv đang chờ)
+                    -- Near FM: chỉ helper hop vào trước để chờ
                     if s.nearFM == true and not isUper then
                         matchState.main_job_id = tostring(s.jobId)
                         return
@@ -1570,7 +1546,7 @@ local function processSyncResponse(resp)
         end
     end
 
-    -- [3] Không ai có FM/Near FM (hoặc data stale) → ở yên
+    -- [3] Không ai có FM (hoặc data stale) → ở yên
     matchState.main_job_id = game.JobId
 end
 
@@ -3451,25 +3427,9 @@ spawn(function()
             end
         elseif fmNow then
             currentFullMoon = true
-            -- Refresh workspace signal mỗi 5s — nhưng kông overwrite nếu helper đã write signal mới hơn
-            -- (tránh race condition: main ghi đè signal của helper khiến main không thể đọc được)
-            if nowTick - lastReadyWrite > 5 then
-                local _canWrite = true
-                if SCRIPT_MODE == 1 then
-                    pcall(function()
-                        local _ex = readFMSignal()
-                        if _ex and _ex.username ~= USERNAME
-                            and (_ex.groupId == myGroupId or myGroupId == "")
-                            and _ex.jobId ~= ""
-                            and _ex.jobId ~= game.JobId then
-                            local _sigAge = nowTick - (tonumber(_ex.ts) or 0)
-                            if _sigAge < 15 then
-                                _canWrite = false  -- helper mới write signal dến server khác, giữ nguyên
-                            end
-                        end
-                    end)
-                end
-                if _canWrite then writeFMSignal() end
+            -- Chỉ helper refresh FM signal (main không ghi để tránh đè signal của helper)
+            if not isUper and nowTick - lastReadyWrite > 5 then
+                writeFMSignal()
             end
         else
             currentFullMoon = false
