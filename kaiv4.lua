@@ -1953,6 +1953,53 @@ isCurrentGroupInThisServer = function()
     return tostring(matchState.main_job_id or "") == tostring(game.JobId)
 end
 
+-- ── WORKSPACE FILE SYNC UTILS ──
+local FILE_SYNC_AVAILABLE = type(writefile) == "function"
+    and type(readfile) == "function"
+    and type(isfile) == "function"
+    and type(makefolder) == "function"
+    and type(isfolder) == "function"
+
+local function safeMakeFolder(path)
+    if not FILE_SYNC_AVAILABLE then return false end
+    if isfolder(path) then return true end
+    return pcall(makefolder, path)
+end
+
+local function safeReadJson(path)
+    if not FILE_SYNC_AVAILABLE or not isfile(path) then return nil end
+    local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+    if ok and type(data) == "table" then return data end
+    return nil
+end
+
+local function safeWriteJson(path, data)
+    if not FILE_SYNC_AVAILABLE then return false end
+    local ok = pcall(function() writefile(path, HttpService:JSONEncode(data)) end)
+    return ok
+end
+
+local function groupDirectory()
+    local groupId = currentGroupId()
+    if groupId == "" then return nil end
+    if not safeMakeFolder(V3_FILE_ROOT) then return nil end
+    local folder = V3_FILE_ROOT .. "/" .. sanitizeFilePart(groupId)
+    if not safeMakeFolder(folder) then return nil end
+    return folder
+end
+
+local function ownReadyPath()
+    local folder = groupDirectory()
+    if not folder then return nil end
+    return folder .. "/ready_" .. sanitizeFilePart(USERNAME) .. ".json"
+end
+
+local function commandPath()
+    local folder = groupDirectory()
+    if not folder then return nil end
+    return folder .. "/command.json"
+end
+
 function writeOwnDoorFile(force)
     if not isCurrentGroupInThisServer() then readySent = false; return false end
     if not force and tick() - lastReadyWrite < V3_FILE_POLL then return readySent end
@@ -1966,8 +2013,26 @@ function writeOwnDoorFile(force)
         and doorState.nearDoor
         and not doorState.timerVisible
 
-    readySent = ready
+    local data = {
+        v = 1,
+        username = USERNAME,
+        role = getRole(),
+        groupId = currentGroupId(),
+        placeId = game.PlaceId,
+        jobId = game.JobId,
+        ready = ready,
+        race = race,
+        updatedAt = v3ServerNow()
+    }
 
+    if FILE_SYNC_AVAILABLE then
+        local path = ownReadyPath()
+        if path then
+            safeWriteJson(path, data)
+        end
+    end
+
+    readySent = ready
     return ready
 end
 -- Alias
@@ -1982,8 +2047,44 @@ function readReadyFiles()
     local races = {}
     local records = {}
     local now = v3ServerNow()
-    local freshness = 10 -- cho phép độ trễ updatedAt đến 10s
+    local freshness = 10
 
+    -- [ƯU TIÊN 1] Đọc từ Workspace File System nếu khả dụng
+    if FILE_SYNC_AVAILABLE then
+        local folder = groupDirectory()
+        if folder then
+            local wsReadyCount = 0
+            local wsRaces = {}
+            local wsRecords = {}
+            for _, name in ipairs(members) do
+                local path = folder .. "/ready_" .. sanitizeFilePart(name) .. ".json"
+                local data = safeReadJson(path)
+                wsRecords[name] = data
+                local valid = data
+                    and tostring(data.groupId or "") == currentGroupId()
+                    and tostring(data.jobId or "") == tostring(game.JobId)
+                    and (data.ready == true or data.ready == "true")
+                    and tonumber(data.updatedAt)
+                    and math.abs(now - tonumber(data.updatedAt)) <= 5 -- file local lấy 5s cho siêu fresh
+                if valid then
+                    wsReadyCount = wsReadyCount + 1
+                    local r = tostring(data.race or "")
+                    if r ~= "" then wsRaces[r] = true end
+                end
+            end
+            if wsReadyCount > 0 then
+                if wsReadyCount < 3 then return wsReadyCount, false, wsRecords, "waiting_files" end
+                if V3_REQUIRE_DIFFERENT_RACES then
+                    local rc = 0
+                    for _ in pairs(wsRaces) do rc = rc + 1 end
+                    if rc < 3 then return wsReadyCount, false, wsRecords, "duplicate_race" end
+                end
+                return wsReadyCount, true, wsRecords, "ready"
+            end
+        end
+    end
+
+    -- [ƯU TIÊN 2 / FALLBACK] Đọc từ Web API (currentApiAccounts)
     for _, name in ipairs(members) do
         local data = currentApiAccounts[name]
         records[name] = data
@@ -2010,8 +2111,24 @@ function readReadyFiles()
     return readyCount, true, records, "ready"
 end
 
-
 function readV3Command()
+    -- [ƯU TIÊN 1] Đọc từ Workspace File System nếu khả dụng
+    if FILE_SYNC_AVAILABLE then
+        local path = commandPath()
+        if path and isfile(path) then
+            local data = safeReadJson(path)
+            if data and tostring(data.group_id or "") == currentGroupId() 
+                and tostring(data.job_id or "") == tostring(game.JobId) then
+                local now = v3ServerNow()
+                local expiresAt = tonumber(data.expires_at) or 0
+                if expiresAt > now then
+                    return data
+                end
+            end
+        end
+    end
+
+    -- [ƯU TIÊN 2 / FALLBACK] Đọc từ Web API
     local data = currentApiV3Command
     if not data then return nil end
     if tostring(data.group_id or "") ~= currentGroupId() then return nil end
@@ -2024,9 +2141,21 @@ end
 
 function writeV3Command(command)
     if myGroupId == "" then return false end
-    local res = apiPost("/v4info/command/" .. tostring(myGroupId), command)
-    return res ~= nil
+    
+    local wsOk = false
+    if FILE_SYNC_AVAILABLE then
+        local path = commandPath()
+        if path then
+            wsOk = safeWriteJson(path, command)
+        end
+    end
+    
+    -- Vẫn gửi lên API song song để backup
+    local apiRes = apiPost("/v4info/command/" .. tostring(myGroupId), command)
+    
+    return wsOk or (apiRes ~= nil)
 end
+
 
 function mainCreateRound()
     if not isUper or not isMyUpgearTurn() or not isCurrentGroupInThisServer() then return nil end
