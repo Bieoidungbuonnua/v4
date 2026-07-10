@@ -1031,6 +1031,19 @@ local myGroupMainUsername = mainAccountName
 local function initLocalGroup()
     if not (isUper or isAlly) then return end
     local ghGroups = getgenv().Mode1 or {}
+
+    -- Main: Nếu có config Mode1, tự động gán group đầu tiên làm group mặc định
+    -- Điều này giúp Main gửi groupId cố định lên API server, tránh bị server tự động xếp lệch group
+    if isUper and #ghGroups > 0 then
+        local grp = ghGroups[1]
+        if type(grp) == "table" and grp.name then
+            myGroupId = grp.name
+            myGroupHelpers = grp.helpers or {}
+            myGroupMainUsername = USERNAME
+            return
+        end
+    end
+
     for _, grp in ipairs(ghGroups) do
         if type(grp) ~= "table" or not grp.name then continue end
         local helpers = grp.helpers or {}
@@ -1045,9 +1058,6 @@ local function initLocalGroup()
                 end
             end
         end
-        -- Main: KHÔNG tự gán group tại đây!
-        -- Server sẽ assign dựa trên LimitMainUpPerGroup để phân phối đều
-        -- myGroupId sẽ được điền từ processSyncResponse sau khi API trả về
     end
 end
 initLocalGroup()
