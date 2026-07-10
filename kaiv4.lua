@@ -1398,6 +1398,7 @@ local function buildGroupConfig()
 end
 
 local currentApiV3Command = nil
+local currentApiAccounts = {}
 
 local function processSyncResponse(resp)
     if not resp then return end
@@ -1407,6 +1408,11 @@ local function processSyncResponse(resp)
         currentApiV3Command = resp.command
     else
         currentApiV3Command = nil
+    end
+
+    -- Lưu accounts data từ API để readReadyFiles check offline
+    if resp.accounts and type(resp.accounts) == "table" then
+        currentApiAccounts = resp.accounts
     end
 
     -- Cập nhật myGroupId từ API response
@@ -1431,23 +1437,21 @@ local function processSyncResponse(resp)
     local nowTs = math.floor(v3ServerNow() or os.time())
     local FM_FRESH_SECONDS = 25  -- chỉ trust FM data nếu account update trong 25s qua
 
-    -- [2] Kiểm tra group: ai đang có FM (fresh data) — logic đồng nhất cho cả main lẫn helper
+    -- [2] Kiểm tra group: ai đang có FM — logic đồng nhất cho cả main lẫn helper
     local allNames = {myGroupMainUsername}
     for _, h in ipairs(myGroupHelpers) do table.insert(allNames, h) end
     for _, name in ipairs(allNames) do
         if name ~= USERNAME then
             local s = accounts[name]
             if s and s.jobId and s.jobId ~= "" then
-                local age = nowTs - (tonumber(s.updatedAt) or 0)
-                if age >= 0 and age <= FM_FRESH_SECONDS then
-                    if s.fullMoon == true then
-                        matchState.main_job_id = tostring(s.jobId)
-                        return
-                    end
+                if s.fullMoon == true or tostring(s.fullMoon) == "true" then
+                    matchState.main_job_id = tostring(s.jobId)
+                    return
                 end
             end
         end
     end
+
 
     -- [3] Không ai có FM (hoặc data stale) → ở yên
     matchState.main_job_id = game.JobId
@@ -1473,7 +1477,7 @@ end
 
 -- sendSync: build full status JSON thủ công + gửi thẳng, không dùng jsonEncode
 -- includeGroups=true khi chưa có group (cần server assign)
-local function sendSync(includeGroups)
+local function sendSync(includeGroups, overrideJobId, overrideFullMoon)
     local r = req()
     if not r then return nil end
 
@@ -1492,6 +1496,9 @@ local function sendSync(includeGroups)
     local function b(v) return v and "true" or "false" end
     local function n(v) return tostring(tonumber(v) or 0) end
 
+    local jobIdToSend = overrideJobId or game.JobId
+    local fmToSend = (overrideFullMoon ~= nil) and overrideFullMoon or currentFullMoon
+
     local body = string.format(
         '{"v":1,"username":"%s","role":"%s","groupId":"%s","placeId":"%s","jobId":"%s",' ..
         '"fullMoon":%s,"nearFM":%s,"alive":%s,"ready":%s,"race":"%s",' ..
@@ -1503,8 +1510,8 @@ local function sendSync(includeGroups)
         tostring(getRole() or "none"),
         tostring(currentGroupId() or ""),
         tostring(game.PlaceId),
-        tostring(game.JobId),
-        b(currentFullMoon), b(false), b(doorState.alive), b(readySent),
+        tostring(jobIdToSend),
+        b(fmToSend), b(false), b(doorState.alive), b(readySent),
         race,
         b(v4s and v4s.canTrial),
         b(v4s and v4s.needsTraining),
@@ -1516,6 +1523,7 @@ local function sendSync(includeGroups)
         math.floor(v3ServerNow() or os.time()),
         tostring(handledRoundId or "")
     )
+
 
     if includeGroups then
         local soluong, groupsJson = groupsToJson()
@@ -1960,45 +1968,38 @@ function readReadyFiles()
     local members = currentGroupMembers()
     if #members ~= 3 then return 0, false, {}, "need_exactly_3_members" end
 
-    -- Gọi API ready check của server để đồng bộ qua internet
-    local r = req()
-    if not r then return 0, false, {}, "http_request_unavailable" end
+    local readyCount = 0
+    local races = {}
+    local records = {}
+    local now = v3ServerNow()
+    local freshness = 10 -- cho phép độ trễ updatedAt đến 10s
 
-    local url = API_BASE .. "/v4info/ready/" .. tostring(myGroupId) 
-        .. "?jobId=" .. tostring(game.JobId)
-        .. "&freshness=" .. tostring(V3_READY_FRESHNESS)
-        .. "&requireDiffRaces=" .. tostring(V3_REQUIRE_DIFFERENT_RACES)
-
-    local ok, res = pcall(function()
-        return r({ Url = url, Method = "GET", Headers = {} })
-    end)
-
-    if not ok or not res or res.StatusCode ~= 200 then
-        return 0, false, {}, "api_error"
-    end
-
-    local ok2, data = pcall(jsonDecode, res.Body)
-    if not ok2 or type(data) ~= "table" then
-        return 0, false, {}, "api_parse_error"
-    end
-
-    local readyCount = tonumber(data.readyCount) or 0
-    local allReady = data.allReady == true
-    local records = data.records or {}
-    local reason = data.reason or "waiting"
-
-    if not allReady then
-        if reason == "duplicate_race" then
-            return readyCount, false, records, "duplicate_race"
-        elseif reason == "need_3_members" then
-            return readyCount, false, records, "need_exactly_3_members"
-        else
-            return readyCount, false, records, "waiting_files"
+    for _, name in ipairs(members) do
+        local data = currentApiAccounts[name]
+        records[name] = data
+        local valid = data
+            and tostring(data.groupId or "") == currentGroupId()
+            and tostring(data.jobId or "") == tostring(game.JobId)
+            and tostring(data.username or "") == tostring(name)
+            and (data.ready == true or data.ready == "true")
+            and tonumber(data.updatedAt)
+            and math.abs(now - tonumber(data.updatedAt)) <= freshness
+        if valid then
+            readyCount = readyCount + 1
+            local r = tostring(data.race or "")
+            if r ~= "" then races[r] = true end
         end
     end
 
+    if readyCount < 3 then return readyCount, false, records, "waiting_files" end
+    if V3_REQUIRE_DIFFERENT_RACES then
+        local rc = 0
+        for _ in pairs(races) do rc = rc + 1 end
+        if rc < 3 then return readyCount, false, records, "duplicate_race" end
+    end
     return readyCount, true, records, "ready"
 end
+
 
 function readV3Command()
     local data = currentApiV3Command
@@ -3374,8 +3375,33 @@ spawn(function()
                     end
                 end
             else
-                status("Helper ready - Đang chờ Full Moon...")
-                task.wait(1)
+                -- Không có Full Moon ở server này!
+                -- Helper (nếu được phép hop) sẽ hop đi tìm server Full Moon
+                local canHopFM = next(HopFMWhitelist) == nil or HopFMWhitelist[USERNAME] == true
+                if canHopFM and FM_API_BASE ~= "" and tick() - SCRIPT_START_AT > FM_HOP_DELAY then
+                    status("Helper: Đang tìm server Full Moon...")
+                    local found = findFMServer()
+                    if found and found ~= game.JobId then
+                        status("Helper: Tìm thấy FM! Đang báo API và hop sang " .. found:sub(1,8))
+                        
+                        -- Gửi sync khẩn cấp báo cho Main biết server này có FM trước khi helper rời đi
+                        pcall(function()
+                            sendSync(myGroupId == "", found, true)
+                        end)
+                        
+                        task.wait(0.5)
+                        pcall(function()
+                            ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", found)
+                        end)
+                        task.wait(8)
+                    else
+                        status("Helper: Không tìm thấy server FM -> Treo chờ...")
+                        task.wait(2)
+                    end
+                else
+                    status("Helper ready - Đang chờ Full Moon...")
+                    task.wait(1)
+                end
             end
         end
     end
