@@ -1066,7 +1066,7 @@ local currentFullMoon = false
 local pairAllInJobAt  = tick()
 local lastPairGroupId = myGroupId
 local SCRIPT_START_AT = tick()   -- dùng để block hop trong vài giây đầu
-local HOP_STARTUP_DELAY = 15     -- giây chờ trước khi cho phép hop
+local HOP_STARTUP_DELAY = 1     -- giây chờ trước khi cho phép hop
 
 task.spawn(function()
     while task.wait(2) do
@@ -1144,8 +1144,8 @@ end
 -- ClockTime priority đã bị bỏ
 local lastFmApiAt     = 0
 local lastFmApiResult = nil   -- cache kết quả để tránh gọi API liên tục
-local FM_API_INTERVAL = 10    -- gọi lại mỗi 10s
-local FM_HOP_DELAY    = 5     -- startup delay riêng cho FM hop
+local FM_API_INTERVAL = 3     -- gọi lại mỗi 3s
+local FM_HOP_DELAY    = 1     -- startup delay riêng cho FM hop
 
 local function findFMServer()
     if FM_API_BASE == "" then return nil end
@@ -3276,7 +3276,7 @@ spawn(function()
 
             if hopTarget then
                 status("📡 Nhận lệnh hop sang server FM: " .. tostring(hopTarget):sub(1,8))
-                task.wait(0.5)
+                task.wait(0.1)
                 pcall(function()
                     ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
                 end)
@@ -3312,7 +3312,7 @@ spawn(function()
                         pcall(function()
                             sendSync(myGroupId == "", found, true)
                         end)
-                        task.wait(0.5)
+                        task.wait(0.1)
                         pcall(function()
                             ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", found)
                         end)
