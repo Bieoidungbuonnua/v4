@@ -3136,42 +3136,8 @@ if isUper or isAlly then
     end)
 end
 
--- ════════════════════════════════════════════════════
--- MAIN HOP TASK: dùng matchState.main_job_id (sync từ API) làm nguồn chính
--- API processSyncResponse cập nhật main_job_id mỗi 0.5-2s
--- ════════════════════════════════════════════════════
-if isUper and SCRIPT_MODE == 1 then
-    task.spawn(function()
-        task.wait(HOP_STARTUP_DELAY + 3)
-        while true do
-            task.wait(1)
-            pcall(function()
-                -- Chỉ hop khi training xong
-                if isCurrentlyTraining then return end
-                local v4s = nil
-                pcall(function() v4s = getV4Status(false) end)
-                if v4s and (v4s.needsTraining or v4s.needsPurchase) then return end
 
-                -- Nguồn chính: matchState.main_job_id được sync từ API mỗi 0.5s
-                local target = nil
-                if matchState and matchState.main_job_id
-                    and matchState.main_job_id ~= ""
-                    and matchState.main_job_id ~= game.JobId then
-                    target = matchState.main_job_id
-                    status("📡 Main hop → FM " .. tostring(target):sub(1,8) .. " (API)")
-                end
 
-                if target then
-                    task.wait(0.5)
-                    pcall(function()
-                        ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", target)
-                    end)
-                    task.wait(8)
-                end
-            end)
-        end
-    end)
-end
 
 spawn(function()
     while task.wait(0.1) do
@@ -3291,104 +3257,61 @@ spawn(function()
                 markFMJoined(game.JobId)
                 lastFmApiResult = nil
             end
-            if not currentFullMoon and FM_API_BASE ~= "" and canHopFM
-                and nowTick - SCRIPT_START_AT > FM_HOP_DELAY then
-                if nowTick - lastFmApiAt >= FM_API_INTERVAL then
-                    las        -- ════════════════════════════════════════════════════
-        -- [5] TRAINING / TRIAL / RESET LOGIC (ĐÃ ĐƠN GIẢN HÓA)
+        -- ════════════════════════════════════════════════════
+        -- [5] TRAINING / TRIAL / RESET LOGIC (ĐÃ ĐƠN GIẢN HÓA & ĐỒNG NHẤT 1-1)
         -- ════════════════════════════════════════════════════
         local myV4 = getV4Status(false)
         local fullMoonNow = isnight() and isfullmoon()
 
-        if isUper then
-            -- ════════════ MAIN ACCOUNT LOGIC ════════════
-            if myV4.complete then
-                status("Main V4 completed!")
-                task.wait(5)
-            elseif myV4.needsPurchase then
-                status("Main cần mua Upgrade -> Đang mua...")
-                buyPendingV4Upgrade(myV4, "Main")
-                task.wait(1)
-            elseif myV4.needsTraining then
-                status("Main cần Training -> Đang train...")
-                runRaceTrainingWork(myV4.remainingTraining or "training", "Main")
-            elseif myV4.canTrial then
-                if fullMoonNow then
-                    status("Main: Đang thực hiện Trial...")
-                    if tyrantFarmingActive then stopTyrantFarming() end
-                    
-                    -- 1. Teleport lên Temple of Time + bay đến đúng door của race
-                    forceMatchedAccountToTemple()
+        if not fullMoonNow then
+            -- ════════════ XỬ LÝ HOP CHUNG (ĐỒNG NHẤT 1-1) ════════════
+            local hopTarget = nil
+            if matchState and matchState.main_job_id 
+                and matchState.main_job_id ~= "" 
+                and matchState.main_job_id ~= game.JobId then
+                if not isCurrentlyTraining then
+                    hopTarget = matchState.main_job_id
+                end
+            end
 
-                    -- 2. Đã ở door -> kích hoạt race
-                    tryActivateAbility()
+            if hopTarget then
+                status("📡 Nhận lệnh hop sang server FM: " .. tostring(hopTarget):sub(1,8))
+                task.wait(0.5)
+                pcall(function()
+                    ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
+                end)
+                task.wait(8)
+                continue
+            end
 
-                    -- 3. Thực hiện minigame trial hoặc tiêu diệt helpers khi FFA bắt đầu
-                    local myrace = Players.LocalPlayer.Data.Race.Value
-                    local trialPlace = races_trial_place[myrace]
-                    if trialPlace and getdis(trialPlace.CFrame) < 1500 then
-                        runTrialMinigame(myrace, trialPlace)
-                    else
-                        local ffaStarted = false
-                        pcall(function()
-                            ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-                        end)
-                        if ffaStarted then
-                            status("Main: Đang PvP tiêu diệt Helper để thắng trial...")
-                            killHelpersToWin()
-                        end
-                    end
+            -- ════════════ XỬ LÝ KHÔNG CÓ FULL MOON ════════════
+            if isUper then
+                -- MAIN
+                if myV4.complete then
+                    status("Main V4 completed!")
+                    task.wait(5)
+                elseif myV4.needsPurchase then
+                    status("Main cần mua Upgrade -> Đang mua...")
+                    buyPendingV4Upgrade(myV4, "Main")
+                    task.wait(1)
+                elseif myV4.needsTraining then
+                    status("Main cần Training -> Đang train...")
+                    runRaceTrainingWork(myV4.remainingTraining or "training", "Main")
                 else
                     status("Main ready trial - Đang chờ Full Moon...")
                     task.wait(1)
                 end
-            end
-        else
-            -- ════════════ HELPER ACCOUNT LOGIC ════════════
-            if fullMoonNow then
-                status("Helper: Đang hỗ trợ Trial...")
-                if tyrantFarmingActive then stopTyrantFarming() end
-
-                -- 1. Teleport lên Temple + bay đến door
-                forceMatchedAccountToTemple()
-
-                -- 2. Kích hoạt race cùng lúc
-                tryActivateAbility()
-
-                -- 3. Thực hiện minigame trial hoặc tự reset khi vào phase FFA
-                local myrace = Players.LocalPlayer.Data.Race.Value
-                local trialPlace = races_trial_place[myrace]
-                if trialPlace and getdis(trialPlace.CFrame) < 1500 then
-                    runTrialMinigame(myrace, trialPlace)
-                else
-                    local ffaStarted = false
-                    pcall(function()
-                        ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-                    end)
-                    if ffaStarted then
-                        status("Helper: Chờ 2s rồi tự reset để Main win...")
-                        task.wait(2)
-                        pcall(function()
-                            Players.LocalPlayer.Character.Humanoid.Health = 0
-                        end)
-                        task.wait(5)
-                    end
-                end
             else
-                -- Không có Full Moon ở server này!
-                -- Helper (nếu được phép hop) sẽ hop đi tìm server Full Moon
+                -- HELPER
                 local canHopFM = next(HopFMWhitelist) == nil or HopFMWhitelist[USERNAME] == true
                 if canHopFM and FM_API_BASE ~= "" and tick() - SCRIPT_START_AT > FM_HOP_DELAY then
                     status("Helper: Đang tìm server Full Moon...")
                     local found = findFMServer()
                     if found and found ~= game.JobId then
                         status("Helper: Tìm thấy FM! Đang báo API và hop sang " .. found:sub(1,8))
-                        
-                        -- Gửi sync khẩn cấp báo cho Main biết server này có FM trước khi helper rời đi
                         pcall(function()
                             sendSync(myGroupId == "", found, true)
                         end)
-                        
                         task.wait(0.5)
                         pcall(function()
                             ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", found)
@@ -3401,6 +3324,56 @@ spawn(function()
                 else
                     status("Helper ready - Đang chờ Full Moon...")
                     task.wait(1)
+                end
+            end
+            continue
+        end
+
+        -- ════════════ CÓ FULL MOON -> THỰC HIỆN TRIAL ════════════
+        if tyrantFarmingActive then stopTyrantFarming() end
+
+        if isUper then
+            -- MAIN
+            status("Main: Đang thực hiện Trial...")
+            forceMatchedAccountToTemple()
+            tryActivateAbility()
+
+            local myrace = Players.LocalPlayer.Data.Race.Value
+            local trialPlace = races_trial_place[myrace]
+            if trialPlace and getdis(trialPlace.CFrame) < 1500 then
+                runTrialMinigame(myrace, trialPlace)
+            else
+                local ffaStarted = false
+                pcall(function()
+                    ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+                end)
+                if ffaStarted then
+                    status("Main: Đang PvP tiêu diệt Helper để thắng trial...")
+                    killHelpersToWin()
+                end
+            end
+        else
+            -- HELPER
+            status("Helper: Đang hỗ trợ Trial...")
+            forceMatchedAccountToTemple()
+            tryActivateAbility()
+
+            local myrace = Players.LocalPlayer.Data.Race.Value
+            local trialPlace = races_trial_place[myrace]
+            if trialPlace and getdis(trialPlace.CFrame) < 1500 then
+                runTrialMinigame(myrace, trialPlace)
+            else
+                local ffaStarted = false
+                pcall(function()
+                    ffaStarted = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+                end)
+                if ffaStarted then
+                    status("Helper: Chờ 2s rồi tự reset để Main win...")
+                    task.wait(2)
+                    pcall(function()
+                        Players.LocalPlayer.Character.Humanoid.Health = 0
+                    end)
+                    task.wait(5)
                 end
             end
         end
