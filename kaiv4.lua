@@ -1560,8 +1560,8 @@ local function processSyncResponse(resp)
                         matchState.main_job_id = tostring(s.jobId)
                         return
                     end
-                    -- Near FM (isnight=true, chưa FM): hop vào sẵn để chờ
-                    if s.nearFM == true then
+                    -- Near FM: helper hop vào trước để chờ; main không hop nearFM (tránh kờ trong sv đang chờ)
+                    if s.nearFM == true and not isUper then
                         matchState.main_job_id = tostring(s.jobId)
                         return
                     end
@@ -3475,8 +3475,9 @@ spawn(function()
             currentFullMoon = false
         end
 
-        -- Near FM: bản broadcast jobId hiện tại để các account khác hop vào đợi
-        if nearFMNow and not fmNow then
+        -- Near FM: chỉ helper broadcast để gọi các account khác hop vào đợi
+        -- Main không broadcast nearFM (tránh bị kờ cứng trong sv đang chờ FM)
+        if nearFMNow and not fmNow and not isUper then
             status("⏳ Near FullMoon - báo các account hop vào...")
             urgentSyncNeeded = true  -- gửi nearFM=true lên API ngay
             -- Ghi workspace signal với nearFM=true (các account cùng máy hòp vào)
