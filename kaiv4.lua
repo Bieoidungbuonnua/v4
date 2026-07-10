@@ -3,12 +3,13 @@
 -- Khi dùng loadstring: set getgenv().Config TRƯỚC loadstring(), giá trị ở đây sẽ là fallback
 -- ═════════════════════════════════════════════════════
 local _SRC = {
+    ["Mode"]                           = 1,   -- 1: hop FM + group trial | 2: treo sv đợi FM, không group
     ["Team"]                           = "Marines",
     ["Farm Fragments"]                 = { autoraid = false, autotyrant = false },
     ["Gear"]                           = "A-B-B",
     ["ChangeBestGear"]                 = true,
     ["V3 Door Distance"]               = 50,
-    ["FM_API"]                         = "http://103.77.241.31:1901/server/api/moon?X-API-Key=trietgay_2mV0EbvgjwblbGTRxATml8RNDLgRR0l80wM5AM1M",  -- trống = dùng URL mặc định; nhập URL khác để override
+    ["FM_API"]                         = "",  -- trống = dùng URL mặc định; nhập URL khác để override
     ["API Base URL"]                   = "http://mbasic7.pikamc.vn:25232",
     ["V3 Countdown"]                   = 6,
     ["V3 File Poll"]                   = 0.10,
@@ -38,10 +39,10 @@ do
     end
 end
 
--- ConfigGroupHop — chỉnh tại đây khi dùng full source
--- Khi dùng loadstring: set getgenv().ConfigGroupHop TRƯỚC loadstring() để override
--- mỗi block = 1 nhóm | thêm/bật block = thêm/bớt nhóm
-getgenv().ConfigGroupHop = getgenv().ConfigGroupHop or {
+-- Mode1 — cấu hình nhóm cho Mode 1 (hop FM + trial chung)
+-- Khi dùng loadstring: set getgenv().Mode1 TRƯỚC loadstring() để override
+-- mỗi block = 1 nhóm | thêm/bớt block = thêm/bớt nhóm
+getgenv().Mode1 = getgenv().Mode1 or {
     {
         name    = "NhomA",
         helpers = {"BrooklynnVort3xPrism", "StevePatton6141"},
@@ -52,6 +53,12 @@ getgenv().ConfigGroupHop = getgenv().ConfigGroupHop or {
         helpers = {"Liam_Lion90", "AriaCod3Craft2017"},
         hopfm   = {"Liam_Lion90"},
     },
+}
+
+-- Mode2 — cấu hình cho Mode 2 (treo sv chờ FM, không hop group)
+-- Khi dùng loadstring: set getgenv().Mode2 TRƯỚC loadstring() để override
+getgenv().Mode2 = getgenv().Mode2 or {
+    ["ListHelperMode2"] = {},  -- danh sách username helper (Mode 2 dùng list này)
 }
 
 local HttpService = game:GetService("HttpService")
@@ -145,35 +152,38 @@ local HelpWhitelist = {}
 local HopFMWhitelist = {}  -- rỗng = tất cả đều được hop FM
 
 do
-    -- Xây dựng HelpWhitelist và HopFMWhitelist từ ConfigGroupHop mới
-    -- Mỗi entry trong ConfigGroupHop là {name, helpers, hopfm}
-    local ghGroups = getgenv().ConfigGroupHop or {}
-    for _, grp in ipairs(ghGroups) do
-        if type(grp) == "table" then
-            -- Tất cả helpers vào HelpWhitelist
-            for _, h in ipairs(grp.helpers or {}) do
-                h = tostring(h):gsub("^%s+", ""):gsub("%s+$", "")
-                if h ~= "" then HelpWhitelist[h] = true end
-            end
-            -- Account được phép hop FM vào HopFMWhitelist
-            for _, name in ipairs(grp.hopfm or {}) do
-                name = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
-                if name ~= "" then HopFMWhitelist[name] = true end
+    local _modeInit = tonumber((getgenv().Config or {})["Mode"] or 1)
+    if _modeInit == 2 then
+        -- Mode 2: helper list từ Mode2["ListHelperMode2"]
+        local m2 = getgenv().Mode2 or {}
+        for _, h in ipairs(m2["ListHelperMode2"] or {}) do
+            h = tostring(h):gsub("^%s+", ""):gsub("%s+$", "")
+            if h ~= "" then HelpWhitelist[h] = true end
+        end
+        -- Mode 2 không dùng HopFM whitelist (không tự hop tìm FM)
+    else
+        -- Mode 1: đọc từ Mode1 groups
+        local ghGroups = getgenv().Mode1 or {}
+        for _, grp in ipairs(ghGroups) do
+            if type(grp) == "table" then
+                for _, h in ipairs(grp.helpers or {}) do
+                    h = tostring(h):gsub("^%s+", ""):gsub("%s+$", "")
+                    if h ~= "" then HelpWhitelist[h] = true end
+                end
+                for _, name in ipairs(grp.hopfm or {}) do
+                    name = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
+                    if name ~= "" then HopFMWhitelist[name] = true end
+                end
             end
         end
     end
 end
 
 getgenv().UpdateRoles = function()
-    -- Logic mới: nếu tên hiện tại nằm trong HelpWhitelist (lấy từ ConfigGroupHop)
-    -- → role = helper. Ngược lại, 100% là mainup.
+    -- Nếu tên nằm trong HelpWhitelist → role = helper. Ngược lại → mainup.
     if HelpWhitelist[Player.Name] == true then
-        -- Acc là helper - tìm main hiện tại trong server từ ConfigGroupHop
-        local ghConfig      = getgenv().ConfigGroupHop or {}
-        local soluonggroup  = tonumber(ghConfig["Soluonggroup"]) or 1
-        local foundMain     = ""
-        -- Dượt qua các group, tìm main nào đang có mặt trong server
-        -- (main = bất kỳ player nào không có trong HelpWhitelist)
+        -- Acc là helper - tìm main đang có mặt trong server
+        local foundMain = ""
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= Player and not HelpWhitelist[p.Name] then
                 foundMain = p.Name
@@ -1012,7 +1022,7 @@ local USERNAME = Players.LocalPlayer.Name
 local readySent = false
 local abilityCooldown = 0
 
--- ─── LOCAL GROUP STATE (set từ ConfigGroupHop ngay khi load, không chờ API) ───
+-- ─── LOCAL GROUP STATE (set từ Mode1 ngay khi load, không chờ API) ───
 local myGroupId           = ""
 local myGroupHelpers      = {}
 local myGroupMainUsername = mainAccountName
@@ -1020,7 +1030,7 @@ local myGroupMainUsername = mainAccountName
 -- Đọc group config và set local group ngay lập tức
 local function initLocalGroup()
     if not (isUper or isAlly) then return end
-    local ghGroups = getgenv().ConfigGroupHop or {}
+    local ghGroups = getgenv().Mode1 or {}
     for _, grp in ipairs(ghGroups) do
         if type(grp) ~= "table" or not grp.name then continue end
         local helpers = grp.helpers or {}
@@ -1108,6 +1118,7 @@ end)()
 local V3_FILE_ROOT     = tostring(getgenv().Config["V3 File Folder"] or "KaitunV4Sync")
 
 local LIMIT_MAIN_PER_GROUP = math.max(1, math.min(10, tonumber(getgenv().Config["LimitMainUpPerGroup"]) or 4))
+local SCRIPT_MODE = math.max(1, math.min(2, tonumber(getgenv().Config["Mode"]) or 1))
 
 -- ══ FM JOIN CACHE ══
 -- username-fmcache.json: lưu jobId đã join thành công
@@ -1346,9 +1357,9 @@ local function apiPostForced(path, body)
     return nil
 end
 
--- Phân tích ConfigGroupHop thành danh sách group để gửi lên API
+-- Phân tích Mode1 thành danh sách group để gửi lên API
 function parseGroupHopConfig()
-    local ghGroups = getgenv().ConfigGroupHop or {}
+    local ghGroups = getgenv().Mode1 or {}
     local groups   = {}
     for _, grp in ipairs(ghGroups) do
         if type(grp) == "table" and grp.name then
@@ -1444,7 +1455,7 @@ end
 -- Gửi toàn bộ status lên API, nhận về group info + members status trong 1 response.
 -- Thay thế hoàn toàn: heartbeat + assignToGroup + refreshMatch + startup flush.
 local function buildGroupConfig()
-    local ghGroups = getgenv().ConfigGroupHop or {}
+    local ghGroups = getgenv().Mode1 or {}
     local groups   = {}
     for _, grp in ipairs(ghGroups) do
         if type(grp) == "table" and grp.name then
@@ -1529,7 +1540,7 @@ end
 
 -- Build JSON array cho groups config gửi lên API
 local function groupsToJson()
-    local ghGroups = getgenv().ConfigGroupHop or {}
+    local ghGroups = getgenv().Mode1 or {}
     local parts    = {}
     for _, grp in ipairs(ghGroups) do
         if type(grp) ~= "table" or not grp.name then continue end
@@ -1604,7 +1615,7 @@ local function sendSync(includeGroups)
     else
         -- Luôn gửi soluonggroup để server biết tổng số group cần tạo
         -- (cần thiết sau server restart, account đã có group nhưng server chưa biết maxG)
-        local soluong = #(getgenv().ConfigGroupHop or {})
+        local soluong = #(getgenv().Mode1 or {})
         body = body:sub(1, -2) .. string.format(
             ',"soluonggroup":%d,"limitMainUp":%d}',
             soluong, LIMIT_MAIN_PER_GROUP
@@ -3333,10 +3344,13 @@ end
 if isUper or isAlly then
     task.spawn(function()
         task.wait(1.5)  -- đợi script init xong hoàn toàn
-        while task.wait(2) do
+        while true do
+            -- Tốc độ sync: 0.5s khi đang FM hoặc Near FM → phản hồi nhanh
+            -- 2s khi bình thường → tiết kiệm tài nguyên
+            local _syncInterval = (currentFullMoon or (isnight() and not currentFullMoon)) and 0.5 or 2
+            task.wait(_syncInterval)
             pcall(function()
-                -- Cập nhật FM state trong sync loop để batch luônđúng
-                -- (vì main loop có thể đang bị block trong training)
+                -- Cập nhật FM state trong sync loop
                 local fmCheck = false
                 pcall(function() fmCheck = isnight() and isfullmoon() end)
                 if fmCheck ~= currentFullMoon then
@@ -3381,6 +3395,23 @@ spawn(function()
                 writeFMSignal()       -- workspace ngay
             else
                 clearFMSignal()       -- xóa signal khi FM kết thúc
+                -- Mode 2: FM kết thúc → đợi hết trial/training rồi teleport ra khỏi server
+                if SCRIPT_MODE == 2 then
+                    task.spawn(function()
+                        local _exitTimeout = tick() + 180  -- tối đa chờ 3 phút
+                        while tick() < _exitTimeout do
+                            local _inTrial = false
+                            pcall(function() _inTrial = isInsideOwnTrial() end)
+                            if not _inTrial and not isCurrentlyTraining then break end
+                            task.wait(3)
+                        end
+                        status("⚠ Mode 2: FM kết thúc — rời server...")
+                        task.wait(2)
+                        pcall(function()
+                            TeleportService:Teleport(game.PlaceId)
+                        end)
+                    end)
+                end
             end
         elseif fmNow then
             currentFullMoon = true
@@ -3469,6 +3500,21 @@ spawn(function()
         -- isCurrentlyTraining bắt cả helper (helper có needsTraining=false vì faked)
         local skipHopForWork = isCurrentlyTraining
             or (v4sForHop and (v4sForHop.needsTraining or v4sForHop.needsPurchase))
+
+        -- Mode 1 FIX: nếu có FM signal / API target đến server khác → override training block
+        -- Tránh stuck: ac đang training vẫn hop được khi cần (V3 workspace 0/3 bug)
+        if SCRIPT_MODE == 1 and skipHopForWork then
+            local _fmSigCheck = nil
+            pcall(function() _fmSigCheck = readFMSignal() end)
+            local _hasRemoteTarget = (_fmSigCheck and _fmSigCheck.jobId ~= "" and _fmSigCheck.jobId ~= game.JobId)
+                or (matchState and matchState.main_job_id and matchState.main_job_id ~= "" and matchState.main_job_id ~= game.JobId)
+            if _hasRemoteTarget then
+                skipHopForWork = false  -- FM uu tiên hơn training
+            end
+        end
+
+        -- Mode 2: không hop (trờ trong server chờ FM)
+        if SCRIPT_MODE == 2 then skipHopForWork = true end
 
         -- Rewrite FM cache mỗi 3 phút để purge entry cũ
         if FILE_SYNC_AVAILABLE and (nowTick - lastFmCacheWriteAt) >= FM_CACHE_EXPIRE then
