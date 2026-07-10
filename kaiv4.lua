@@ -2129,6 +2129,7 @@ end
 local activatingAbility = false
 
 function tryActivateAbility()
+    if not (isnight() and isfullmoon()) then return false end
     if activatingAbility then return false end
     if not isCurrentGroupInThisServer() then return false end
 
@@ -3263,27 +3264,27 @@ spawn(function()
         local myV4 = getV4Status(false)
         local fullMoonNow = isnight() and isfullmoon()
 
+        -- ════════════ XỬ LÝ HOP CHUNG (ĐỘ ƯU TIÊN CAO NHẤT) ════════════
+        local hopTarget = nil
+        if matchState and matchState.main_job_id 
+            and matchState.main_job_id ~= "" 
+            and matchState.main_job_id ~= game.JobId then
+            if not isCurrentlyTraining then
+                hopTarget = matchState.main_job_id
+            end
+        end
+
+        if hopTarget then
+            status("📡 Nhận lệnh hop sang server FM: " .. tostring(hopTarget):sub(1,8))
+            task.wait(0.1)
+            pcall(function()
+                ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
+            end)
+            task.wait(8)
+            continue
+        end
+
         if not fullMoonNow then
-            -- ════════════ XỬ LÝ HOP CHUNG (ĐỒNG NHẤT 1-1) ════════════
-            local hopTarget = nil
-            if matchState and matchState.main_job_id 
-                and matchState.main_job_id ~= "" 
-                and matchState.main_job_id ~= game.JobId then
-                if not isCurrentlyTraining then
-                    hopTarget = matchState.main_job_id
-                end
-            end
-
-            if hopTarget then
-                status("📡 Nhận lệnh hop sang server FM: " .. tostring(hopTarget):sub(1,8))
-                task.wait(0.1)
-                pcall(function()
-                    ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
-                end)
-                task.wait(8)
-                continue
-            end
-
             -- ════════════ XỬ LÝ KHÔNG CÓ FULL MOON ════════════
             if isUper then
                 -- MAIN
