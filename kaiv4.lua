@@ -1194,8 +1194,8 @@ end
 -- ClockTime priority đã bị bỏ
 local lastFmApiAt     = 0
 local lastFmApiResult = nil   -- cache kết quả để tránh gọi API liên tục
-local FM_API_INTERVAL = 10    -- gọi lại mỗi 10s
-local FM_HOP_DELAY    = 5     -- startup delay riêng cho FM hop
+local FM_API_INTERVAL = 4     -- gọi lại mỗi 4s (tăng tốc độ detect FM)
+local FM_HOP_DELAY    = 2     -- startup delay riêng cho FM hop
 
 local function findFMServer()
     if FM_API_BASE == "" then return nil end
