@@ -44,14 +44,9 @@ end
 -- mỗi block = 1 nhóm | thêm/bớt block = thêm/bớt nhóm
 getgenv().Mode1 = getgenv().Mode1 or {
     {
-        name    = "NhomA",
-        helpers = {"BrooklynnVort3xPrism", "StevePatton6141"},
-        hopfm   = {"BrooklynnVort3xPrism"},
-    },
-    {
-        name    = "NhomB",
-        helpers = {"Liam_Lion90", "AriaCod3Craft2017"},
-        hopfm   = {"Liam_Lion90"},
+        name    = "trietv4",
+        helpers = {"hibrohfbd", "LarryElliott74999",},
+        hopfm   = {"hibrohfbd"},
     },
 }
 
@@ -1073,12 +1068,42 @@ task.spawn(function()
         if getgenv().UpdateRoles then
             getgenv().UpdateRoles()
         end
-        -- Re-init group nếu role thay đổi
         if matchState and myGroupId == "" and (isUper or isAlly) then
             initLocalGroup()
         end
     end
 end)
+
+local blockHopAfterTrial = false
+pcall(function()
+    if isfile("piggyv4_trial_hop.txt") then
+        local content = readfile("piggyv4_trial_hop.txt")
+        if content == "true" then
+            -- Set NGAY LẬP TỨC để block hop kể từ giây đầu, không đợi 5s
+            blockHopAfterTrial = true
+            task.spawn(function()
+                task.wait(5)
+                local hasHelper = false
+                for _, p in ipairs(game:GetService("Players"):GetPlayers()) do
+                    if HelpWhitelist[p.Name] == true then
+                        hasHelper = true
+                        break
+                    end
+                end
+                if hasHelper then
+                    -- Có Helper → cho phép hop tìm FM bình thường
+                    blockHopAfterTrial = false
+                    status("Phát hiện Helper → Tiếp tục hop tìm FM")
+                else
+                    -- Không có Helper → giữ block, ở im server này
+                    status("Không thấy Helper → Ở im server này")
+                end
+                writefile("piggyv4_trial_hop.txt", "false")
+            end)
+        end
+    end
+end)
+
 local mainJobId = game.JobId
 local matchTeleportAt = 0
 local scheduledRoundId = ""
@@ -1135,6 +1160,31 @@ local function isFMCached(jobId)
     if not ts then return false end
     local now = math.floor(v3ServerNow() or os.time())
     return (now - ts) < FM_CACHE_EXPIRE
+end
+
+local function checkCanHopFM()
+    local ghGroups = getgenv().Mode1 or {}
+    local hasAnyHopFM = false
+    local isListed = false
+
+    for _, grp in ipairs(ghGroups) do
+        if type(grp) == "table" and grp.hopfm then
+            for _, name in ipairs(grp.hopfm) do
+                name = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
+                if name ~= "" then
+                    hasAnyHopFM = true
+                    if name == USERNAME then
+                        isListed = true
+                    end
+                end
+            end
+        end
+    end
+
+    if not hasAnyHopFM then
+        return true -- rỗng = tất cả đều được hop FM
+    end
+    return isListed
 end
 
 -- ══ FM SERVER FINDER ══
@@ -3112,7 +3162,7 @@ function runRaceTrainingWork(trainingState, roleLabel)
                         local nowT = tick()
                         if dist > ATTACK_RANGE and nowT - lastTweenAt > 0.5 then
                             lastTweenAt = nowT
-                            topos(hrp.CFrame * CFrame.new(0, 5, 0))
+                            topos(hrp.CFrame * CFrame.new(0, 15, 0))
                         end
                     end
                     if energy and energy.Value >= 1 then
@@ -3215,7 +3265,7 @@ if isUper and SCRIPT_MODE == 1 then
             task.wait(1)
             pcall(function()
                 -- Chỉ hop khi training xong
-                if isCurrentlyTraining then return end
+                if isCurrentlyTraining or blockHopAfterTrial then return end
                 local v4s = nil
                 pcall(function() v4s = getV4Status(false) end)
                 if v4s and (v4s.needsTraining or v4s.needsPurchase) then return end
@@ -3342,73 +3392,86 @@ spawn(function()
         -- ════════════════════════════════════════════════════
         local v4sForHop = nil
         pcall(function() v4sForHop = getV4Status(false) end)
-
-        local mainNeedsWork = false
-        if not isUper and myGroupMainUsername ~= "" then
-            local mainSync = currentApiAccounts[myGroupMainUsername]
-            if mainSync then
-                if mainSync.needsTraining == true or tostring(mainSync.needsTraining) == "true"
-                   or mainSync.needsPurchase == true or tostring(mainSync.needsPurchase) == "true" then
-                    mainNeedsWork = true
-                end
-            end
-        end
-
         -- isCurrentlyTraining bắt cả helper (helper có needsTraining=false vì faked)
         local skipHopForWork = isCurrentlyTraining
+            or blockHopAfterTrial
             or (v4sForHop and (v4sForHop.needsTraining or v4sForHop.needsPurchase))
-            or mainNeedsWork
 
         -- Mode 2: không hop (treo trong server chờ FM)
         if SCRIPT_MODE == 2 then skipHopForWork = true end
 
         if not skipHopForWork and nowTick - SCRIPT_START_AT > HOP_STARTUP_DELAY then
+            local hopTarget = nil
+            local canHopFM = checkCanHopFM()
+
             -- [4a] FM_API: chỉ HopFM whitelist account
             -- Đánh dấu cache khi đã vào đúng sv FM thành công
             if lastFmApiResult == game.JobId then
                 markFMJoined(game.JobId)
                 lastFmApiResult = nil
             end
-        end
-
-        -- ════════════════════════════════════════════════════
-        -- [5] TRAINING / TRIAL / RESET LOGIC (ĐÃ ĐƠN GIẢN HÓA & ĐỒNG NHẤT 1-1)
-        -- ════════════════════════════════════════════════════
-        local myV4 = getV4Status(false)
-        local fullMoonNow = isnight() and isfullmoon()
-
-        -- ════════════ XỬ LÝ HOP CHUNG (ĐỘ ƯU TIÊN CAO NHẤT) ════════════
-        local hopTarget = nil
-        if matchState and matchState.main_job_id 
-            and matchState.main_job_id ~= "" 
-            and matchState.main_job_id ~= game.JobId then
-            
-            local canHop = true
-            if isUper then
-                -- Nếu là Main, đang train, cần train hoặc cần mua upgrade thì không được hop đi đâu cả
-                if isCurrentlyTraining or myV4.needsTraining or myV4.needsPurchase then
-                    canHop = false
+            if not currentFullMoon and FM_API_BASE ~= "" and canHopFM
+                and nowTick - SCRIPT_START_AT > FM_HOP_DELAY then
+                if nowTick - lastFmApiAt >= FM_API_INTERVAL then
+                    lastFmApiAt = nowTick
+                    status("FM API: tìm server FM...")
+                    task.spawn(function()
+                        local found = findFMServer()
+                        if found and found ~= game.JobId then
+                            lastFmApiResult = found
+                        else
+                            lastFmApiResult = nil
+                        end
+                    end)
                 end
-            else
-                -- Nếu là Helper, mà Main đang cần train hoặc mua upgrade thì cũng không hop đi theo
-                if mainNeedsWork then
-                    canHop = false
+                if lastFmApiResult and lastFmApiResult ~= game.JobId then
+                    hopTarget = lastFmApiResult
+                    status("FM API → hop " .. tostring(hopTarget):sub(1,8) .. "...")
                 end
             end
-            
-            if canHop then
+
+            -- [4b] API matchState.main_job_id (sync từ processSyncResponse)
+            if not hopTarget and matchState
+                and matchState.main_job_id and matchState.main_job_id ~= ""
+                and matchState.main_job_id ~= game.JobId then
                 hopTarget = matchState.main_job_id
             end
-        end
 
-        if hopTarget then
-            status("📡 Nhận lệnh hop sang server FM: " .. tostring(hopTarget):sub(1,8))
-            task.wait(0.1)
-            pcall(function()
-                ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
-            end)
-            task.wait(8)
-            continue
+            if hopTarget then
+                if hopTarget ~= lastHopTarget then
+                    -- Target mới: bắt đầu timer, teleport ngay
+                    lastHopAt     = nowTick
+                    lastHopTarget = hopTarget
+                    status("Hopping → " .. tostring(hopTarget):sub(1, 8) .. "...")
+                    pcall(function()
+                        ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
+                    end)
+                    task.wait(5)
+                    continue
+                else
+                    local elapsed = nowTick - lastHopAt
+                    if elapsed >= 6 then
+                        -- 6s: vẫn chưa vào được → cache jobId thất bại, refetch ngay
+                        status("⏱ FM join timeout 6s → bỏ " .. tostring(hopTarget):sub(1,8) .. " + tìm sv mới")
+                        markFMJoined(hopTarget)
+                        lastFmApiResult = nil
+                        lastFmApiAt     = 0
+                        lastHopTarget   = ""
+                        if elapsed >= 120 and not canHopFM then
+                            if matchState then matchState.main_job_id = game.JobId end
+                            status("⚠ 2min timeout - HopFM tìm server mới")
+                        end
+                    else
+                        -- Retry teleport
+                        status("Retry hop → " .. tostring(hopTarget):sub(1, 8) .. "...")
+                        pcall(function()
+                            ReplicatedStorage:WaitForChild("__ServerBrowser"):InvokeServer("teleport", hopTarget)
+                        end)
+                        task.wait(5)
+                        continue
+                    end
+                end
+            end
         end
 
         -- ════════════════════════════════════════════════════
@@ -3820,7 +3883,7 @@ spawn(function()
         end
 
         local v4state = nil
-        pcall(function() v4state = getV4Status() end)
+        pcall(function() v4state = getV4Status(false) end)
         if not v4state then continue end
         local trialJustDone = v4state.needsTraining == true or v4state.needsPurchase == true
 
@@ -3845,14 +3908,26 @@ spawn(function()
             matchState.group_id = ""
             releaseCurrentGroup("trial_done")
 
-            -- Chờ 15s để server cập nhật trạng thái V4 (training/purchase) rồi mới hop
-            status("Trial xong - chờ 15s rồi hop sang server khác...")
-            task.wait(15)
+            -- Block hop NGAY trước khi chờ, tránh main loop hop trong 10s này
+            blockHopAfterTrial = true
+
+            -- Chờ 10s rồi hop random sang server khác
+            status("Trial xong - chờ 10s rồi hop random...")
+            task.wait(10)
             invalidateV4Status()
 
-            -- Hop sang server khác để giải phóng slot cho acc Main khác join vào
-            status("Hopping sang server khác cho Main tiếp theo...")
-            pcall(hopRandom)
+            -- Chỉ hop nếu không đang training
+            if not isCurrentlyTraining then
+                pcall(function()
+                    writefile("piggyv4_trial_hop.txt", "true")
+                end)
+                status("Trial xong -> đang hop random...")
+                pcall(hopRandom)
+            else
+                -- Đang training -> không hop, unlock để hop FM sau khi training xong
+                blockHopAfterTrial = false
+                status("Trial xong - đang training, không hop")
+            end
         end
 
         -- *** CHỈ reset trialDoneHandled, KHÔNG reset postTrialHopDone ***
@@ -3882,8 +3957,8 @@ function createUI()
 
     -- Main Panel
     local Frame = Instance.new("Frame")
-    Frame.Size = UDim2.new(0, 320, 0, 195)
-    Frame.Position = UDim2.new(0.5, -160, 0, 10)
+    Frame.Size = UDim2.new(0, 460, 0, 220)
+    Frame.Position = UDim2.new(0.5, -230, 0, 10)
     Frame.BackgroundColor3 = Color3.fromRGB(25, 18, 22)
     Frame.BackgroundTransparency = 0.25
     Frame.BorderSizePixel = 0
@@ -3914,8 +3989,8 @@ function createUI()
 
     -- Grid / List container
     local Container = Instance.new("Frame")
-    Container.Size = UDim2.new(0.92, 0, 0.8, 0)
-    Container.Position = UDim2.new(0.04, 0, 0.18, 0)
+    Container.Size = UDim2.new(0.92, 0, 0.82, 0)
+    Container.Position = UDim2.new(0.04, 0, 0.16, 0)
     Container.BackgroundTransparency = 1
     Container.Parent = Frame
 
@@ -3927,29 +4002,32 @@ function createUI()
     -- Các dòng label
     local function createLabel(name, defaultVal, order)
         local Line = Instance.new("Frame")
-        Line.Size = UDim2.new(1, 0, 0, 16)
+        Line.Size = UDim2.new(1, 0, 0, 18)
         Line.BackgroundTransparency = 1
         Line.LayoutOrder = order
         Line.Parent = Container
 
         local Label = Instance.new("TextLabel")
-        Label.Size = UDim2.new(0.26, 0, 1, 0)
+        Label.Size = UDim2.new(0.2, 0, 1, 0)
         Label.BackgroundTransparency = 1
         Label.Text = name
         Label.TextColor3 = Color3.fromRGB(240, 200, 210)
         Label.TextSize = 13
         Label.TextXAlignment = Enum.TextXAlignment.Left
+        Label.TextYAlignment = Enum.TextYAlignment.Top
         Label.Font = Enum.Font.Arcade
         Label.Parent = Line
 
         local Val = Instance.new("TextLabel")
-        Val.Size = UDim2.new(0.74, 0, 1, 0)
-        Val.Position = UDim2.new(0.26, 0, 0, 0)
+        Val.Size = UDim2.new(0.8, 0, 1, 0)
+        Val.Position = UDim2.new(0.2, 0, 0, 0)
         Val.BackgroundTransparency = 1
         Val.Text = defaultVal
         Val.TextColor3 = Color3.fromRGB(255, 255, 255)
         Val.TextSize = 13
         Val.TextXAlignment = Enum.TextXAlignment.Left
+        Val.TextYAlignment = Enum.TextYAlignment.Top
+        Val.TextWrapped = true
         Val.Font = Enum.Font.Arcade
         Val.Parent = Line
 
@@ -3964,6 +4042,7 @@ function createUI()
     local MoonVal     = createLabel("Moon :", "NO FULL MOON", 6)
     local V4Val       = createLabel("V4 :", "Checking...", 7)
     local StatusVal   = createLabel("Status :", "Loading...", 8)
+    local ServerVal   = createLabel("Server :", "0/12", 9)
 
     -- Đổi màu giá trị cho đồng điệu màu hồng
     PlayerVal.TextColor3 = Color3.fromRGB(255, 180, 200)
@@ -3974,6 +4053,7 @@ function createUI()
     MoonVal.TextColor3 = Color3.fromRGB(255, 180, 200)
     V4Val.TextColor3 = Color3.fromRGB(255, 180, 200)
     StatusVal.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ServerVal.TextColor3 = Color3.fromRGB(255, 180, 200)
 
     -- Cho phép drag thả UI
     local dragging, dragInput, dragStart, startPos
@@ -4004,10 +4084,10 @@ function createUI()
         end
     end)
 
-    return ScreenGui, StatusVal, PlayerVal, RoleVal, RaceVal, FragVal, PairVal, MoonVal, V4Val
+    return ScreenGui, StatusVal, PlayerVal, RoleVal, RaceVal, FragVal, PairVal, MoonVal, V4Val, ServerVal
 end
 
-local UI, StatusVal, PlayerVal, RoleVal, RaceVal, FragVal, PairVal, MoonVal, V4Val = createUI()
+local UI, StatusVal, PlayerVal, RoleVal, RaceVal, FragVal, PairVal, MoonVal, V4Val, ServerVal = createUI()
 
 function status(text)
     currentTaskStatus = tostring(text or "idle")
@@ -4082,6 +4162,9 @@ task.spawn(function()
         if V4Val then
             V4Val.Text = formatV4Info(v4State)
             V4Val.TextColor3 = getV4StatusColor(v4State)
+        end
+        if ServerVal then
+            ServerVal.Text = tostring(#Players:GetPlayers()) .. "/12"
         end
     end
 end)
