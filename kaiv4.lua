@@ -937,7 +937,7 @@ end
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "http://103.77.241.138:1901/xOKcICjhMvaZ1NCqj0yd7KW1n6as960lopwwBLr6/server/api/moon?X-API-Key=all_zPRS9PQT7PqAI4VTvximZTOBqv2lMiWgzLMh2GXR"
-    local API_BASE        = "http://matrix.pikamc.vn:25932"
+    local API_BASE        = "http://mbasic7.pikamc.vn:25082"
     local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
     local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
     local HOP_STARTUP_DELAY = 3    -- giây trước khi bắt đầu hop
@@ -1949,12 +1949,11 @@ end
             while task.wait(1.5) do
                 pcall(function()
                     local resp = syncToAPI()
-                    if resp and resp.group and type(resp.group.id) == "string"
-                        and resp.group.id ~= "" and myAssignedGroupId == "" then
-                        local assignedId = resp.group.id
+                    if resp and resp.group and type(resp.group.id) == "string" and resp.group.id ~= "" then
+                        local assignedId = trim(resp.group.id)
                         local validGroup = false
                         for _, note in ipairs(noteList) do
-                            if trim(note):lower() == trim(assignedId):lower() then
+                            if trim(note):lower() == assignedId:lower() then
                                 assignedId = trim(note)
                                 validGroup = true
                                 break
@@ -1962,11 +1961,36 @@ end
                         end
                         if validGroup then
                             myAssignedGroupId = assignedId
-                        else
-                            warn("[JoinV4] Rejected stale groupId from server: " .. assignedId
-                                .. " (not in current noteList) - waiting for valid group...")
-                            setStatus("Bad group assign (" .. assignedId .. ") - retrying...")
                         end
+                    end
+
+                    -- Fallback: Tự động gán vào group phù hợp nếu server chưa cấp hoặc cấp group lạ
+                    if myAssignedGroupId == "" then
+                        local bestGroup = nil
+                        local bestScore = -1
+                        for i, helperList in ipairs(helperGroups) do
+                            if type(helperList) == "table" then
+                                local note = trim(noteList[i] or ("group" .. i))
+                                local score = 0
+                                if resp and resp.accounts then
+                                    for _, h in ipairs(helperList) do
+                                        local hName = trim(h)
+                                        local acc = resp.accounts[hName]
+                                        if acc and (acc.jobId or acc.jobid) then
+                                            score = score + 1
+                                            if acc.fullmoon == true or acc.fullMoon == true then
+                                                score = score + 10
+                                            end
+                                        end
+                                    end
+                                end
+                                if score > bestScore then
+                                    bestScore = score
+                                    bestGroup = note
+                                end
+                            end
+                        end
+                        myAssignedGroupId = bestGroup or trim(noteList[1] or "namv4-1")
                     end
 
                     if not resp or not resp.accounts then
@@ -2031,7 +2055,27 @@ end
                     local myGroupHelpers = {}
                     local myGroupHopFMs  = {}
 
-                    if resp.group and resp.group.helpers then
+                    -- Ưu tiên lấy helpers của myAssignedGroupId từ local config
+                    for i, helperList in ipairs(helperGroups) do
+                        if type(helperList) == "table" then
+                            local note = trim(noteList[i] or ("group" .. i))
+                            if note:lower() == myAssignedGroupId:lower() then
+                                for _, h in ipairs(helperList) do
+                                    h = trim(tostring(h))
+                                    if h ~= "" then
+                                        myGroupHelpers[h] = true
+                                        if AllHopFMSet[h] ~= nil then
+                                            myGroupHopFMs[h] = true
+                                        end
+                                    end
+                                end
+                                break
+                            end
+                        end
+                    end
+
+                    -- Fallback nếu local config không tìm thấy
+                    if next(myGroupHelpers) == nil and resp.group and resp.group.helpers then
                         for _, h in ipairs(resp.group.helpers) do
                             h = trim(tostring(h))
                             if h ~= "" then
