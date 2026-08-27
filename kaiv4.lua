@@ -937,7 +937,7 @@ end
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "http://103.77.241.138:1901/xOKcICjhMvaZ1NCqj0yd7KW1n6as960lopwwBLr6/server/api/moon?X-API-Key=all_zPRS9PQT7PqAI4VTvximZTOBqv2lMiWgzLMh2GXR"
-    local API_BASE        = "http://mbasic7.pikamc.vn:25082"
+    local API_BASE        = "http://matrix.pikamc.vn:25932"
     local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
     local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
     local HOP_STARTUP_DELAY = 3    -- giây trước khi bắt đầu hop
@@ -1332,7 +1332,7 @@ end
         elseif isDone  then syncStatus = "complete"
         end
 
-        local limitMain = math.max(1, math.min(10, tonumber(CFG["LimitMainPerGroup"]) or 4))
+        local limitMain = math.max(1, math.min(50, tonumber(CFG["LimitMainPerGroup"]) or 10))
         local numGroups = #helperGroups
 
         return {
@@ -1954,7 +1954,11 @@ end
                         local assignedId = resp.group.id
                         local validGroup = false
                         for _, note in ipairs(noteList) do
-                            if trim(note) == assignedId then validGroup = true; break end
+                            if trim(note):lower() == trim(assignedId):lower() then
+                                assignedId = trim(note)
+                                validGroup = true
+                                break
+                            end
                         end
                         if validGroup then
                             myAssignedGroupId = assignedId
