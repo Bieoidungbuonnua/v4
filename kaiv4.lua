@@ -1,17 +1,30 @@
-repeat task.wait() until game:IsLoaded()
-    and game:GetService("Players").LocalPlayer
-    and game:GetService("Players").LocalPlayer:FindFirstChild("DataLoaded")
+if not game:IsLoaded() then
+    pcall(function() game.Loaded:Wait() end)
+end
+
+local _Players_init = game:GetService("Players")
+local _LP_init = _Players_init.LocalPlayer
+while not _LP_init do
+    task.wait(0.1)
+    _LP_init = _Players_init.LocalPlayer
+end
+
+pcall(function()
+    if not _LP_init:FindFirstChild("DataLoaded") then
+        _LP_init:WaitForChild("DataLoaded", 15)
+    end
+end)
 
 -- ══════════════════════════════════════════════════════════════════
 -- CẤU HÌNH DÙNG CHUNG (Tất cả 3 script tự động nhận từ JoinV4Config)
 -- ══════════════════════════════════════════════════════════════════
 local _DEFAULT_CFG = {
-    ["Helper"] = {
-        {"BradyLang6806", "Bytef8Star41673"},
-        {"MichaelLak17906", "FloralHampton91506"},
+    ["Key-Banana"]        = "31d4bebb966b95e8bd94d7a6",
+    ["Helper"]            = {
+        {"Cart3rRid3rDrag0n", "penel0peScott1"},
     },
-    ["Note"]             = {"groupNote1111111", "groupNote2222222"},
-    ["LimitMainPerGroup"] = 8,   -- tối đa main được vào mỗi group
+    ["Note"]              = {"trietautov4"},
+    ["LimitMainPerGroup"] = 10,   -- tối đa main được vào mỗi group
 }
 
 if not getgenv().JoinV4Config or type(getgenv().JoinV4Config) ~= "table" then
@@ -48,6 +61,150 @@ do
 end
 
 -- ══════════════════════════════════════════════════════════════════
+-- [MOONCHECK] (mooncheck.lua) - Moon Texture & MoonPhase GUI
+-- ══════════════════════════════════════════════════════════════════
+do
+    local P = game:GetService("Players")
+    local L = P.LocalPlayer
+    local RS = game:GetService("RunService")
+
+    local function CheckSea(v)
+        local attr = workspace:GetAttribute("MAP")
+        if not attr then return false end
+        return v == tonumber(tostring(attr):match("%d+"))
+    end
+    getgenv().CheckSea = CheckSea
+
+    local CheckMoon = newcclosure(function()
+        local t = (CheckSea(1) or CheckSea(3))
+            and ((game.Lighting:FindFirstChild("Sky") and game.Lighting.Sky.MoonTextureId)
+            or (game.Lighting:FindFirstChild("Space_Skybox") and game.Lighting.Space_Skybox.MoonTextureId))
+            or (CheckSea(2) and game.Lighting:FindFirstChild("FantasySky") and game.Lighting.FantasySky.MoonTextureId)
+            or ""
+        t = t:gsub("rbxassetid://","http://www.roblox.com/asset/?id=")
+        return ({
+            ["http://www.roblox.com/asset/?id=15493317929"]="Blue Moon",
+            ["http://www.roblox.com/asset/?id=9709149431"]="8/8",
+            ["http://www.roblox.com/asset/?id=9709149052"]="7/8",
+            ["http://www.roblox.com/asset/?id=9709143733"]="6/8",
+            ["http://www.roblox.com/asset/?id=9709150401"]="5/8",
+            ["http://www.roblox.com/asset/?id=9709135895"]="4/8",
+            ["http://www.roblox.com/asset/?id=9709150086"]="2/8",
+            ["http://www.roblox.com/asset/?id=9709139597"]="1/8",
+            ["http://www.roblox.com/asset/?id=9709149680"]="0/8",
+        })[t] or "nil"
+    end)
+    getgenv().CheckMoon = CheckMoon
+
+    local CheckMoonPhase = newcclosure(function()
+        local m = game.Lighting:GetAttribute("MoonPhase")
+        if not m then return "Unknown","Unknown Phase",nil end
+        if m > 5 then return "Fake Moon","Fake Moon",m
+        elseif m < 5 then return "Bad Moon","Bad Moon",m
+        elseif m == 5 and not getgenv().isfmended then return "Full Moon","Full Moon Up",m
+        elseif m == 5 and getgenv().isfmended then return "Ended","Full Moon End",m end
+    end)
+    getgenv().CheckMoonPhase = CheckMoonPhase
+
+    local function S2T(s)
+        if s < 0 then s = 0 end
+        return string.format("%dm %ds",math.floor(s/60),s%60)
+    end
+    local C, D, NS, NE = 24, 1200, 18, 6
+    local function IsNight(c) return (c >= NS) or (c < NE) end
+    local function ToStart()
+        local n = game.Lighting.ClockTime
+        if IsNight(n) then return 0 end
+        local d = n < NS and (NS-n) or 0
+        return math.floor((d/C)*D)
+    end
+    local function ToEnd()
+        local n = game.Lighting.ClockTime
+        if not IsNight(n) then return 0 end
+        local d = n >= NS and ((C-n)+NE) or (NE-n)
+        return math.floor((d/C)*D)
+    end
+    local function HMS(c)
+        local h = math.floor(c)
+        local m = math.floor((c-h)*60)
+        local s = math.floor(((c-h)*60-m)*60)
+        return string.format("%02d:%02d:%02d",h,m,s)
+    end
+
+    local function CreateGUI()
+        local pg = L:FindFirstChildOfClass("PlayerGui") or L:WaitForChild("PlayerGui", 10)
+        if not pg then return nil, nil end
+        local g = pg:FindFirstChild("MoonStatusGUI")
+        if g then g:Destroy() end
+        g = Instance.new("ScreenGui")
+        g.Name = "MoonStatusGUI"
+        g.ResetOnSpawn = false
+        g.IgnoreGuiInset = true
+        g.DisplayOrder = 999999999
+        g.ZIndexBehavior = Enum.ZIndexBehavior.Global
+        g.Enabled = false
+        g.Parent = pg
+        local l = Instance.new("TextLabel")
+        l.Name = "MainLabel"
+        l.Size = UDim2.new(0,600,0,130)
+        l.Position = UDim2.new(0.5,-300,0.5,-65)
+        l.BackgroundTransparency = 1
+        l.Font = Enum.Font.GothamBold
+        l.TextSize = 20
+        l.TextColor3 = Color3.fromRGB(255,255,255)
+        l.TextWrapped = true
+        l.TextStrokeTransparency = 0.3
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        l.TextYAlignment = Enum.TextYAlignment.Top
+        l.ZIndex = 2147483647
+        l.RichText = true
+        l.Parent = g
+        return g,l
+    end
+
+    local G, Lb = CreateGUI()
+
+    local function Upd()
+        if not G or not G.Parent or not Lb or not Lb.Parent then
+            G, Lb = CreateGUI()
+            if not G then return end
+        end
+        local ms = CheckMoon()
+        local ps,_,pv = CheckMoonPhase()
+        local ct = game.Lighting.ClockTime
+        local ts = ToStart()
+        local te = ToEnd()
+        local tsStr, teStr = S2T(ts), S2T(te)
+        local pc = #P:GetPlayers()
+        local isFull = (ms == "8/8" and ps == "Full Moon")
+        local show = isFull and (ts > 0 or te > 0)
+        G.Enabled = show
+        if not show then return end
+        local function T(t,r)
+            return string.format('<font color="rgb(%d,%d,%d)">%s</font>',r.R*255,r.G*255,r.B*255,t)
+        end
+        local tc = isFull and Color3.fromRGB(255,215,0) or Color3.fromRGB(255,100,100)
+        local kc = Color3.fromRGB(100,200,255)
+        local vc = Color3.fromRGB(255,255,255)
+        local sc = Color3.fromRGB(0,255,150)
+        local pc2 = ps=="Full Moon" and Color3.fromRGB(0,255,150) or Color3.fromRGB(255,100,100)
+        Lb.Text = string.format(
+            "%s\n%s %s\n%s %s\n%s %s\n%s %s [Time: %s]\n%s %s",
+            T("Full Moon Status",tc),
+            T("Time To Start (Night/Full Moon):",kc),T(tsStr,vc),
+            T("Players In Server:",kc),T(tostring(pc),vc),
+            T("Time To End (Night/Full Moon):",kc),T(teStr,vc),
+            T("Moon Status:",kc),T(ms,sc),HMS(ct),
+            T("Phase:",kc),T(tostring(ps).." ("..tostring(pv or "N/A")..")",pc2)
+        )
+    end
+
+    RS.Heartbeat:Connect(function()
+        pcall(Upd)
+    end)
+end
+
+-- ══════════════════════════════════════════════════════════════════
 -- [1/3] BNN (Banana Hub) - Whitelist từ HelperList chung
 -- ══════════════════════════════════════════════════════════════════
 do
@@ -59,11 +216,13 @@ do
         specialUsers[name] = true
     end
 
-    getgenv().Key = "31d4bebb966b95e8bd94d7a6" 
+    local cfgJoin = getgenv().JoinV4Config or {}
+    local rawKey = cfgJoin["Key-Banana"] or cfgJoin["KeyBanana"] or cfgJoin["Key_Banana"] or cfgJoin["Key"] or getgenv().Key
+    getgenv().Key = (type(rawKey) == "string" and rawKey ~= "") and rawKey or "31d4bebb966b95e8bd94d7a6"
 
     if specialUsers[username] then
         -- CONFIG 1 (Cho acc Helper)
-        print("[Config] Applying Config 1 for Helper")
+        print("[Config] Applying Config 1 for Helper: " .. username)
         getgenv().Config = {
             ["Select Team"]                = "Marine",
             ["Auto Reset Character"]       = true,
@@ -75,7 +234,7 @@ do
         }
     else
         -- CONFIG 2 (Cho acc Chính / Main)
-        print("[Config] Applying Config 2 for Main")
+        print("[Config] Applying Config 2 for Main: " .. username)
         getgenv().Config = {
             ["Select Team"]                              = "Marine",
             ["Stack Train With Trial Race"]              = true,
@@ -103,16 +262,16 @@ do
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- [2/3] TURNV3 (pairv4/turnv3.lua) - Đồng bộ V3 Countdown & Watchdog
+-- [2/3] TURNV3 (Đồng bộ V3 Countdown & Watchdog Ghost Temple)
 -- ══════════════════════════════════════════════════════════════════
 do
-    local V3_COUNTDOWN     = 3      -- giây countdown từ khi main tạo round đến fire
-    local V3_FILE_POLL     = 0.08   -- poll file mỗi bao nhiêu giây
-    local V3_READY_FRESH   = 3.0    -- file ready tối đa bao nhiêu giây còn hợp lệ
-    local V3_FIRE_COUNT    = 1      -- số lần FireServer ActivateAbility
-    local V3_FIRE_INTERVAL = 0.05   -- khoảng cách giữa các lần fire (s)
-    local V3_DOOR_DIST     = 65     -- khoảng cách tối đa tới cửa (studs)
-    local FILE_ROOT        = "TurnV3"
+    local V3_COUNTDOWN      = 4
+    local V3_FILE_POLL      = 0.05
+    local V3_READY_FRESH    = 5.0
+    local V3_FIRE_COUNT     = 3
+    local V3_FIRE_INTERVAL  = 0.05
+    local V3_DOOR_DIST      = 65
+    local FILE_ROOT         = "TurnV3"
 
     -- SERVICES
     local Players           = game:GetService("Players")
@@ -123,36 +282,43 @@ do
     local LocalPlayer       = Players.LocalPlayer
     local USERNAME          = LocalPlayer.Name
 
-    local Remotes = ReplicatedStorage:FindFirstChild("Remotes") or ReplicatedStorage:WaitForChild("Remotes", 10)
-    local CommE   = Remotes and (Remotes:FindFirstChild("CommE")  or Remotes:WaitForChild("CommE",  10))
-    local CommF   = Remotes and (Remotes:FindFirstChild("CommF_") or Remotes:WaitForChild("CommF_", 10))
+    local CommF_ = nil
+    pcall(function()
+        CommF_ = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("CommF_", 5)
+    end)
 
-    -- ROLE DETECTION
-    local function isInHelperList(name)
-        for _, n in ipairs(getgenv().HelperList or {}) do
-            if n == name then return true end
+    -- ════════════ ROLE DETECTION ════════════
+    -- Helper = có trong HelperList
+    -- Main   = KHÔNG có trong HelperList
+    local LOCAL_HELPERS   = {}
+    local HelpWhitelist   = {}
+    do
+        local seen = {}
+        for _, raw in ipairs(getgenv().HelperList or {}) do
+            local name = tostring(raw):match("^%s*(.-)%s*$")
+            if name ~= "" and not seen[name] then
+                seen[name] = true
+                table.insert(LOCAL_HELPERS, name)
+                HelpWhitelist[name] = true
+            end
         end
-        return false
     end
 
-    local function findMainInServer()
-        for _, name in ipairs(getgenv().HelperList or {}) do
-            if Players:FindFirstChild(name) then return name end
-        end
-        return nil
-    end
+    local isUper = not HelpWhitelist[USERNAME]   -- MAIN: không trong whitelist
+    local isAlly =     HelpWhitelist[USERNAME]   -- HELPER: có trong whitelist
 
-    local isMain   = (findMainInServer() == USERNAME)
-    local isHelper = isInHelperList(USERNAME) and not isMain
+    print(string.format("[TurnV3] Role check: USERNAME='%s' | isMain=%s | isHelper=%s | HelperList=%s",
+        USERNAME, tostring(isUper), tostring(isAlly),
+        table.concat(LOCAL_HELPERS, ", ")))
 
-    -- SERVER CLOCK
-    local function serverNow()
+    -- SERVER TIME
+    local function v3ServerNow()
         local ok, v = pcall(function() return game:GetService("Workspace"):GetServerTimeNow() end)
         return (ok and tonumber(v)) and tonumber(v) or tick()
     end
 
     -- FILE SYNC API
-    local FILE_SYNC_AVAILABLE = type(writefile)  == "function"
+    local FILE_SYNC_AVAILABLE = type(writefile) == "function"
         and type(readfile)   == "function"
         and type(isfile)     == "function"
         and type(makefolder) == "function"
@@ -191,15 +357,13 @@ do
     end
 
     local function ownReadyPath()
-        local folder = groupFolder()
-        if not folder then return nil end
-        return folder .. "/ready_" .. sanitize(USERNAME) .. ".json"
+        local f = groupFolder(); if not f then return nil end
+        return f .. "/ready_" .. sanitize(USERNAME) .. ".json"
     end
 
     local function commandPath()
-        local folder = groupFolder()
-        if not folder then return nil end
-        return folder .. "/command.json"
+        local f = groupFolder(); if not f then return nil end
+        return f .. "/command.json"
     end
 
     -- STATE
@@ -210,30 +374,77 @@ do
     local abilityCooldown  = 0
     local currentStatus    = "Dang khoi dong..."
 
-    local function setStatus(s)
-        currentStatus = tostring(s or "")
+    local function setStatus(s) currentStatus = tostring(s or "") end
+
+    -- V4 STATUS CHECK
+    local v4Cache       = { at = 0, data = nil }
+    local V4_CACHE_TIME = 10.0
+
+    local function invalidateV4Cache()
+        v4Cache.at   = 0
+        v4Cache.data = nil
     end
 
-    -- FULL MOON CHECK
-    local function isFullMoon()
-        for _, obj in ipairs(Lighting:GetChildren()) do
-            if obj:IsA("Sky") then
-                if tostring(obj.MoonTextureId):find("9709149431") then return true end
-            end
+    local function getV4StatusSimple()
+        if v4Cache.data and tick() - v4Cache.at < V4_CACHE_TIME then
+            return v4Cache.data
         end
-        return false
+        local s = { canTrial = true, needsTraining = false, needsPurchase = false, complete = false }
+        if not CommF_ then
+            v4Cache.at = tick(); v4Cache.data = s; return s
+        end
+        local ok, err = pcall(function()
+            local char        = LocalPlayer.Character
+            local transformed = char and char:FindFirstChild("RaceTransformed")
+            if transformed then
+                local ok2, code = pcall(function() return CommF_:InvokeServer("UpgradeRace", "Check") end)
+                if ok2 and code ~= nil then
+                    code = tonumber(code)
+                    if code == 0 then
+                        s.canTrial = true
+                    elseif code == 5 then
+                        s.complete = true; s.canTrial = true
+                    elseif code == 1 or code == 3 or code == 6 or code == 8 then
+                        s.canTrial = false; s.needsTraining = true
+                    elseif code == 2 or code == 4 or code == 7 then
+                        s.canTrial = false; s.needsPurchase = true
+                    end
+                end
+            else
+                local ok2, progress = pcall(function()
+                    return CommF_:InvokeServer("RaceV4Progress", "Check")
+                end)
+                if ok2 and tonumber(progress) then
+                    progress = tonumber(progress)
+                    if progress >= 4 then
+                        s.canTrial = true
+                    else
+                        s.canTrial      = false
+                        s.needsTraining = true
+                    end
+                end
+            end
+        end)
+        if not ok then
+            s = { canTrial = true, needsTraining = false, needsPurchase = false, complete = false }
+        end
+        v4Cache.at = tick(); v4Cache.data = s; return s
+    end
+
+    local function isnight()
+        local c = Lighting.ClockTime
+        return c >= 16 or c < 5
+    end
+
+    local function isfullmoon()
+        return Lighting:GetAttribute("MoonPhase") == 5
     end
 
     -- DOOR CHECK
-    local function getDoor(playerName)
-        local plr = playerName and Players:FindFirstChild(playerName) or LocalPlayer
-        if not plr then return nil end
-        local char = plr.Character
-        if not char then return nil end
-        local data = plr:FindFirstChild("Data")
+    local function getDoor()
+        local data = LocalPlayer:FindFirstChild("Data")
         local race = data and data:FindFirstChild("Race")
         if not race then return nil end
-        local raceVal = race.Value
 
         local temple = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Temple of Time")
         if not temple then
@@ -242,11 +453,11 @@ do
         end
         if not temple then return nil end
 
+        local raceVal  = race.Value
         local corridor = temple:FindFirstChild(raceVal .. "Corridor")
         if not corridor then
-            local rLow = raceVal:lower()
             for _, c in ipairs(temple:GetChildren()) do
-                if c.Name:lower():find(rLow, 1, true) then corridor = c; break end
+                if c.Name:lower():find(raceVal:lower(), 1, true) then corridor = c; break end
             end
         end
         if not corridor then return nil end
@@ -255,27 +466,18 @@ do
         if not door then return nil end
         local entrance = door:FindFirstChild("Entrance") or door
         if entrance:IsA("BasePart") then return entrance end
-        local pivot = pcall(function() return entrance:GetPivot() end)
-        return entrance:FindFirstChildWhichIsA("BasePart") or nil
+        return entrance:FindFirstChildWhichIsA("BasePart")
     end
 
-    local function localDoorState(playerName)
-        local plr = playerName and Players:FindFirstChild(playerName) or LocalPlayer
-        local char = plr and plr.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        local door = getDoor(playerName)
-
+    local function localDoorState()
+        local char     = LocalPlayer.Character
+        local hrp      = char and char:FindFirstChild("HumanoidRootPart")
+        local hum      = char and char:FindFirstChildOfClass("Humanoid")
+        local door     = getDoor()
         local distance = math.huge
-        if door and hrp then
-            distance = (door.Position - hrp.Position).Magnitude
-        end
-
+        if door and hrp then distance = (door.Position - hrp.Position).Magnitude end
         local timerVisible = false
-        pcall(function()
-            timerVisible = LocalPlayer.PlayerGui.Main.Timer.Visible == true
-        end)
-
+        pcall(function() timerVisible = LocalPlayer.PlayerGui.Main.Timer.Visible == true end)
         local alive = hum ~= nil and hum.Health > 0
         return {
             nearDoor     = alive and door ~= nil and distance <= V3_DOOR_DIST,
@@ -294,20 +496,26 @@ do
         local path = ownReadyPath()
         if not path then return false end
 
+        if handledRoundId == "" then
+            local prev = safeReadJson(path)
+            if prev and tostring(prev.fired_round or "") ~= "" then
+                handledRoundId = tostring(prev.fired_round)
+            end
+        end
+
         local st    = localDoorState()
         local ready = tick() >= abilityCooldown
             and st.alive
             and st.nearDoor
             and not st.timerVisible
-            and isFullMoon()
 
         readySent = ready
         safeWriteJson(path, {
-            username    = USERNAME,
             job_id      = game.JobId,
+            username    = USERNAME,
             ready       = ready,
             near_door   = st.nearDoor,
-            updated_at  = serverNow(),
+            updated_at  = v3ServerNow(),
             fired_round = handledRoundId,
         })
         return ready
@@ -319,10 +527,10 @@ do
         if not folder then return 0, false end
 
         local readyCount = 0
-        local total = 0
-        local now = serverNow()
+        local total      = 0
+        local now        = v3ServerNow()
 
-        for _, name in ipairs(getgenv().HelperList or {}) do
+        for _, name in ipairs(LOCAL_HELPERS) do
             if Players:FindFirstChild(name) then
                 total = total + 1
                 local path = folder .. "/ready_" .. sanitize(name) .. ".json"
@@ -336,7 +544,7 @@ do
             end
         end
 
-        return readyCount, total >= 2 and readyCount >= total
+        return readyCount, total >= 1 and readyCount >= total
     end
 
     -- READ V3 COMMAND
@@ -347,26 +555,21 @@ do
         if not data then return nil end
         if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
 
-        local now       = serverNow()
+        local now       = v3ServerNow()
         local expiresAt = tonumber(data.expires_at) or 0
-        local fireAt    = tonumber(data.fire_at) or 0
-
-        if fireAt < now - 0.5 then return nil end
         if expiresAt <= now then return nil end
-
-        if data.members then
-            local found = false
-            for _, m in ipairs(data.members) do
-                if tostring(m) == USERNAME then found = true; break end
-            end
-            if not found then return nil end
-        end
         return data
     end
 
     -- MAIN CREATE ROUND
     local function mainCreateRound()
-        if not isMain then return nil end
+        if not isUper then return nil end
+
+        local v4 = getV4StatusSimple()
+        if v4 and (v4.needsTraining or v4.needsPurchase) then
+            setStatus("Main | Dang training - bo qua countdown")
+            return nil
+        end
 
         local ffaNow = false
         pcall(function()
@@ -374,31 +577,36 @@ do
         end)
         if ffaNow then return nil end
 
+        if scheduledRoundId ~= "" then
+            return readV3Command()
+        end
+
         local current = readV3Command()
         if current then return current end
 
         local readyCount, allReady = readAllReadyFiles()
         if not allReady then
-            setStatus(string.format("Main | Cho helper ready %d/%d...", readyCount,
-                (function()
-                    local t = 0
-                    for _, n in ipairs(getgenv().HelperList or {}) do
-                        if Players:FindFirstChild(n) then t = t + 1 end
-                    end
-                    return t
-                end)()))
+            local helperTotal = 0
+            for _, n in ipairs(LOCAL_HELPERS) do
+                if Players:FindFirstChild(n) then helperTotal = helperTotal + 1 end
+            end
+            setStatus(string.format("Main | Cho helper ready %d/%d...", readyCount, helperTotal))
             return nil
         end
 
-        local now    = serverNow()
-        local fireAt = now + V3_COUNTDOWN
+        local now     = v3ServerNow()
+        local fireAt  = now + V3_COUNTDOWN
         local roundId = sanitize(USERNAME) .. "_" .. tostring(math.floor(fireAt * 1000))
 
         local members = {}
-        for _, name in ipairs(getgenv().HelperList or {}) do
-            if Players:FindFirstChild(name) then
-                table.insert(members, name)
-            end
+        local seen    = {}
+        local function addMember(name)
+            name = tostring(name or "")
+            if name ~= "" and not seen[name] then seen[name] = true; table.insert(members, name) end
+        end
+        addMember(USERNAME)
+        for _, name in ipairs(LOCAL_HELPERS) do
+            addMember(name)
         end
 
         local command = {
@@ -408,7 +616,7 @@ do
             members    = members,
             created_at = now,
             fire_at    = fireAt,
-            expires_at = fireAt + 8,
+            expires_at = fireAt + 10,
             countdown  = V3_COUNTDOWN,
         }
 
@@ -422,7 +630,7 @@ do
     -- WAIT FOR SHARED FIRE TIME
     local function waitForSharedFireTime(fireAt)
         while true do
-            local remaining = fireAt - serverNow()
+            local remaining = fireAt - v3ServerNow()
             if remaining <= 0 then return end
             setStatus(string.format("V3 countdown %.2fs", remaining))
             if remaining > 0.25 then
@@ -440,24 +648,31 @@ do
         if roundId == "" or fireAt <= 0 then return false end
         if roundId == handledRoundId or roundId == scheduledRoundId then return false end
 
+        local inMembers = false
+        for _, m in ipairs(command.members or {}) do
+            if tostring(m) == USERNAME then inMembers = true; break end
+        end
+        if not inMembers then return false end
+
         scheduledRoundId = roundId
 
         task.spawn(function()
-            if fireAt < serverNow() - 2 then
-                warn("[TurnV3][SKIP] Command cu (fireAt da qua " ..
-                    string.format("%.1f", serverNow() - fireAt) .. "s truoc) -> bo")
-                scheduledRoundId = ""
-                return
-            end
-
             waitForSharedFireTime(fireAt)
 
             local st    = localDoorState()
             local jobOk = tostring(command.job_id or "") == tostring(game.JobId)
-            local fired = false
 
             if jobOk and st.nearDoor and not st.timerVisible then
-                setStatus(isMain and "Main | Kich hoat V3!" or "Helper | Kich hoat V3!")
+                setStatus(isUper and "Main | Kich hoat V3!" or "Helper | Kich hoat V3!")
+
+                pcall(function()
+                    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        hrp.AssemblyLinearVelocity  = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                    end
+                end)
+
                 for i = 1, V3_FIRE_COUNT do
                     pcall(function()
                         ReplicatedStorage.Remotes.CommE:FireServer("ActivateAbility")
@@ -468,13 +683,13 @@ do
                 handledRoundId  = roundId
                 abilityCooldown = tick() + 30
                 readySent       = false
-                fired           = true
                 pcall(writeOwnReadyFile, true)
 
                 task.spawn(function()
+                    local myRound = roundId
                     for _ = 1, 15 do
                         task.wait(1)
-                        if handledRoundId ~= roundId then return end
+                        if handledRoundId ~= myRound then return end
                         local ffaOk = false
                         pcall(function()
                             ffaOk = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
@@ -485,25 +700,31 @@ do
                         if timerOk then return end
                     end
                     if handledRoundId ~= roundId then return end
-                    local st2 = localDoorState()
-                    local ffaActive, timerActive = false, false
+                    local st2       = localDoorState()
+                    local ffaActive = false
+                    local insideTrial = false
                     pcall(function()
                         ffaActive = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
                     end)
-                    pcall(function() timerActive = LocalPlayer.PlayerGui.Main.Timer.Visible end)
-                    if st2.nearDoor and not ffaActive and not timerActive then
+                    pcall(function()
+                        insideTrial = LocalPlayer.PlayerGui.Main.Timer.Visible == true
+                    end)
+                    if st2.nearDoor and not ffaActive and not insideTrial then
                         setStatus("Ghost Temple! Resetting...")
-                        handledRoundId = ""
+                        handledRoundId  = ""
+                        abilityCooldown = tick() + 8
                         pcall(function() LocalPlayer.Character.Humanoid.Health = 0 end)
                     end
                 end)
             else
-                setStatus("V3 countdown xong nhung da roi cua")
+                handledRoundId  = roundId
+                abilityCooldown = tick() + 5
+                readySent       = false
+                pcall(writeOwnReadyFile, true)
+                setStatus(string.format("[MISS] Cach cua %.0f studs - cho 5s", st.distance))
             end
 
             scheduledRoundId = ""
-            pcall(writeOwnReadyFile, true)
-            return fired
         end)
         return true
     end
@@ -513,7 +734,7 @@ do
 
     local function tryActivateAbility()
         if activating then return false end
-        if not isFullMoon() then return false end
+        if not (isnight() and isfullmoon()) then return false end
 
         local ffaNow = false
         pcall(function()
@@ -525,20 +746,16 @@ do
         pcall(writeOwnReadyFile, false)
 
         local command = nil
-        if isMain then
+        if isUper then
             command = mainCreateRound()
         else
             command = readV3Command()
             if not command then
                 local st = localDoorState()
-                if st.nearDoor then
-                    setStatus("Helper | Dang cho Main countdown...")
-                else
-                    setStatus("Helper | Di toi cua...")
-                end
+                setStatus(st.nearDoor and "Helper | Cho Main countdown..." or "Helper | Di toi cua...")
             else
-                setStatus(string.format("Helper | Nhan lenh countdown %.1fs",
-                    math.max(0, (tonumber(command.fire_at) or 0) - serverNow())))
+                setStatus(string.format("Helper | Nhan lenh %.1fs",
+                    math.max(0, (tonumber(command.fire_at) or 0) - v3ServerNow())))
             end
         end
 
@@ -547,262 +764,110 @@ do
         return false
     end
 
-    -- WATCHDOG & DONE TRAINING
-    local GATE_POSITIONS = {
-        Vector3.new(29020.66, 14889.42, -379.26),
-        Vector3.new(28224.05, 14889.42, -210.58),
-        Vector3.new(28492.41, 14894.42, -422.11),
-        Vector3.new(28967.40, 14918.07,  234.31),
-        Vector3.new(28672.72, 14889.12,  454.59),
-        Vector3.new(29237.29, 14889.42, -206.94),
-    }
-
-    local WatchdogCFG = {
-        DoorEnterTimeout  = 15,
-        TrialStartTimeout = 5,
-        TrialSignalGrace  = 2.0,
-        TrialSafeDistance = 120,
-        TrainingCheckDelay = 2,
-    }
-
-    local Watchdog = {
-        resetBusy            = false,
-        trialSignalAt        = 0,
-        v3ActivatedAt        = nil,
-        trialConfirmed       = false,
-        inTrial              = false,
-        trialStartedAt       = nil,
-        trialWasAwayFromDoor = false,
-        mustEnterDoorSince   = nil,
-    }
-
-    getgenv().__AUTO_V3_TRIAL_PROTECTED_UNTIL = 0
-
-    local DONE_PATTERNS = {
-        "done training","training done","training completed",
-        "finished training","training finished","ready for trial",
-        "trial ready","completed your training","prepare for trial","preparing for trial"
-    }
-    local TRAINING_STATUS = {[1]=true,[3]=true,[6]=true,[8]=true}
-    local cachedDoneTraining, lastTrainingCheck = false, 0
-    local trainingCheckInFlight, trainingCheckEverSucceeded = false, false
-
-    local function flatten(value, out)
-        out = out or {}
-        if typeof(value) == "table" then
-            for k, v in pairs(value) do flatten(k,out); flatten(v,out) end
-        elseif value ~= nil then
-            table.insert(out, tostring(value):lower())
-        end
-        return out
-    end
-
-    local function parseDoneTrainingResult(result)
-        for _, s in ipairs(flatten(result)) do
-            for _, p in ipairs(DONE_PATTERNS) do
-                if string.find(s, p, 1, true) then return true end
-            end
-        end
-        local function findTS(v, seen)
-            seen = seen or {}
-            if typeof(v) == "number" then return TRAINING_STATUS[v] == true end
-            if typeof(v) == "table" then
-                if seen[v] then return false end; seen[v] = true
-                for k, x in pairs(v) do
-                    if findTS(k,seen) or findTS(x,seen) then return true end
-                end
-            end
-            return false
-        end
-        if findTS(result) then return false end
-        return true
-    end
-
-    function Watchdog.requestDoneTrainingCheck()
-        if not CommF or trainingCheckInFlight then return end
-        if os.clock() - lastTrainingCheck < WatchdogCFG.TrainingCheckDelay then return end
-        lastTrainingCheck = os.clock()
-        trainingCheckInFlight = true
-        task.spawn(function()
-            local ok, result = pcall(function()
-                return CommF:InvokeServer("UpgradeRace","Check")
-            end)
-            if ok then
-                cachedDoneTraining = parseDoneTrainingResult(result)
-                trainingCheckEverSucceeded = true
-            end
-            trainingCheckInFlight = false
-        end)
-    end
-
-    function Watchdog.isDoneTraining()
-        Watchdog.requestDoneTrainingCheck()
-        if not trainingCheckEverSucceeded then return false end
-        return cachedDoneTraining
-    end
-
+    -- POLL LOOP
     task.spawn(function()
-        while task.wait(WatchdogCFG.TrainingCheckDelay) do
-            Watchdog.requestDoneTrainingCheck()
+        while task.wait(V3_FILE_POLL) do
+            pcall(tryActivateAbility)
         end
     end)
 
-    function Watchdog.isTrialProtected()
-        return (getgenv().__AUTO_V3_TRIAL_PROTECTED_UNTIL or 0) > os.clock()
-    end
+    -- =========================================================
+    -- HOP RANDOM SERVER VIA __ServerBrowser (sau khi xong trial / training)
+    -- =========================================================
+    local function hopRandomServer()
+        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+            or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+        if not sb then return false end
 
-    function Watchdog.protectFromReset(seconds)
-        getgenv().__AUTO_V3_TRIAL_PROTECTED_UNTIL = math.max(
-            getgenv().__AUTO_V3_TRIAL_PROTECTED_UNTIL or 0,
-            os.clock() + (seconds or 20)
-        )
-    end
-
-    local function distanceToNearestGate()
-        local char = LocalPlayer.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return math.huge end
-        local best = math.huge
-        for _, gp in ipairs(GATE_POSITIONS) do
-            local d = (hrp.Position - gp).Magnitude
-            if d < best then best = d end
+        local servers = nil
+        for page = 1, 10 do
+            local ok, res = pcall(function()
+                return sb:InvokeServer("getServers", page) or sb:InvokeServer(page)
+            end)
+            if ok and type(res) == "table" and next(res) ~= nil then
+                servers = res
+                break
+            end
         end
-        return best
-    end
 
-    function Watchdog.resetCharacter(reason)
-        if Watchdog.resetBusy then return false end
-        if Watchdog.isTrialProtected() then return false end
-        local gd = distanceToNearestGate()
-        if gd >= WatchdogCFG.TrialSafeDistance then
-            Watchdog.protectFromReset(15); return false
+        if not servers then return false end
+
+        local validList = {}
+        for jobId, data in pairs(servers) do
+            local jid = tostring(jobId or (type(data) == "table" and data.JobId) or "")
+            local count = tonumber(type(data) == "table" and (data.Count or data.Players or data.PlayerCount) or 0) or 0
+            if jid ~= "" and jid ~= tostring(game.JobId) and count > 0 and count <= 11 then
+                table.insert(validList, jid)
+            end
         end
-        if not Watchdog.isDoneTraining() then return false end
-        Watchdog.resetBusy = true
-        warn("[WATCHDOG] " .. tostring(reason))
-        local char = LocalPlayer.Character
-        local hum  = char and char:FindFirstChildOfClass("Humanoid")
-        if hum and hum.Health > 0 then hum.Health = 0
-        elseif char then pcall(function() char:BreakJoints() end) end
-        task.delay(3, function() Watchdog.resetBusy = false end)
-        return true
+
+        if #validList > 0 then
+            local target = validList[math.random(1, #validList)]
+            setStatus(string.format("Hop random -> %s...", target:sub(1, 8)))
+            pcall(function()
+                sb:InvokeServer("teleport", target)
+            end)
+            return true
+        end
+        return false
     end
 
+    -- FFA BORDER WATCHER: trial kết thúc -> invalidate V4 cache
+    local lastFFAState_hop = 1
+    task.spawn(function()
+        while task.wait(0.3) do
+            pcall(function()
+                local ok, trans = pcall(function()
+                    return workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency
+                end)
+                if not ok then return end
+                if trans == 0 then
+                    lastFFAState_hop = 0
+                elseif lastFFAState_hop == 0 then
+                    lastFFAState_hop = 1
+                    -- Trial xong: xóa cache V4 để cập nhật trạng thái training mới ngay lập tức
+                    invalidateV4Cache()
+                    task.spawn(function()
+                        task.wait(8)  -- server cần vài giây để cập nhật trạng thái
+                        invalidateV4Cache()
+                    end)
+                end
+            end)
+        end
+    end)
+
+    -- HOP RANDOM AFTER TRIAL / TRAINING LOOP (chạy mỗi 5s)
+    local lastRandomHopAt = 0
+    task.spawn(function()
+        task.wait(25)  -- đợi game load xong hoàn toàn
+        while task.wait(5) do
+            pcall(function()
+                -- Nếu đang Full Moon: KHÔNG hop random, ở lại làm trial
+                local fmNow = isnight() and isfullmoon()
+                if fmNow then return end
+
+                -- Kiểm tra trạng thái V4
+                local v4 = getV4StatusSimple()
+                -- Skip hop khi đang training hoặc cần mua upgrade
+                if v4 and (v4.needsTraining or v4.needsPurchase) then
+                    setStatus((isUper and "Main" or "Helper") .. " | Dang training...")
+                    return
+                end
+
+                -- Khi không có Full Moon và đã xong training / sẵn sàng trial -> Hop random tìm server mới
+                if tick() - lastRandomHopAt >= 10 then
+                    lastRandomHopAt = tick()
+                    hopRandomServer()
+                end
+            end)
+        end
+    end)
+
+    -- UI (TurnV3 Label góc phải giữa màn hình)
     local PlayerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
         or LocalPlayer:WaitForChild("PlayerGui", 10)
 
-    local function isTextObj(o)
-        return o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")
-    end
-
-    local function checkTrialText(obj)
-        if not isTextObj(obj) then return end
-        local txt = tostring(obj.Text or ""):lower()
-        if txt:find("trials starting in", 1, true) then
-            Watchdog.trialSignalAt = os.clock()
-            Watchdog.protectFromReset(30)
-        end
-    end
-
-    if PlayerGui then
-        PlayerGui.DescendantAdded:Connect(function(obj)
-            if not isTextObj(obj) then return end
-            checkTrialText(obj)
-            obj:GetPropertyChangedSignal("Text"):Connect(function() checkTrialText(obj) end)
-        end)
-        for _, obj in ipairs(PlayerGui:GetDescendants()) do
-            if isTextObj(obj) then
-                checkTrialText(obj)
-                obj:GetPropertyChangedSignal("Text"):Connect(function() checkTrialText(obj) end)
-            end
-        end
-    end
-
-    function Watchdog.onActivatedV3()
-        Watchdog.v3ActivatedAt  = os.clock()
-        Watchdog.trialConfirmed = false
-        Watchdog.inTrial        = false
-        Watchdog.protectFromReset(10)
-    end
-
-    local function isInsideTrial()
-        local t = false
-        pcall(function() t = LocalPlayer.PlayerGui.Main.Timer.Visible == true end)
-        if t then return true end
-        local f = false
-        pcall(function()
-            f = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-        end)
-        return f
-    end
-
-    function Watchdog.step(isNearGate)
-        if Watchdog.resetBusy then return end
-
-        if Watchdog.inTrial then
-            Watchdog.mustEnterDoorSince = nil
-            Watchdog.v3ActivatedAt = nil
-            if not isNearGate then Watchdog.trialWasAwayFromDoor = true end
-            if Watchdog.trialWasAwayFromDoor and isNearGate
-                and Watchdog.trialStartedAt
-                and os.clock() - Watchdog.trialStartedAt >= 7 then
-                Watchdog.inTrial              = false
-                Watchdog.trialConfirmed       = false
-                Watchdog.trialStartedAt       = nil
-                Watchdog.trialWasAwayFromDoor = false
-                setStatus(isMain and "Main | San sang turn moi" or "Helper | San sang turn moi")
-            end
-            return
-        end
-
-        if Watchdog.isDoneTraining() and not isNearGate
-            and not Watchdog.v3ActivatedAt and not Watchdog.inTrial then
-            Watchdog.mustEnterDoorSince = Watchdog.mustEnterDoorSince or os.clock()
-            if os.clock() - Watchdog.mustEnterDoorSince >= WatchdogCFG.DoorEnterTimeout then
-                Watchdog.resetCharacter("15s khong vao cua Trial")
-                Watchdog.mustEnterDoorSince = nil
-            end
-        else
-            Watchdog.mustEnterDoorSince = nil
-        end
-
-        if Watchdog.v3ActivatedAt and not Watchdog.trialConfirmed and not Watchdog.inTrial then
-            local trialEarly = false
-            pcall(function() trialEarly = isInsideTrial() end)
-            local guiSignal = (Watchdog.trialSignalAt >= Watchdog.v3ActivatedAt) or trialEarly
-
-            if guiSignal then
-                Watchdog.trialConfirmed       = true
-                Watchdog.inTrial              = true
-                Watchdog.trialStartedAt       = os.clock()
-                Watchdog.trialWasAwayFromDoor = not isNearGate
-                Watchdog.protectFromReset(30)
-                Watchdog.v3ActivatedAt        = nil
-                Watchdog.mustEnterDoorSince   = nil
-                setStatus(isMain and "Main | Dang Trial" or "Helper | Dang Trial")
-            elseif os.clock() - Watchdog.v3ActivatedAt
-                >= (WatchdogCFG.TrialStartTimeout + WatchdogCFG.TrialSignalGrace) then
-                local gd = distanceToNearestGate()
-                if gd >= WatchdogCFG.TrialSafeDistance then
-                    Watchdog.trialConfirmed       = true
-                    Watchdog.inTrial              = true
-                    Watchdog.trialStartedAt       = os.clock()
-                    Watchdog.trialWasAwayFromDoor = true
-                    Watchdog.protectFromReset(20)
-                    Watchdog.v3ActivatedAt        = nil
-                    return
-                end
-                warn("[WATCHDOG][GHOST TEMPLE] Khong co trial sau 7s -> Reset")
-                Watchdog.resetCharacter("Ghost Temple: khong co Trial GUI sau timeout")
-                Watchdog.v3ActivatedAt  = nil
-                Watchdog.trialConfirmed = false
-                Watchdog.inTrial        = false
-            end
-        end
-    end
-
-    -- UI (TurnV3 Label góc phải giữa màn hình)
-    local StatusLabelUI = nil
+    local StatusLabel = nil
 
     local function createUI()
         pcall(function()
@@ -816,18 +881,18 @@ do
         sg.IgnoreGuiInset = true
         sg.Parent         = PlayerGui
 
-        StatusLabelUI = Instance.new("TextLabel", sg)
-        StatusLabelUI.Size                   = UDim2.new(0, 280, 0, 26)
-        StatusLabelUI.Position               = UDim2.new(1, -290, 0.5, -13)
-        StatusLabelUI.AnchorPoint            = Vector2.new(0, 0)
-        StatusLabelUI.BackgroundTransparency = 1
-        StatusLabelUI.Text                   = "TurnV3 | Loading..."
-        StatusLabelUI.TextColor3             = Color3.fromRGB(200, 200, 200)
-        StatusLabelUI.Font                   = Enum.Font.FredokaOne
-        StatusLabelUI.TextSize               = 18
-        StatusLabelUI.TextStrokeTransparency = 0.5
-        StatusLabelUI.TextXAlignment         = Enum.TextXAlignment.Right
-        StatusLabelUI.TextTruncate           = Enum.TextTruncate.AtEnd
+        StatusLabel = Instance.new("TextLabel", sg)
+        StatusLabel.Size                   = UDim2.new(0, 280, 0, 26)
+        StatusLabel.Position               = UDim2.new(1, -290, 0.5, -13)
+        StatusLabel.AnchorPoint            = Vector2.new(0, 0)
+        StatusLabel.BackgroundTransparency = 1
+        StatusLabel.Text                   = "TurnV3 | Loading..."
+        StatusLabel.TextColor3             = Color3.fromRGB(200, 200, 200)
+        StatusLabel.Font                   = Enum.Font.FredokaOne
+        StatusLabel.TextSize               = 18
+        StatusLabel.TextStrokeTransparency = 0.5
+        StatusLabel.TextXAlignment         = Enum.TextXAlignment.Right
+        StatusLabel.TextTruncate           = Enum.TextTruncate.AtEnd
 
         task.spawn(function()
             while sg.Parent do
@@ -839,17 +904,17 @@ do
                         color = Color3.fromRGB(255, 165, 40)
                     elseif s:find("kich hoat") or s:find("v3!") then
                         color = Color3.fromRGB(50, 255, 100)
-                    elseif s:find("trial") then
+                    elseif s:find("trial") or s:find("doing") then
                         color = Color3.fromRGB(50, 255, 100)
-                    elseif s:find("ghost") or s:find("reset") then
+                    elseif s:find("ghost") or s:find("miss") or s:find("reset") then
                         color = Color3.fromRGB(255, 80, 80)
-                    elseif s:find("cho") or s:find("wait") then
+                    elseif s:find("cho") or s:find("wait") or s:find("nhan") then
                         color = Color3.fromRGB(100, 180, 255)
                     else
                         color = Color3.fromRGB(200, 200, 200)
                     end
-                    StatusLabelUI.TextColor3 = color
-                    StatusLabelUI.Text       = currentStatus
+                    StatusLabel.TextColor3 = color
+                    StatusLabel.Text       = currentStatus
                 end)
             end
         end)
@@ -857,27 +922,9 @@ do
 
     pcall(createUI)
 
-    task.spawn(function()
-        while task.wait(V3_FILE_POLL) do
-            pcall(tryActivateAbility)
-        end
-    end)
-
-    task.spawn(function()
-        while task.wait(0.1) do
-            local st = localDoorState()
-            pcall(function() Watchdog.step(st.nearDoor) end)
-            if Watchdog.inTrial then
-                setStatus(isMain and "Main | Dang Trial..." or "Helper | Dang Trial...")
-            elseif not isFullMoon() then
-                setStatus("No Full Moon")
-            end
-        end
-    end)
-
     print(string.format("[TurnV3] Loaded | User=%s | Role=%s | FileSync=%s",
         USERNAME,
-        isMain and "MAIN" or (isHelper and "HELPER" or "OBSERVER"),
+        isUper and "MAIN" or (isAlly and "HELPER" or "OBSERVER"),
         tostring(FILE_SYNC_AVAILABLE)
     ))
 end
@@ -890,7 +937,7 @@ end
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "http://103.77.241.138:1901/xOKcICjhMvaZ1NCqj0yd7KW1n6as960lopwwBLr6/server/api/moon?X-API-Key=all_zPRS9PQT7PqAI4VTvximZTOBqv2lMiWgzLMh2GXR"
-    local API_BASE        = "http://matrix.pikamc.vn:25932"
+    local API_BASE        = "http://mbasic7.pikamc.vn:25082"
     local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
     local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
     local HOP_STARTUP_DELAY = 3    -- giây trước khi bắt đầu hop
@@ -1322,14 +1369,63 @@ end
         currentStatus = tostring(txt or "")
     end
 
-    -- UI (CoreGui JoinV4 Panel)
-    local UI_FONT = Enum.Font.FredokaOne
-    local C_GREEN = Color3.fromRGB(50, 255, 100)
-    local C_WHITE = Color3.fromRGB(255, 255, 255)
-    local C_GRAY  = Color3.fromRGB(160, 160, 160)
-    local C_DARK  = Color3.fromRGB(14, 15, 20)
+    -- ══════════════════════════════════════════════════════════════════
+    -- UI SYSTEM (Modern Cyber Glassmorphism HUD - Draggable & Sleek)
+    -- ══════════════════════════════════════════════════════════════════
+    local FONT_TITLE = Enum.Font.GothamBold
+    local FONT_BODY  = Enum.Font.GothamMedium
+    local FONT_TAG   = Enum.Font.GothamBold
 
-    local ScreenGui, StatusLabel, RoleLabel, MoonLabel, GroupLabel
+    local C_BG       = Color3.fromRGB(13, 16, 24)
+    local C_CARD     = Color3.fromRGB(20, 24, 36)
+    local C_STROKE   = Color3.fromRGB(0, 240, 160)
+    local C_CYAN     = Color3.fromRGB(0, 220, 255)
+    local C_GOLD     = Color3.fromRGB(255, 205, 75)
+    local C_PURPLE   = Color3.fromRGB(185, 120, 255)
+    local C_WHITE    = Color3.fromRGB(245, 248, 255)
+    local C_MUTED    = Color3.fromRGB(150, 160, 180)
+    local C_GREEN    = Color3.fromRGB(0, 255, 150)
+    local C_RED      = Color3.fromRGB(255, 90, 90)
+
+    local ScreenGui, MainCard, RolePill, GroupPill, MoonCard, MoonLabel, StatusCard, StatusLabel, MinBtn
+    local isCollapsed = false
+
+    local function makeDraggable(frame, handle)
+        local UserInputService = game:GetService("UserInputService")
+        local dragging = false
+        local dragInput, dragStart, startPos
+
+        handle.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = input.Position
+                startPos = frame.Position
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
+                    end
+                end)
+            end
+        end)
+
+        handle.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                dragInput = input
+            end
+        end)
+
+        UserInputService.InputChanged:Connect(function(input)
+            if input == dragInput and dragging then
+                local delta = input.Position - dragStart
+                frame.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+    end
 
     local function createUI()
         pcall(function()
@@ -1341,154 +1437,291 @@ end
         sg.Name = "JoinV4UI"
         sg.ResetOnSpawn = false
         sg.IgnoreGuiInset = true
+        sg.DisplayOrder = 999999
+        sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
         sg.Parent = CoreGui
         ScreenGui = sg
 
-        local PW, PH = 300, 158
-        local Panel = Instance.new("Frame")
-        Panel.Name = "Panel"
-        Panel.Size = UDim2.fromOffset(PW, PH)
-        Panel.Position = UDim2.new(1, -(PW + 6), 0, 36)
-        Panel.BackgroundColor3 = C_DARK
-        Panel.BackgroundTransparency = 0.07
-        Panel.BorderSizePixel = 0
-        Panel.Parent = sg
-        Instance.new("UICorner", Panel).CornerRadius = UDim.new(0, 8)
+        local PW, PH = 320, 195
+        local Card = Instance.new("Frame")
+        Card.Name = "MainCard"
+        Card.Size = UDim2.fromOffset(PW, PH)
+        Card.Position = UDim2.new(1, -(PW + 12), 0, 42)
+        Card.BackgroundColor3 = C_BG
+        Card.BackgroundTransparency = 0.05
+        Card.BorderSizePixel = 0
+        Card.ClipsDescendants = true
+        Card.Parent = sg
+        MainCard = Card
+        Instance.new("UICorner", Card).CornerRadius = UDim.new(0, 12)
 
-        local stroke = Instance.new("UIStroke", Panel)
-        stroke.Color = C_GREEN
+        local stroke = Instance.new("UIStroke", Card)
+        stroke.Color = C_STROKE
         stroke.Thickness = 1.5
-        stroke.Transparency = 0.4
+        stroke.Transparency = 0.35
 
-        local pad = Instance.new("UIPadding", Panel)
-        pad.PaddingLeft   = UDim.new(0, 10)
-        pad.PaddingRight  = UDim.new(0, 10)
-        pad.PaddingTop    = UDim.new(0, 6)
-        pad.PaddingBottom = UDim.new(0, 6)
+        -- Header Bar
+        local header = Instance.new("Frame", Card)
+        header.Name = "Header"
+        header.Size = UDim2.new(1, 0, 0, 36)
+        header.BackgroundColor3 = Color3.fromRGB(18, 22, 33)
+        header.BorderSizePixel = 0
 
-        local layout = Instance.new("UIListLayout", Panel)
+        local headerPad = Instance.new("UIPadding", header)
+        headerPad.PaddingLeft = UDim.new(0, 10)
+        headerPad.PaddingRight = UDim.new(0, 10)
+
+        local title = Instance.new("TextLabel", header)
+        title.Size = UDim2.new(0, 140, 1, 0)
+        title.BackgroundTransparency = 1
+        title.Text = "⚡ <font color=\"#00FF96\"><b>JOIN V4 PRO</b></font>"
+        title.RichText = true
+        title.Font = FONT_TITLE
+        title.TextSize = 15
+        title.TextColor3 = C_WHITE
+        title.TextXAlignment = Enum.TextXAlignment.Left
+
+        local userTag = Instance.new("TextLabel", header)
+        userTag.Size = UDim2.new(0, 110, 0, 20)
+        userTag.Position = UDim2.new(0, 142, 0.5, -10)
+        userTag.BackgroundColor3 = Color3.fromRGB(26, 31, 46)
+        userTag.Text = USERNAME
+        userTag.Font = FONT_BODY
+        userTag.TextSize = 11
+        userTag.TextColor3 = C_CYAN
+        userTag.TextTruncate = Enum.TextTruncate.AtEnd
+        Instance.new("UICorner", userTag).CornerRadius = UDim.new(0, 5)
+
+        MinBtn = Instance.new("TextButton", header)
+        MinBtn.Size = UDim2.fromOffset(22, 22)
+        MinBtn.Position = UDim2.new(1, -22, 0.5, -11)
+        MinBtn.BackgroundColor3 = Color3.fromRGB(30, 36, 52)
+        MinBtn.Text = "—"
+        MinBtn.Font = FONT_TITLE
+        MinBtn.TextSize = 13
+        MinBtn.TextColor3 = C_MUTED
+        MinBtn.BorderSizePixel = 0
+        Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
+
+        -- Make Card draggable from Header
+        makeDraggable(Card, header)
+
+        -- Content Container
+        local content = Instance.new("Frame", Card)
+        content.Name = "Content"
+        content.Size = UDim2.new(1, 0, 1, -36)
+        content.Position = UDim2.new(0, 0, 0, 36)
+        content.BackgroundTransparency = 1
+
+        local cPad = Instance.new("UIPadding", content)
+        cPad.PaddingLeft   = UDim.new(0, 10)
+        cPad.PaddingRight  = UDim.new(0, 10)
+        cPad.PaddingTop    = UDim.new(0, 8)
+        cPad.PaddingBottom = UDim.new(0, 8)
+
+        local layout = Instance.new("UIListLayout", content)
         layout.FillDirection = Enum.FillDirection.Vertical
-        layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-        layout.Padding = UDim.new(0, 2)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Padding = UDim.new(0, 6)
 
-        -- Header
-        local hdr = Instance.new("TextLabel", Panel)
-        hdr.Size = UDim2.new(1, -22, 0, 28)
-        hdr.BackgroundTransparency = 1
-        hdr.Text = "⚡ JoinV4  |  " .. USERNAME
-        hdr.Font = UI_FONT
-        hdr.TextSize = 20
-        hdr.TextColor3 = C_GREEN
-        hdr.TextXAlignment = Enum.TextXAlignment.Left
-        hdr.TextStrokeTransparency = 0.6
-        hdr.TextTruncate = Enum.TextTruncate.AtEnd
+        -- Row 1: Role & Group Badges
+        local row1 = Instance.new("Frame", content)
+        row1.Name = "Row1"
+        row1.Size = UDim2.new(1, 0, 0, 28)
+        row1.BackgroundTransparency = 1
+        row1.LayoutOrder = 1
 
-        -- Divider
-        local div = Instance.new("Frame", Panel)
-        div.Size = UDim2.new(1, 0, 0, 1)
-        div.BackgroundColor3 = C_GREEN
-        div.BackgroundTransparency = 0.65
-        div.BorderSizePixel = 0
+        local r1Layout = Instance.new("UIListLayout", row1)
+        r1Layout.FillDirection = Enum.FillDirection.Horizontal
+        r1Layout.Padding = UDim.new(0, 6)
 
-        local function mkRow(defText, color, h)
-            local lbl = Instance.new("TextLabel", Panel)
-            lbl.Size = UDim2.new(1, 0, 0, h or 26)
-            lbl.BackgroundTransparency = 1
-            lbl.Text = defText
-            lbl.Font = UI_FONT
-            lbl.TextSize = 18
-            lbl.TextColor3 = color or C_WHITE
-            lbl.TextXAlignment = Enum.TextXAlignment.Left
-            lbl.TextStrokeTransparency = 0.7
-            lbl.TextTruncate = Enum.TextTruncate.AtEnd
-            return lbl
-        end
+        RolePill = Instance.new("TextLabel", row1)
+        RolePill.Size = UDim2.new(0.5, -3, 1, 0)
+        RolePill.BackgroundColor3 = C_CARD
+        RolePill.Text = "👑 MAIN"
+        RolePill.Font = FONT_TAG
+        RolePill.TextSize = 12
+        RolePill.TextColor3 = C_PURPLE
+        RolePill.BorderSizePixel = 0
+        Instance.new("UICorner", RolePill).CornerRadius = UDim.new(0, 6)
+        local rPillStroke = Instance.new("UIStroke", RolePill)
+        rPillStroke.Color = Color3.fromRGB(40, 46, 68)
+        rPillStroke.Thickness = 1
 
-        RoleLabel = mkRow("👤 Role: ...", C_WHITE)
-        MoonLabel = mkRow("🌑 Moon: Checking...", C_GRAY)
+        GroupPill = Instance.new("TextLabel", row1)
+        GroupPill.Size = UDim2.new(0.5, -3, 1, 0)
+        GroupPill.BackgroundColor3 = C_CARD
+        GroupPill.Text = "📌 Group: ..."
+        GroupPill.Font = FONT_TAG
+        GroupPill.TextSize = 12
+        GroupPill.TextColor3 = C_GOLD
+        GroupPill.BorderSizePixel = 0
+        GroupPill.TextTruncate = Enum.TextTruncate.AtEnd
+        Instance.new("UICorner", GroupPill).CornerRadius = UDim.new(0, 6)
+        local gPillStroke = Instance.new("UIStroke", GroupPill)
+        gPillStroke.Color = Color3.fromRGB(40, 46, 68)
+        gPillStroke.Thickness = 1
 
-        local initGroup = MY_GROUP_NOTE or (isMain and "Chua sign..." or "?")
-        GroupLabel = mkRow("📌 Group: " .. initGroup, C_GRAY)
+        -- Row 2: Moon Radar Card
+        MoonCard = Instance.new("Frame", content)
+        MoonCard.Name = "MoonCard"
+        MoonCard.Size = UDim2.new(1, 0, 0, 32)
+        MoonCard.BackgroundColor3 = C_CARD
+        MoonCard.BorderSizePixel = 0
+        MoonCard.LayoutOrder = 2
+        Instance.new("UICorner", MoonCard).CornerRadius = UDim.new(0, 6)
+        local mStroke = Instance.new("UIStroke", MoonCard)
+        mStroke.Color = Color3.fromRGB(40, 46, 68)
+        mStroke.Thickness = 1
 
-        StatusLabel = Instance.new("TextLabel", Panel)
-        StatusLabel.Size = UDim2.new(1, 0, 0, 42)
+        local mPad = Instance.new("UIPadding", MoonCard)
+        mPad.PaddingLeft = UDim.new(0, 8)
+        mPad.PaddingRight = UDim.new(0, 8)
+
+        MoonLabel = Instance.new("TextLabel", MoonCard)
+        MoonLabel.Size = UDim2.new(1, 0, 1, 0)
+        MoonLabel.BackgroundTransparency = 1
+        MoonLabel.Text = "🌑 Moon: Checking..."
+        MoonLabel.Font = FONT_BODY
+        MoonLabel.TextSize = 12
+        MoonLabel.TextColor3 = C_MUTED
+        MoonLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+        -- Row 3: Live Status Card
+        StatusCard = Instance.new("Frame", content)
+        StatusCard.Name = "StatusCard"
+        StatusCard.Size = UDim2.new(1, 0, 0, 68)
+        StatusCard.BackgroundColor3 = C_CARD
+        StatusCard.BorderSizePixel = 0
+        StatusCard.LayoutOrder = 3
+        Instance.new("UICorner", StatusCard).CornerRadius = UDim.new(0, 6)
+        local sStroke = Instance.new("UIStroke", StatusCard)
+        sStroke.Color = Color3.fromRGB(40, 46, 68)
+        sStroke.Thickness = 1
+
+        -- Left Accent Bar
+        local sBar = Instance.new("Frame", StatusCard)
+        sBar.Size = UDim2.new(0, 3, 1, 0)
+        sBar.BackgroundColor3 = C_CYAN
+        sBar.BorderSizePixel = 0
+        Instance.new("UICorner", sBar).CornerRadius = UDim.new(0, 3)
+
+        local sPad = Instance.new("UIPadding", StatusCard)
+        sPad.PaddingLeft   = UDim.new(0, 10)
+        sPad.PaddingRight  = UDim.new(0, 8)
+        sPad.PaddingTop    = UDim.new(0, 4)
+        sPad.PaddingBottom = UDim.new(0, 4)
+
+        StatusLabel = Instance.new("TextLabel", StatusCard)
+        StatusLabel.Size = UDim2.new(1, 0, 1, 0)
         StatusLabel.BackgroundTransparency = 1
-        StatusLabel.Text = "⏳ Starting..."
-        StatusLabel.Font = UI_FONT
-        StatusLabel.TextSize = 17
-        StatusLabel.TextColor3 = Color3.fromRGB(255, 220, 80)
+        StatusLabel.Text = "⏳ Starting JoinV4 System..."
+        StatusLabel.Font = FONT_BODY
+        StatusLabel.TextSize = 12
+        StatusLabel.TextColor3 = C_GOLD
         StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+        StatusLabel.TextYAlignment = Enum.TextYAlignment.Center
         StatusLabel.TextWrapped = true
-        StatusLabel.TextStrokeTransparency = 0.7
 
-        -- Toggle button
-        local tb = Instance.new("TextButton")
-        tb.Size = UDim2.fromOffset(22, 22)
-        tb.Position = UDim2.new(1, -(PW + 6) + PW - 26, 0, 36 + 3)
-        tb.BackgroundColor3 = Color3.fromRGB(40, 42, 54)
-        tb.BackgroundTransparency = 0.2
-        tb.Text = "—"
-        tb.Font = UI_FONT
-        tb.TextSize = 15
-        tb.TextColor3 = C_GRAY
-        tb.BorderSizePixel = 0
-        tb.ZIndex = 10
-        tb.Parent = sg
-        Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 4)
-
-        local vis = true
-        tb.MouseButton1Click:Connect(function()
-            vis = not vis
-            Panel.Visible = vis
-            tb.Text = vis and "—" or "+"
-            tb.Position = vis
-                and UDim2.new(1, -(PW + 6) + PW - 26, 0, 36 + 3)
-                or  UDim2.new(1, -28, 0, 36)
+        -- Toggle Collapse Logic
+        MinBtn.MouseButton1Click:Connect(function()
+            isCollapsed = not isCollapsed
+            if isCollapsed then
+                Card.Size = UDim2.fromOffset(PW, 36)
+                content.Visible = false
+                MinBtn.Text = "+"
+            else
+                Card.Size = UDim2.fromOffset(PW, PH)
+                content.Visible = true
+                MinBtn.Text = "—"
+            end
         end)
     end
 
     local function updateUI()
-        if not ScreenGui or not ScreenGui.Parent then
+        if not ScreenGui or not ScreenGui.Parent or not MainCard or not MainCard.Parent then
             pcall(createUI); return
         end
         local hasFM = isNight() and isFullMoon()
 
-        local roleStr
-        if isMain then
-            roleStr = "Main"
-        elseif isHopFM then
-            roleStr = "Helper + HopFM [G" .. (MY_GROUP_IDX or "?") .. "]"
-        else
-            roleStr = "Helper [G" .. (MY_GROUP_IDX or "?") .. "]"
-        end
-
-        if RoleLabel then RoleLabel.Text = "👤 " .. roleStr end
-        if MoonLabel then
-            MoonLabel.Text       = hasFM and "🌕 FULL MOON" or "🌑 No Full Moon"
-            MoonLabel.TextColor3 = hasFM and C_GREEN or C_GRAY
-        end
-        if GroupLabel then
-            if isHelper then
-                GroupLabel.Text = "📌 Group: " .. (MY_GROUP_NOTE or "?")
-            elseif myAssignedGroupId ~= "" then
-                GroupLabel.Text       = "📌 Group: " .. myAssignedGroupId
-                GroupLabel.TextColor3 = C_GREEN
+        -- Update Role
+        if RolePill then
+            if isMain then
+                RolePill.Text = "👑 MAIN"
+                RolePill.TextColor3 = C_PURPLE
+            elseif isHopFM then
+                RolePill.Text = "🚀 HELPER [FM]"
+                RolePill.TextColor3 = C_CYAN
             else
-                GroupLabel.Text       = "📌 Group: Dang cho sign..."
-                GroupLabel.TextColor3 = C_GRAY
+                RolePill.Text = "🛡️ HELPER [G" .. tostring(MY_GROUP_IDX or "?") .. "]"
+                RolePill.TextColor3 = Color3.fromRGB(100, 180, 255)
             end
         end
-        if StatusLabel then StatusLabel.Text = "⏳ " .. currentStatus end
+
+        -- Update Group
+        if GroupPill then
+            if isHelper then
+                GroupPill.Text = "📌 " .. tostring(MY_GROUP_NOTE or "?")
+                GroupPill.TextColor3 = C_GOLD
+            elseif myAssignedGroupId ~= "" then
+                GroupPill.Text = "📌 " .. tostring(myAssignedGroupId)
+                GroupPill.TextColor3 = C_GREEN
+            else
+                GroupPill.Text = "📌 Đang gán nhóm..."
+                GroupPill.TextColor3 = C_MUTED
+            end
+        end
+
+        -- Update Moon Card
+        if MoonLabel then
+            if hasFM then
+                MoonLabel.Text = "🌕 FULL MOON (ACTIVE)"
+                MoonLabel.TextColor3 = C_GREEN
+            else
+                local mTex = type(getgenv().CheckMoon) == "function" and getgenv().CheckMoon() or ""
+                if mTex ~= "" and mTex ~= "nil" then
+                    MoonLabel.Text = "🌑 Moon: " .. tostring(mTex) .. " (No Full Moon)"
+                else
+                    MoonLabel.Text = "🌑 No Full Moon"
+                end
+                MoonLabel.TextColor3 = C_MUTED
+            end
+        end
+
+        -- Update Status Card
+        if StatusLabel then
+            local s = currentStatus:lower()
+            local col = C_WHITE
+            if s:find("hop") or s:find("teleport") then
+                col = C_CYAN
+            elseif s:find("training") or s:find("train") then
+                col = C_GOLD
+            elseif s:find("trial") or s:find("done") or s:find("complete") then
+                col = C_GREEN
+            elseif s:find("timeout") or s:find("fail") or s:find("error") then
+                col = C_RED
+            elseif s:find("wait") or s:find("cho") or s:find("settle") then
+                col = Color3.fromRGB(130, 200, 255)
+            else
+                col = C_GOLD
+            end
+            StatusLabel.TextColor3 = col
+            StatusLabel.Text = "⚡ " .. currentStatus
+        end
     end
 
     -- BOOT
     task.spawn(createUI)
-    repeat task.wait(0.5) until game:IsLoaded() and Player:FindFirstChild("DataLoaded")
-    setStatus("Loaded")
-    task.wait(1)
+    pcall(function()
+        if not Player:FindFirstChild("DataLoaded") then
+            Player:WaitForChild("DataLoaded", 5)
+        end
+    end)
+    setStatus("Loaded & Running")
+    task.wait(0.5)
 
     task.spawn(function()
-        while task.wait(0.5) do pcall(updateUI) end
+        while task.wait(0.4) do pcall(updateUI) end
     end)
 
     if not isHelper and not isMain then
