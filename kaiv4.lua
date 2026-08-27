@@ -1951,46 +1951,15 @@ end
                     local resp = syncToAPI()
                     if resp and resp.group and type(resp.group.id) == "string" and resp.group.id ~= "" then
                         local assignedId = trim(resp.group.id)
-                        local validGroup = false
                         for _, note in ipairs(noteList) do
                             if trim(note):lower() == assignedId:lower() then
-                                assignedId = trim(note)
-                                validGroup = true
+                                myAssignedGroupId = trim(note)
                                 break
                             end
                         end
-                        if validGroup then
-                            myAssignedGroupId = assignedId
-                        end
                     end
-
-                    -- Fallback: Tự động gán vào group phù hợp nếu server chưa cấp hoặc cấp group lạ
                     if myAssignedGroupId == "" then
-                        local bestGroup = nil
-                        local bestScore = -1
-                        for i, helperList in ipairs(helperGroups) do
-                            if type(helperList) == "table" then
-                                local note = trim(noteList[i] or ("group" .. i))
-                                local score = 0
-                                if resp and resp.accounts then
-                                    for _, h in ipairs(helperList) do
-                                        local hName = trim(h)
-                                        local acc = resp.accounts[hName]
-                                        if acc and (acc.jobId or acc.jobid) then
-                                            score = score + 1
-                                            if acc.fullmoon == true or acc.fullMoon == true then
-                                                score = score + 10
-                                            end
-                                        end
-                                    end
-                                end
-                                if score > bestScore then
-                                    bestScore = score
-                                    bestGroup = note
-                                end
-                            end
-                        end
-                        myAssignedGroupId = bestGroup or trim(noteList[1] or "namv4-1")
+                        myAssignedGroupId = myDefaultGroup
                     end
 
                     if not resp or not resp.accounts then
