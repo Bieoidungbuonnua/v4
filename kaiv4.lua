@@ -265,7 +265,7 @@ end
 -- [2/3] TURNV3 (Đồng bộ V3 Countdown & Watchdog Ghost Temple)
 -- ══════════════════════════════════════════════════════════════════
 do
-    local V3_COUNTDOWN      = 4
+    local V3_COUNTDOWN      = 6
     local V3_FILE_POLL      = 0.05
     local V3_READY_FRESH    = 5.0
     local V3_FIRE_COUNT     = 3
