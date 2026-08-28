@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/main/BananaHub.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/x2RunE/Immortal/refs/heads/main/Lotus_BF_Main.lua"))()
     end)
 end
 
