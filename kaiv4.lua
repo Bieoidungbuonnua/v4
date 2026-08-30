@@ -1183,8 +1183,8 @@ end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            -- Lọc chuẩn: timetonight 15..220 và players 2..5
-            if tt and tonumber(tt) >= 15 and tonumber(tt) <= 220
+            -- Lọc chuẩn: timetonight 40..200 và players 2..5
+            if tt and tonumber(tt) >= 40 and tonumber(tt) <= 200
                 and players and tonumber(players) >= 2 and tonumber(players) <= 5 then
                 return tostring(jobId)
             end
