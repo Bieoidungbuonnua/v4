@@ -1951,22 +1951,15 @@ end
                     local resp = syncToAPI()
                     if resp and resp.group and type(resp.group.id) == "string" and resp.group.id ~= "" then
                         local assignedId = trim(resp.group.id)
-                        local matched = false
                         for _, note in ipairs(noteList) do
                             if trim(note):lower() == assignedId:lower() then
                                 myAssignedGroupId = trim(note)
-                                matched = true
                                 break
                             end
                         end
-                        -- API gán group không có trong noteList → vẫn dùng id đó
-                        if not matched and assignedId ~= "" then
-                            myAssignedGroupId = assignedId
-                        end
                     end
-                    -- Fallback: dùng group đầu tiên trong noteList thay vì nil
                     if myAssignedGroupId == "" then
-                        myAssignedGroupId = trim(noteList[1] or "")
+                        myAssignedGroupId = myDefaultGroup
                     end
 
                     if not resp or not resp.accounts then
@@ -2014,7 +2007,10 @@ end
                                 skipHop = true; skipReason = "Buy Gear (API flag) - skip join"
                             end
                         else
-                            setStatus("Waiting server assign group...")
+                            -- Không có trong accounts → group đã full / chưa gán
+                            -- Reset để sync tiếp theo tự assign group mới
+                            myAssignedGroupId = ""
+                            setStatus("Group full - reassigning...")
                             lastHopTMain = ""; return
                         end
                     end
