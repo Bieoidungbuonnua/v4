@@ -1951,15 +1951,22 @@ end
                     local resp = syncToAPI()
                     if resp and resp.group and type(resp.group.id) == "string" and resp.group.id ~= "" then
                         local assignedId = trim(resp.group.id)
+                        local matched = false
                         for _, note in ipairs(noteList) do
                             if trim(note):lower() == assignedId:lower() then
                                 myAssignedGroupId = trim(note)
+                                matched = true
                                 break
                             end
                         end
+                        -- API gán group không có trong noteList → vẫn dùng id đó
+                        if not matched and assignedId ~= "" then
+                            myAssignedGroupId = assignedId
+                        end
                     end
+                    -- Fallback: dùng group đầu tiên trong noteList thay vì nil
                     if myAssignedGroupId == "" then
-                        myAssignedGroupId = myDefaultGroup
+                        myAssignedGroupId = trim(noteList[1] or "")
                     end
 
                     if not resp or not resp.accounts then
