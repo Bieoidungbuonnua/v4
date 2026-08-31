@@ -842,19 +842,23 @@ do
         task.wait(25)  -- đợi game load xong hoàn toàn
         while task.wait(5) do
             pcall(function()
-                -- Nếu đang Full Moon: KHÔNG hop random, ở lại làm trial
+                -- Helper KHONG BAO GIO random hop (tranh xung dot voi HopFM loop)
+                if isAlly then return end
+                -- Neu dang Full Moon: KHONG hop random, o lai lam trial
                 local fmNow = isnight() and isfullmoon()
                 if fmNow then return end
-
-                -- Kiểm tra trạng thái V4
+                -- Sap FM: o lai cho
+                if isPreFMReady() then return end
+                -- Kiem tra trang thai V4
                 local v4 = getV4StatusSimple()
-                -- Skip hop khi đang training hoặc cần mua upgrade
-                if v4 and (v4.needsTraining or v4.needsPurchase) then
-                    setStatus((isUper and "Main" or "Helper") .. " | Dang training...")
-                    return
+                if not v4 or v4.key == nil then setStatus("Status loading..."); return end
+                if v4.key == "check_failed" then setStatus("Checking V4..."); return end
+                if v4.needsTraining or v4.needsPurchase then
+                    setStatus("Main | Dang training..."); return
                 end
-
-                -- Khi không có Full Moon và đã xong training / sẵn sàng trial -> Hop random tìm server mới
+                if v4.canTrial then setStatus("Main | Trial ready - stay"); return end
+                if v4.complete then setStatus("Main | V4 complete - wait FM"); return end
+                -- Khi khong co Full Moon va da xong training -> Hop random tim server moi
                 if tick() - lastRandomHopAt >= 10 then
                     lastRandomHopAt = tick()
                     hopRandomServer()
