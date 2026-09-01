@@ -934,21 +934,20 @@ do
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- [3/3] JOINV4 (Kaiv4-BNN/joinv4.lua) - API Moon Hop & Group Management
+-- [3/3] JOINV4 (Kaiv4-BNN/joinv4.lua) - Fast Hop Low & Group Management
 -- ══════════════════════════════════════════════════════════════════
 ;(function()
     local CFG = getgenv().JoinV4Config
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "http://103.77.241.138:1901/xOKcICjhMvaZ1NCqj0yd7KW1n6as960lopwwBLr6/server/api/moon?X-API-Key=all_zPRS9PQT7PqAI4VTvximZTOBqv2lMiWgzLMh2GXR"
-    local API_BASE        = "http://mbasic7.pikamc.vn:25082"
-    local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
-    local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
-    local HOP_STARTUP_DELAY = 3    -- giây trước khi bắt đầu hop
+    local API_BASE          = "http://mbasic7.pikamc.vn:25082"
+    local SYNC_INTERVAL     = 1.5   -- giây giữa các lần sync trạng thái lên API
+    local HOP_STARTUP_DELAY = 3     -- giây trước khi bắt đầu hop
 
     -- SERVICES
     local HttpService       = game:GetService("HttpService")
     local Players           = game:GetService("Players")
+    local TeleportService   = game:GetService("TeleportService")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local CoreGui           = game:GetService("CoreGui")
     local Lighting          = game:GetService("Lighting")
@@ -963,6 +962,9 @@ end
 
     local helperGroups = CFG["Helper"] or {}  -- array of arrays
     local noteList     = CFG["Note"]   or {}  -- array of strings
+
+    -- Default group cho Main nếu server chưa gán (luôn fallback vào noteList[1])
+    local myDefaultGroup = trim(noteList[1] or "trietautov4")
 
     -- Sets toàn cục
     local AllHelperSet = {}  -- username -> true  (tất cả helpers mọi group)
@@ -1025,14 +1027,247 @@ end
 
     -- STATE
     local currentStatus   = "Starting..."
-    local lastFmApiAt     = 0
-    local lastFmApiResult = nil
-    local fmJoinedCache   = {}
-    local FM_CACHE_EXPIRE = 180
-    local HOP_STARTUP     = tick()
-    local fmHopPending    = false
-    local fmPendingCheckAt = 0
-    local _failedHopJobId = ""
+    local function setStatus(txt)
+        currentStatus = tostring(txt or "")
+    end
+
+    -- HOP LOW CONFIG & STATE (y hệt hoplow.lua)
+    getgenv().JOB_GUI_STATE = getgenv().JOB_GUI_STATE or {
+        Job = "",
+        SpamJoin = false,
+        HopActive = false,
+        HopToken = 0
+    }
+    local HopLowState = getgenv().JOB_GUI_STATE
+    local HOPLOW_CFG = {
+        MaxPages = 100,
+        MaxPlayers = 8,
+        PageRetries = 3,
+        PageStartDelay = 0.02,
+        RetryDelay = 0.2,
+        ScanTimeout = 8,
+        BrowserWait = 1.25,
+        TeleportWait = 6,
+        SpamDelay = 2
+    }
+
+    local TP = {StartedAt = 0, FailedAt = 0, Failure = ""}
+
+    TeleportService.TeleportInitFailed:Connect(function(player, result, message)
+        if player ~= Player then return end
+        TP.FailedAt = os.clock()
+        TP.Failure = tostring(result and result.Name or result) .. " | " .. tostring(message or "")
+    end)
+
+    Player.OnTeleport:Connect(function(state)
+        local name = ""
+        pcall(function() name = state.Name end)
+        if name == "Failed" then
+            TP.FailedAt = os.clock()
+            TP.Failure = "OnTeleport: Failed"
+        else
+            TP.StartedAt = os.clock()
+        end
+    end)
+
+    local function browserTeleport(jobId)
+        jobId = tostring(jobId or ""):gsub("%s+", "")
+        if jobId == "" then return false, "JobId is empty" end
+        if jobId == tostring(game.JobId) then return false, "Already in this server" end
+
+        local browser = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+        if browser then
+            local ok = pcall(function()
+                browser:InvokeServer("teleport", jobId)
+            end)
+            if ok then return true, "ServerBrowser invoked" end
+        end
+
+        local ok, err = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, Player)
+        end)
+        return ok, ok and "TeleportService invoked" or tostring(err)
+    end
+
+    local function hopTo(jobId)
+        browserTeleport(jobId)
+    end
+
+    local function scanServers(token)
+        local browser = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+        if not browser then return {}, "__ServerBrowser not found" end
+
+        local byJob = {}
+        local completed = 0
+        setStatus("Scanning " .. HOPLOW_CFG.MaxPages .. " pages...")
+
+        for page = 1, HOPLOW_CFG.MaxPages do
+            task.delay((page - 1) * HOPLOW_CFG.PageStartDelay, function()
+                if not HopLowState.HopActive or HopLowState.HopToken ~= token then
+                    completed = completed + 1
+                    return
+                end
+
+                local servers
+                for attempt = 1, HOPLOW_CFG.PageRetries do
+                    local ok, result = pcall(function()
+                        return browser:InvokeServer(page)
+                    end)
+                    if ok and type(result) == "table" then
+                        servers = result
+                        break
+                    end
+                    if attempt < HOPLOW_CFG.PageRetries then
+                        task.wait(HOPLOW_CFG.RetryDelay)
+                    end
+                end
+
+                if type(servers) == "table" and HopLowState.HopActive and HopLowState.HopToken == token then
+                    for jobId, data in pairs(servers) do
+                        if type(data) == "table" then
+                            local count = tonumber(data.Count) or 99
+                            local id = tostring(jobId)
+                            if id ~= tostring(game.JobId) and count <= HOPLOW_CFG.MaxPlayers then
+                                local oldData = byJob[id]
+                                if not oldData or count < oldData.Count then
+                                    byJob[id] = {
+                                        JobId = id,
+                                        Count = count,
+                                        Region = tostring(data.Region or "Unknown")
+                                    }
+                                end
+                            end
+                        end
+                    end
+                end
+
+                completed = completed + 1
+            end)
+        end
+
+        local deadline = os.clock() + HOPLOW_CFG.ScanTimeout
+        repeat task.wait(0.03)
+        until completed >= HOPLOW_CFG.MaxPages
+            or os.clock() >= deadline
+            or not HopLowState.HopActive
+            or HopLowState.HopToken ~= token
+
+        local pool = {}
+        for _, server in pairs(byJob) do
+            pool[#pool + 1] = server
+        end
+
+        table.sort(pool, function(a, b)
+            if a.Count == b.Count then
+                return a.JobId < b.JobId
+            end
+            return a.Count < b.Count
+        end)
+
+        return pool
+    end
+
+    local function waitTeleport(token, duration)
+        local deadline = os.clock() + duration
+        repeat
+            if not HopLowState.HopActive or HopLowState.HopToken ~= token then return "cancelled" end
+            if TP.FailedAt > 0 then return "failed" end
+            if TP.StartedAt > 0 then return "started" end
+            task.wait(0.05)
+        until os.clock() >= deadline
+        return "timeout"
+    end
+
+    local function tryServer(server, token, index, total)
+        TP.StartedAt = 0
+        TP.FailedAt = 0
+        TP.Failure = ""
+
+        setStatus("Joining " .. server.Count .. "/" .. Players.MaxPlayers .. " [" .. index .. "/" .. total .. "]")
+
+        local browser = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+        local invoked = false
+        if browser then
+            invoked = pcall(function()
+                browser:InvokeServer("teleport", server.JobId)
+            end)
+        end
+
+        local state
+        if invoked then
+            state = waitTeleport(token, HOPLOW_CFG.BrowserWait)
+        end
+
+        if not invoked or state ~= "started" then
+            if state == "failed" or state == "cancelled" then return false end
+            local ok = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, server.JobId, Player)
+            end)
+            if not ok then return false end
+            state = waitTeleport(token, HOPLOW_CFG.TeleportWait)
+        end
+
+        if state == "started" then
+            setStatus("Teleport started...")
+            local deadline = os.clock() + 10
+            repeat
+                if not HopLowState.HopActive or HopLowState.HopToken ~= token then return false end
+                if TP.FailedAt > 0 then return false end
+                task.wait(0.1)
+            until os.clock() >= deadline
+        end
+
+        return false
+    end
+
+    local function startLowHop()
+        if HopLowState.HopActive then
+            return
+        end
+
+        HopLowState.SpamJoin = false
+        HopLowState.HopActive = true
+        HopLowState.HopToken = HopLowState.HopToken + 1
+        local token = HopLowState.HopToken
+
+        task.spawn(function()
+            while HopLowState.HopActive and HopLowState.HopToken == token do
+                local pool, err = scanServers(token)
+
+                if err then
+                    setStatus(err)
+                    break
+                end
+
+                if not HopLowState.HopActive or HopLowState.HopToken ~= token then break end
+
+                if #pool == 0 then
+                    setStatus("No low-player server; rescanning...")
+                    task.wait(0.75)
+                else
+                    setStatus("Found " .. #pool .. " suitable servers")
+                    for i, server in ipairs(pool) do
+                        if not HopLowState.HopActive or HopLowState.HopToken ~= token then break end
+                        tryServer(server, token, i, #pool)
+                    end
+
+                    if HopLowState.HopActive and HopLowState.HopToken == token then
+                        setStatus("All candidates failed; rescanning...")
+                        task.wait(0.5)
+                    end
+                end
+            end
+
+            if HopLowState.HopToken == token then
+                HopLowState.HopActive = false
+            end
+        end)
+    end
+
+    local function stopLowHop()
+        HopLowState.HopActive = false
+        HopLowState.HopToken = HopLowState.HopToken + 1
+    end
 
     -- HTTP
     local function httpReq()
@@ -1071,153 +1306,63 @@ end
         return nil
     end
 
-    -- MOON CHECK
+    -- MOON CHECK & CONDITION (timetonight 0-300s)
     local function isNight()
         local c = Lighting.ClockTime
-        return c >= 16 or c < 5
+        return c >= 18 or c < 6
     end
 
     local function isFullMoon()
-        return Lighting:GetAttribute("MoonPhase") == 5
+        return Lighting:GetAttribute("MoonPhase") == 5 and not getgenv().isfmended
+    end
+
+    local function getToNight()
+        local c = Lighting.ClockTime
+        if c >= 18 or c < 6 then return 0 end
+        local d = c < 18 and (18 - c) or 0
+        return math.floor((d / 24) * 1200)
+    end
+
+    local function isFMServerValid()
+        local ok, res, tt = pcall(function()
+            local moonTex = (type(CheckMoon) == "function" and CheckMoon()) or ""
+            if moonTex == "" or moonTex == "nil" then
+                local function checkSea(v)
+                    local attr = workspace:GetAttribute("MAP")
+                    if not attr then return false end
+                    return v == tonumber(tostring(attr):match("%d+"))
+                end
+                local t = (checkSea(1) or checkSea(3))
+                    and ((Lighting:FindFirstChild("Sky") and Lighting.Sky.MoonTextureId)
+                    or   (Lighting:FindFirstChild("Space_Skybox") and Lighting.Space_Skybox.MoonTextureId))
+                    or   (checkSea(2) and Lighting:FindFirstChild("FantasySky") and Lighting.FantasySky.MoonTextureId)
+                    or ""
+                t = t:gsub("rbxassetid://", "http://www.roblox.com/asset/?id=")
+                moonTex = ({
+                    ["http://www.roblox.com/asset/?id=9709149431"]  = "8/8",
+                    ["http://www.roblox.com/asset/?id=15493317929"] = "Blue Moon",
+                })[t] or "nil"
+            end
+            if moonTex ~= "8/8" and moonTex ~= "Blue Moon" then return false, nil end
+
+            local m = Lighting:GetAttribute("MoonPhase")
+            if not m or m ~= 5 then return false, nil end
+            if getgenv().isfmended then return false, nil end
+
+            local toNight = getToNight()
+            if toNight < 0 or toNight > 300 then return false, toNight end
+
+            return true, toNight
+        end)
+        if ok and res == true then
+            return true, (tt or 0)
+        end
+        return false, (tt or getToNight())
     end
 
     local function isPreFMReady()
-        local ok, result = pcall(function()
-            local function checkSea(v)
-                local attr = workspace:GetAttribute("MAP")
-                if not attr then return false end
-                return v == tonumber(tostring(attr):match("%d+"))
-            end
-            local t = (checkSea(1) or checkSea(3))
-                and ((Lighting:FindFirstChild("Sky") and Lighting.Sky.MoonTextureId)
-                or   (Lighting:FindFirstChild("Space_Skybox") and Lighting.Space_Skybox.MoonTextureId))
-                or   (checkSea(2) and Lighting:FindFirstChild("FantasySky") and Lighting.FantasySky.MoonTextureId)
-                or ""
-            t = t:gsub("rbxassetid://", "http://www.roblox.com/asset/?id=")
-            local moonTex = ({
-                ["http://www.roblox.com/asset/?id=9709149431"]  = "8/8",
-                ["http://www.roblox.com/asset/?id=15493317929"] = "Blue Moon",
-            })[t] or "nil"
-            if moonTex ~= "8/8" and moonTex ~= "Blue Moon" then return false end
-            local m = Lighting:GetAttribute("MoonPhase")
-            if not m or m ~= 5 then return false end
-            if getgenv().isfmended then return false end
-            local NS, NE = 18, 6
-            local ct = Lighting.ClockTime
-            local isNightNow = ct >= NS or ct < NE
-            if not isNightNow then
-                local d = ct < NS and (NS - ct) or 0
-                local toStart = math.floor((d / 24) * 1200)
-                if toStart > 360 then return false end
-            end
-            return true
-        end)
-        return ok and result == true
-    end
-
-    -- FIND FM SERVER (Multi-fallback HTTP)
-    local function findFMServer()
-        if not FM_API_URL or FM_API_URL == "" then return nil end
-
-        local function getField(tbl, ...)
-            if type(tbl) ~= "table" then return nil end
-            local low = {}
-            for k, v in pairs(tbl) do if type(k) == "string" then low[k:lower()] = v end end
-            for i = 1, select("#", ...) do
-                local n = select(i, ...)
-                if n then local val = low[n:lower()]; if val ~= nil then return val end end
-            end
-            return nil
-        end
-
-        local function parsePlayers(f)
-            if not f then return nil end
-            if type(f) == "number" then return f end
-            if type(f) == "string" then
-                local cur = f:match("(%d+)%s*/%s*%d+")
-                if cur then return tonumber(cur) end
-                return tonumber(f)
-            end
-            return nil
-        end
-
-        local function parseTimeToNight(entry)
-            for _, n in ipairs({"timetonight","timeToNight","time_to_night","timeToNightSeconds","time"}) do
-                local v = getField(entry, n); if v ~= nil then return tonumber(v) end
-            end
-            return nil
-        end
-
-        local resp = nil
-        local httpMethods = {
-            function(u) if type(syn) == "table" and type(syn.request) == "function" then return syn.request({Url=u,Method="GET"}) end end,
-            function(u) if type(http_request) == "function" then return http_request({Url=u,Method="GET"}) end end,
-            function(u) if type(request) == "function" then return request({Url=u,Method="GET"}) end end,
-            function(u) if type(http) == "table" and type(http.request) == "function" then return http.request({Url=u,Method="GET"}) end end,
-        }
-        for _, fn in ipairs(httpMethods) do
-            local ok, res = pcall(fn, FM_API_URL)
-            if ok and res and type(res) == "table" and (res.Body or res.body) then
-                local body = res.Body or res.body
-                local code = tonumber(res.StatusCode or res.status or res.Status or 200) or 200
-                resp = {Body = body, StatusCode = code}
-                break
-            end
-        end
-        if not resp or resp.StatusCode ~= 200 then return nil end
-
-        local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
-        if not ok2 or type(parsed) ~= "table" then return nil end
-
-        local entries
-        if type(parsed.data) == "table" and #parsed.data > 0 then
-            entries = parsed.data
-        elseif type(parsed) == "table" and #parsed > 0 then
-            entries = parsed
-        else return nil end
-
-        for _, v in ipairs(entries) do
-            if type(v) ~= "table" then continue end
-            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
-            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
-            local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
-            local tt = parseTimeToNight(v)
-            if not jobId or jobId == "" then continue end
-            if tostring(jobId) == tostring(game.JobId) then continue end
-            local cached = fmJoinedCache[tostring(jobId)]
-            if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
-            if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            -- Lọc chuẩn: timetonight 40..200 và players 2..5
-            if tt and tonumber(tt) >= 40 and tonumber(tt) <= 200
-                and players and tonumber(players) >= 2 and tonumber(players) <= 5 then
-                return tostring(jobId)
-            end
-        end
-        return nil
-    end
-
-    -- TELEPORT
-    local TeleportService = game:GetService("TeleportService")
-    TeleportService.TeleportInitFailed:Connect(function(_player, result, _msg)
-        local dead = result == Enum.TeleportResult.Failure
-            or result == Enum.TeleportResult.GameEnded
-            or result == Enum.TeleportResult.Unauthorized
-        if dead and lastFmApiResult and lastFmApiResult ~= "" then
-            warn("[JoinV4] TeleportInitFailed (" .. tostring(result) .. ") -> blacklist " .. lastFmApiResult:sub(1,8))
-            _failedHopJobId = lastFmApiResult
-            fmJoinedCache[lastFmApiResult] = os.time()
-            lastFmApiResult = nil
-            lastFmApiAt     = 0
-        end
-    end)
-
-    local function hopTo(jobId)
-        pcall(function()
-            local sb = ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-            if sb then
-                sb:InvokeServer("teleport", jobId)
-            end
-        end)
+        local ok, tt = isFMServerValid()
+        return ok and (tt > 0 and tt <= 300)
     end
 
     -- NATIVE V4 STATUS CHECK
@@ -1364,13 +1509,9 @@ end
     end
 
     local function syncToAPI()
-        local hasFM = isNight() and isFullMoon()
+        local isValidFM, tt = isFMServerValid()
+        local hasFM = isValidFM and (tt == 0)
         return httpPost(API_BASE .. "/data", buildPayload(hasFM))
-    end
-
-    -- STATUS TEXT
-    local function setStatus(txt)
-        currentStatus = tostring(txt or "")
     end
 
     -- ══════════════════════════════════════════════════════════════════
@@ -1646,7 +1787,7 @@ end
         if not ScreenGui or not ScreenGui.Parent or not MainCard or not MainCard.Parent then
             pcall(createUI); return
         end
-        local hasFM = isNight() and isFullMoon()
+        local isValidFM, tt = isFMServerValid()
 
         -- Update Role
         if RolePill then
@@ -1678,8 +1819,12 @@ end
 
         -- Update Moon Card
         if MoonLabel then
-            if hasFM then
-                MoonLabel.Text = "🌕 FULL MOON (ACTIVE)"
+            if isValidFM then
+                if tt == 0 then
+                    MoonLabel.Text = "🌕 FULL MOON (ACTIVE)"
+                else
+                    MoonLabel.Text = string.format("🌔 PRE-FM (%ds to night)", tt)
+                end
                 MoonLabel.TextColor3 = C_GREEN
             else
                 local mTex = type(getgenv().CheckMoon) == "function" and getgenv().CheckMoon() or ""
@@ -1733,21 +1878,22 @@ end
         return
     end
 
-    -- HELPER: HOP FM LOOP
+    -- HELPER: HOP FM LOOP (HOP LOW TÌM FULL MOON TIMETONIGHT 0-300s)
     if isHelper and isHopFM then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY)
-            local lastHopT   = ""
-            local lastHopAt_ = 0
-            local isFetching = false
-            local takenJobIds        = {}
-            local isHopping  = false   -- guard: khong retry khi dang teleport
             local lastConflictCheckAt = 0
 
-            while task.wait(0.25) do
+            while task.wait(0.5) do
                 local nowTick = tick()
+                local isValidFM, toNight = isFMServerValid()
 
-                if isNight() and isFullMoon() then
+                if isValidFM then
+                    -- Server thỏa mãn Full Moon & timetonight 0-300s -> Ở LẠI!
+                    if HopLowState.HopActive then
+                        stopLowHop()
+                    end
+
                     local myGroupIdx = AllHopFMSet[USERNAME] or 999
                     local conflictWith = nil
 
@@ -1755,19 +1901,14 @@ end
                         lastConflictCheckAt = nowTick
                         pcall(function()
                             local resp = syncToAPI()
-                            takenJobIds = {}
                             if resp and resp.accounts then
                                 for name, data in pairs(resp.accounts) do
                                     if AllHopFMSet[name] and name ~= USERNAME
                                         and AllHopFMSet[name] ~= myGroupIdx then
                                         local jid = tostring(data.jobid or data.jobId or "")
-                                        if jid ~= "" then
-                                            if jid == game.JobId then
-                                                if AllHopFMSet[name] < myGroupIdx then
-                                                    conflictWith = name
-                                                end
-                                            elseif jid ~= game.JobId then
-                                                takenJobIds[jid] = name
+                                        if jid == game.JobId then
+                                            if AllHopFMSet[name] < myGroupIdx then
+                                                conflictWith = name
                                             end
                                         end
                                     end
@@ -1779,91 +1920,23 @@ end
                     if conflictWith then
                         warn("[JoinV4][HopFM] Conflict sau hop: " .. conflictWith
                             .. " (G" .. tostring(AllHopFMSet[conflictWith] or "?") .. ") cung o day"
-                            .. " -> G" .. tostring(myGroupIdx) .. " roi di tim server khac")
-                        fmJoinedCache[game.JobId] = os.time()
-                        lastFmApiResult = nil
-                        lastFmApiAt     = 0
-                        lastHopT        = ""
-                        setStatus("Conflict FM - tim server khac...")
+                            .. " -> G" .. tostring(myGroupIdx) .. " hop tiep")
+                        setStatus("Conflict FM - hop low tiep...")
+                        startLowHop()
+                        task.wait(2)
                     else
-                        setStatus("Full Moon - broadcasting...")
-                        lastHopT = ""
+                        if toNight == 0 then
+                            setStatus("Full Moon active - broadcasting...")
+                        else
+                            setStatus(string.format("Pre-FM ready (%ds to night) - broadcasting...", toNight))
+                        end
                     end
-                    task.wait(3); continue
-                end
-                if isPreFMReady() then
-                    setStatus("Pre-FM ready - waiting night...")
-                    task.wait(2); continue
-                end
-
-                if nowTick - lastConflictCheckAt >= SYNC_INTERVAL then
-                    lastConflictCheckAt = nowTick
-                    pcall(function()
-                        local resp = syncToAPI()
-                        takenJobIds = {}
-                        if resp and resp.accounts then
-                            for name, data in pairs(resp.accounts) do
-                                if AllHopFMSet[name] and name ~= USERNAME
-                                    and AllHopFMSet[name] ~= AllHopFMSet[USERNAME] then
-                                    local jid = tostring(data.jobid or data.jobId or "")
-                                    if jid ~= "" and jid ~= game.JobId then
-                                        takenJobIds[jid] = name
-                                    end
-                                end
-                            end
-                        end
-                    end)
-                end
-
-                if not isFetching and nowTick - lastFmApiAt >= FM_API_INTERVAL then
-                    lastFmApiAt = nowTick; isFetching = true
-                    task.spawn(function()
-                        local found = findFMServer()
-                        if found and takenJobIds[found] then
-                            warn("[JoinV4][HopFM] Server " .. found:sub(1,8) .. "... da bi " .. takenJobIds[found] .. " claim - tim server khac")
-                            fmJoinedCache[found] = os.time()
-                            lastFmApiResult = nil
-                        else
-                            lastFmApiResult = (found and found ~= game.JobId) and found or nil
-                            if not lastFmApiResult then setStatus("No FM server, retrying...") end
-                        end
-                        isFetching = false
-                    end)
-                end
-
-                if lastFmApiResult and lastFmApiResult ~= game.JobId then
-                    local hopT = lastFmApiResult
-                    if takenJobIds[hopT] then
-                        warn("[JoinV4][HopFM] Truoc hop phat hien " .. takenJobIds[hopT] .. " dang o server nay - bo qua")
-                        fmJoinedCache[hopT] = os.time()
-                        lastFmApiResult = nil; lastHopT = ""
-                    elseif hopT ~= lastHopT then
-                        lastHopAt_ = nowTick; lastHopT = hopT
-                        isHopping = true
-                        setStatus("Hop FM: " .. hopT:sub(1,8) .. "...")
-                        pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
-                        task.spawn(function()
-                            hopTo(hopT)
-                            task.wait(12)   -- cho teleport hoan tat (toi da 12s)
-                            isHopping = false
-                        end)
-                    else
-                        if _failedHopJobId == hopT then
-                            _failedHopJobId = ""
-                            isHopping = false
-                            lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
-                        elseif isHopping then
-                            setStatus("Teleporting to " .. hopT:sub(1,8) .. "...")
-                        else
-                            local el = nowTick - lastHopAt_
-                            if el >= 10 then
-                                setStatus("Hop timeout - try next server")
-                                fmJoinedCache[hopT] = os.time() - (FM_CACHE_EXPIRE - 60)
-                                lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
-                            else
-                                setStatus("Waiting teleport " .. hopT:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
-                            end
-                        end
+                else
+                    -- Không thỏa mãn Full Moon (hoặc timetonight > 300s / FM đã kết thúc) -> HOP LOW TIẾP!
+                    if not HopLowState.HopActive then
+                        local curMoon = (type(CheckMoon) == "function" and CheckMoon()) or "?"
+                        setStatus(string.format("Moon %s (tt=%ds) - Hop low tim FM...", tostring(curMoon), toNight or getToNight()))
+                        startLowHop()
                     end
                 end
             end
@@ -1874,31 +1947,17 @@ end
     if isHelper then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY + 1)
-            pcall(function()
-                if isfile("jv4_fmhop_pending.txt") and readfile("jv4_fmhop_pending.txt") == "true" then
-                    fmHopPending = true
-                    writefile("jv4_fmhop_pending.txt", "false")
-                    fmPendingCheckAt = tick() + 20
-                    setStatus("FM server settling...")
-                end
-            end)
-
             local lastHopTHelper  = ""
             local lastHopAtHelper = 0
 
             while task.wait(SYNC_INTERVAL) do
                 pcall(function()
-                    if fmHopPending and tick() < fmPendingCheckAt then
-                        setStatus(string.format("Settling... %ds", math.ceil(fmPendingCheckAt - tick())))
-                        return
-                    end
-                    fmHopPending = false
-                    local hasFM = isNight() and isFullMoon()
+                    local isValidFM, tt = isFMServerValid()
+                    local hasFM = isValidFM and (tt == 0)
 
                     local resp = syncToAPI()
 
                     if isHopFM then
-                        setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
                         return
                     end
 
@@ -1911,7 +1970,7 @@ end
                     local fmWho   = nil
                     for name, data in pairs(resp.accounts) do
                         if MY_HopFMSet[name] and name ~= USERNAME then
-                            local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true)
+                            local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true) or (data.nearFM == true) or (data.nearfm == true)
                             if helperHasFM then
                                 local jid = tostring(data.jobid or data.jobId or "")
                                 if jid ~= "" then
@@ -1922,7 +1981,7 @@ end
                     end
 
                     if not fmJobId then
-                        setStatus(hasFM and "FM here - waiting HopFM confirm..." or "Waiting HopFM helper...")
+                        setStatus(isValidFM and "FM here - waiting HopFM confirm..." or "Waiting HopFM helper...")
                         lastHopTHelper = ""; return
                     end
 
@@ -2081,7 +2140,7 @@ end
                         if not data then
                             table.insert(notReady, name .. "(no data)")
                         else
-                            local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true)
+                            local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true) or (data.nearFM == true) or (data.nearfm == true)
                             local jid = tostring(data.jobid or data.jobId or "")
                             if not helperHasFM or jid == "" then
                                 table.insert(notReady, name .. "(no FM)")
