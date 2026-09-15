@@ -941,6 +941,9 @@ end
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "http://162.4.177.49:8080/jobid/fullmoon/gay"
+    local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
+    local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
+    local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
     local API_BASE        = "http://mbasic7.pikamc.vn:25082"
     local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
     local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
@@ -1193,6 +1196,90 @@ end
             end
         end
         return nil
+    end
+
+    -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
+    local function findNearMoonServer()
+        if not NEAR_MOON_ENABLED or not NEAR_MOON_API_URL or NEAR_MOON_API_URL == "" then return nil end
+
+        local function getField(tbl, ...)
+            if type(tbl) ~= "table" then return nil end
+            local low = {}
+            for k, v in pairs(tbl) do if type(k) == "string" then low[k:lower()] = v end end
+            for i = 1, select("#", ...) do
+                local n = select(i, ...)
+                if n then local val = low[n:lower()]; if val ~= nil then return val end end
+            end
+            return nil
+        end
+
+        local function parsePlayers(f)
+            if not f then return nil end
+            if type(f) == "number" then return f end
+            if type(f) == "string" then
+                local cur = f:match("(%d+)%s*/%s*%d+")
+                if cur then return tonumber(cur) end
+                return tonumber(f)
+            end
+            return nil
+        end
+
+        local resp = nil
+        local httpMethods = {
+            function(u) if type(syn) == "table" and type(syn.request) == "function" then return syn.request({Url=u,Method="GET"}) end end,
+            function(u) if type(http_request) == "function" then return http_request({Url=u,Method="GET"}) end end,
+            function(u) if type(request) == "function" then return request({Url=u,Method="GET"}) end end,
+            function(u) if type(http) == "table" and type(http.request) == "function" then return http.request({Url=u,Method="GET"}) end end,
+        }
+        for _, fn in ipairs(httpMethods) do
+            local ok, res = pcall(fn, NEAR_MOON_API_URL)
+            if ok and res and type(res) == "table" and (res.Body or res.body) then
+                local body = res.Body or res.body
+                local code = tonumber(res.StatusCode or res.status or res.Status or 200) or 200
+                resp = {Body = body, StatusCode = code}
+                break
+            end
+        end
+        if not resp or resp.StatusCode ~= 200 then return nil end
+
+        local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
+        if not ok2 or type(parsed) ~= "table" then return nil end
+
+        local entries
+        if type(parsed.data) == "table" and #parsed.data > 0 then
+            entries = parsed.data
+        elseif type(parsed) == "table" and #parsed > 0 then
+            entries = parsed
+        else return nil end
+
+        for _, v in ipairs(entries) do
+            if type(v) ~= "table" then continue end
+            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
+            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
+            local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
+            if not jobId or jobId == "" then continue end
+            if tostring(jobId) == tostring(game.JobId) then continue end
+            local cached = fmJoinedCache[tostring(jobId)]
+            if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
+            if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
+            -- Loc: players 2..7
+            if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
+                return tostring(jobId)
+            end
+        end
+        return nil
+    end
+
+    -- Tinh timetonight (seconds) tu ClockTime hien tai trong server
+    local function getServerTimeToNight()
+        local ok, val = pcall(function()
+            local NS = 18
+            local ct = Lighting.ClockTime
+            if ct >= NS or ct < 6 then return 0 end
+            local d = ct < NS and (NS - ct) or 0
+            return math.floor((d / 24) * 1200)
+        end)
+        return ok and (val or 9999) or 9999
     end
 
     -- TELEPORT
@@ -1791,7 +1878,18 @@ end
                     task.wait(3); continue
                 end
                 if isPreFMReady() then
-                    setStatus("Pre-FM ready - waiting night...")
+                    -- Kiem tra timetonight: neu > NEAR_MOON_MAX_TTN (300s) thi la fake moon -> hop di
+                    if NEAR_MOON_ENABLED then
+                        local ttn = getServerTimeToNight()
+                        if ttn > NEAR_MOON_MAX_TTN then
+                            warn("[JoinV4][HopFM] Near Moon fake: timetonight=" .. ttn .. "s > " .. NEAR_MOON_MAX_TTN .. "s -> hop away")
+                            fmJoinedCache[game.JobId] = os.time()
+                            lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
+                            setStatus("Near Moon fake (" .. ttn .. "s) - tim server khac...")
+                            task.wait(2); continue
+                        end
+                    end
+                    setStatus("Pre-FM ready - waiting night (" .. getServerTimeToNight() .. "s)...")
                     task.wait(2); continue
                 end
 
@@ -1818,6 +1916,13 @@ end
                     lastFmApiAt = nowTick; isFetching = true
                     task.spawn(function()
                         local found = findFMServer()
+                        -- Fallback: neu FM API khong co server, thu Near Moon API
+                        if not found and NEAR_MOON_ENABLED then
+                            found = findNearMoonServer()
+                            if found then
+                                warn("[JoinV4][HopFM] Dung Near Moon server: " .. found:sub(1,8) .. "...")
+                            end
+                        end
                         if found and takenJobIds[found] then
                             warn("[JoinV4][HopFM] Server " .. found:sub(1,8) .. "... da bi " .. takenJobIds[found] .. " claim - tim server khac")
                             fmJoinedCache[found] = os.time()
