@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/x2RunE/Immortal/refs/heads/main/Lotus_BF_Main.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Dex-Bear/VxezeHubLoader/refs/heads/main/MainHub.lua"))()
     end)
 end
 
@@ -940,7 +940,7 @@ end
     local CFG = getgenv().JoinV4Config
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "http://160.191.243.153:51234/qZpLmXvKfNjWbDhRtYsUcGzAxEeVfBoOiIuYtTrR/server/api/moon?X-API-Key=trietnam_fKjDwGzQpLxYmVsUnBtChRzWqPaEiOuYtTeErR"
+    local FM_API_URL      = "http://162.4.177.49:8080/jobid/fullmoon/gay"
     local API_BASE        = "http://mbasic7.pikamc.vn:25082"
     local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
     local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
@@ -1181,15 +1181,14 @@ end
             local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
             local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
             local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
-            local tt = parseTimeToNight(v)
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
             -- Lọc chuẩn: timetonight 40..200 và players 2..5
-            if tt and tonumber(tt) >= 40 and tonumber(tt) <= 200
-                and players and tonumber(players) >= 2 and tonumber(players) <= 5 then
+            -- Loc: players 2..7 (API moi khong co timetonight)
+            if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
                 return tostring(jobId)
             end
         end
