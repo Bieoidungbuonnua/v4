@@ -1179,6 +1179,7 @@ end
             entries = parsed
         else return nil end
 
+        local candidates = {}
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
             local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
@@ -1189,13 +1190,14 @@ end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            -- Lọc chuẩn: timetonight 40..200 và players 2..5
-            -- Loc: players 2..7 (API moi khong co timetonight)
-            if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
-                return tostring(jobId)
+            if players and tonumber(players) >= 2 and tonumber(players) <= 6 then
+                table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
             end
         end
-        return nil
+        if #candidates == 0 then return nil end
+        -- Chon server it player nhat de tranh race condition
+        table.sort(candidates, function(a, b) return a.players < b.players end)
+        return candidates[1].jobId
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
@@ -1252,6 +1254,7 @@ end
             entries = parsed
         else return nil end
 
+        local candidates = {}
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
             local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
@@ -1262,12 +1265,15 @@ end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            -- Loc: players 2..7
-            if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
-                return tostring(jobId)
+            -- Loc: players 2..6
+            if players and tonumber(players) >= 2 and tonumber(players) <= 6 then
+                table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
             end
         end
-        return nil
+        if #candidates == 0 then return nil end
+        -- Chon server it player nhat de tranh race condition
+        table.sort(candidates, function(a, b) return a.players < b.players end)
+        return candidates[1].jobId
     end
 
     -- Tinh timetonight (seconds) tu ClockTime hien tai trong server
