@@ -1012,6 +1012,7 @@ end
     -- GROUP_ID
     local GROUP_ID = isHelper and (MY_GROUP_NOTE or trim(noteList[1] or "joinv4")) or ""
     local myAssignedGroupId = ""  -- main: được cập nhật từ resp.group.id sau sync đầu tiên
+    local myDefaultGroup = trim(noteList[1] or "group1")  -- fallback khi chua duoc gan group
 
     -- Build HelperSet riêng cho group của mình
     local MY_HelperSet  = {}
@@ -1759,7 +1760,7 @@ end
             if isHelper then
                 GroupPill.Text = "📌 " .. tostring(MY_GROUP_NOTE or "?")
                 GroupPill.TextColor3 = C_GOLD
-            elseif myAssignedGroupId ~= "" then
+            elseif myAssignedGroupId and myAssignedGroupId ~= "" then
                 GroupPill.Text = "📌 " .. tostring(myAssignedGroupId)
                 GroupPill.TextColor3 = C_GREEN
             else
@@ -2080,8 +2081,8 @@ end
                             end
                         end
                     end
-                    if myAssignedGroupId == "" then
-                        myAssignedGroupId = myDefaultGroup
+                    if myAssignedGroupId == nil or myAssignedGroupId == "" then
+                        myAssignedGroupId = myDefaultGroup or trim(noteList[1] or "group1")
                     end
 
                     if not resp or not resp.accounts then
@@ -2153,7 +2154,7 @@ end
                     for i, helperList in ipairs(helperGroups) do
                         if type(helperList) == "table" then
                             local note = trim(noteList[i] or ("group" .. i))
-                            if note:lower() == myAssignedGroupId:lower() then
+                            if (myAssignedGroupId or ""):lower() == note:lower() then
                                 for _, h in ipairs(helperList) do
                                     h = trim(tostring(h))
                                     if h ~= "" then
