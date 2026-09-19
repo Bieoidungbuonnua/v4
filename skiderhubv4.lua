@@ -483,7 +483,23 @@ function TweenManager.CancelCurrent()
     end
 end
 
+-- Noclip lien tuc qua RunService.Stepped de chong ket cay, tuong, dia hinh
+if not getgenv().GlobalNoclipStepped then
+    getgenv().GlobalNoclipStepped = RunService.Stepped:Connect(function()
+        local char = localPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
 local lastTargetPos = nil
+local lastStuckCheck = tick()
+local lastHrpPos = nil
 
 function ToTarget(targetCFrame, skipTween)
     local char = localPlayer.Character
@@ -500,8 +516,11 @@ function ToTarget(targetCFrame, skipTween)
         bv.Parent = head
     end
 
+    local hum = char:FindFirstChild("Humanoid")
+    if hum and hum.Sit then hum.Sit = false end
+
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
+        if part:IsA("BasePart") and part.CanCollide then
             part.CanCollide = false
         end
     end
@@ -517,16 +536,38 @@ function ToTarget(targetCFrame, skipTween)
         return
     end
 
-    -- Khong huy va tao lai tween lien tuc neu dich den khong doi
-    if CurrentTween and lastTargetPos and (lastTargetPos - targetPos).Magnitude < 3 then
-        return CurrentTween
+    -- Khong huy va tao lai tween neu tween DANG CHAY binh thuong va dich den khong doi
+    if CurrentTween 
+        and CurrentTween.PlaybackState == Enum.PlaybackState.Playing 
+        and lastTargetPos 
+        and (lastTargetPos - targetPos).Magnitude < 3 then
+        
+        -- Kiem tra ket vat ly (khong nhich vi tri qua 2s khi dist > 20)
+        if tick() - lastStuckCheck > 2 then
+            lastStuckCheck = tick()
+            if lastHrpPos and (hrp.Position - lastHrpPos).Magnitude < 5 and dist > 20 then
+                TweenManager.CancelCurrent()
+                lastTargetPos = nil
+            end
+            lastHrpPos = hrp.Position
+        end
+
+        if CurrentTween then
+            return CurrentTween
+        end
     end
+
     lastTargetPos = targetPos
+    lastStuckCheck = tick()
+    lastHrpPos = hrp.Position
 
     TweenManager.CancelCurrent()
     local tweenDuration = dist / TWEEN_SPEED
     local tweenInfo = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear)
     CurrentTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCF })
+    CurrentTween.Completed:Connect(function()
+        CurrentTween = nil
+    end)
     CurrentTween:Play()
     return CurrentTween
 end
@@ -934,6 +975,7 @@ local TEMPLE_ENTRY_POS    = Vector3.new(28310.0234, 14895.1123, 109.456741)
 local TEMPLE_ENTRY_CF     = CFrame.new(28310.0234, 14895.1123, 109.456741)
 
 local lastRemoteCall = 0
+local lastInteractCall = 0
 local reachedNpc = false
 
 function getdoor(vv)
@@ -967,6 +1009,70 @@ local function GetGreatTreeNpcCFrame()
     return topOfGreatTreeExact
 end
 
+local function InteractWithGreatTreeNpc()
+    if tick() - lastInteractCall < 0.3 then return end
+    lastInteractCall = tick()
+
+    local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- 1. Kích hoạt toàn bộ ProximityPrompt xung quanh NPC (bán kính 45 studs)
+    pcall(function()
+        if fireproximityprompt then
+            for _, prompt in ipairs(Workspace:GetDescendants()) do
+                if prompt:IsA("ProximityPrompt") and prompt.Enabled then
+                    local parent = prompt.Parent
+                    if parent and parent:IsA("BasePart") and (hrp.Position - parent.Position).Magnitude < 45 then
+                        fireproximityprompt(prompt, 0)
+                        fireproximityprompt(prompt, 1)
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 2. Nhấn phím 'E' tương tác với NPC (chuẩn Blox Fruits cho Mysterious Force)
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, "E", false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, "E", false, game)
+    end)
+
+    -- 3. Kích hoạt ClickDetector nếu có model NPC
+    pcall(function()
+        if fireclickdetector then
+            for _, cd in ipairs(Workspace:GetDescendants()) do
+                if cd:IsA("ClickDetector") then
+                    local parent = cd.Parent
+                    if parent and parent:IsA("BasePart") and (hrp.Position - parent.Position).Magnitude < 45 then
+                        fireclickdetector(cd)
+                    end
+                end
+            end
+        end
+    end)
+
+    -- 4. Tự động click vào lựa chọn đối thoại (Dialogue GUI) nếu xuất hiện
+    pcall(function()
+        local pgui = localPlayer:FindFirstChild("PlayerGui")
+        if pgui then
+            for _, guiName in ipairs({"Dialogue", "NPC", "Chat"}) do
+                local diag = pgui:FindFirstChild(guiName, true)
+                if diag and diag:IsA("GuiObject") and diag.Visible then
+                    for _, btn in ipairs(diag:GetDescendants()) do
+                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
+                            if firesignal then
+                                firesignal(btn.Activated)
+                                firesignal(btn.MouseButton1Click)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
 function TeleportTempleOfTime()
     BorrowTempleOfTime()
     if IsInTempleOfTime() then
@@ -995,18 +1101,29 @@ function TeleportTempleOfTime()
     -- Reset trạng thái nếu nhân vật ở xa (> 80 studs)
     if distToNpc > 80 then
         reachedNpc = false
-    elseif distToNpc <= 30 then
+    elseif distToNpc <= 35 then
         reachedNpc = true
     end
 
     -- GIAI ĐOẠN 1: Chưa đến NPC Cây Cổ Thụ -> TWEEN THẲNG ĐẾN NPC TRÊN ĐỈNH CÂY CỔ THỤ
     if not reachedNpc then
-        ToTarget(npcCFrame)
+        -- Tránh vướng va chạm thân cây và tán lá Cây Cổ Thụ:
+        -- Nếu nhân vật còn ở xa (> 200 studs) và đang ở độ cao thấp (Y < 2300):
+        -- Tween bay lên độ cao an toàn (Y = 2350) phía trên tán cây trước, sau đó hạ cánh thẳng xuống đỉnh NPC
+        local horizDist = Vector2.new(hrp.Position.X - npcCFrame.Position.X, hrp.Position.Z - npcCFrame.Position.Z).Magnitude
+        if horizDist > 200 and hrp.Position.Y < 2300 then
+            local safeAltitudeCF = CFrame.new(npcCFrame.Position.X, 2350, npcCFrame.Position.Z)
+            ToTarget(safeAltitudeCF)
+        else
+            ToTarget(npcCFrame)
+        end
         return "moving_to_npc"
     end
 
-    -- GIAI ĐOẠN 2: Đã đến sát bên cạnh NPC Cây Cổ Thụ -> Gọi remote và tiếp tục tween vào Temple of Time
-    if tick() - lastRemoteCall > 0.8 then
+    -- GIAI ĐOẠN 2: Đã đến sát bên cạnh NPC Cây Cổ Thụ -> BẤM VÔ NPC (Interact) & GỌI REMOTE VÀO TEMPLE
+    InteractWithGreatTreeNpc()
+
+    if tick() - lastRemoteCall > 0.6 then
         lastRemoteCall = tick()
         pcall(function()
             local v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
