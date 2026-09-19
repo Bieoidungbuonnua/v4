@@ -90,7 +90,7 @@ autoJoinTeam()
 -- 1. FLUENT UI INITIALIZATION
 --------------------------------------------------------------------------------
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+-- SaveManager replaced with built-in Configuration & Copy Setting system
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
 local Window = Fluent:CreateWindow({
@@ -269,6 +269,10 @@ elseif type(getgenv().Config) == "table" then
             Settings[k] = v
         end
     end
+end
+
+if Settings["Auto Click"] == nil then
+    Settings["Auto Click"] = true
 end
 
 local function WriteConfigFile()
@@ -464,18 +468,29 @@ function FastAttack:GetBladeHits(Character, Distance)
     Distance = Distance or 60
     local Position = Character:GetPivot().Position
     local BladeHits = {}
-    for _, Enemy in ipairs(Workspace.Enemies:GetChildren()) do
-        if Enemy ~= Character and self:IsEntityAlive(Enemy) then
-            local BasePart = Enemy:FindFirstChild("HumanoidRootPart")
-            if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
-                if not self.EnemyRootPart then
-                    self.EnemyRootPart = BasePart
-                else
-                    table.insert(BladeHits, {Enemy, BasePart})
-                    table.insert(BladeHits, {})
+    local function checkFolder(folder)
+        if not folder then return end
+        for _, Enemy in ipairs(folder:GetChildren()) do
+            pcall(function()
+                if Enemy ~= Character and self:IsEntityAlive(Enemy) then
+                    local BasePart = Enemy:FindFirstChild("HumanoidRootPart")
+                    if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
+                        if not self.EnemyRootPart then
+                            self.EnemyRootPart = BasePart
+                        else
+                            table.insert(BladeHits, {Enemy, BasePart})
+                            table.insert(BladeHits, {})
+                        end
+                    end
                 end
-            end
+            end)
         end
+    end
+    if Workspace:FindFirstChild("Enemies") then
+        pcall(checkFolder, Workspace.Enemies)
+    end
+    if Workspace:FindFirstChild("Characters") then
+        pcall(checkFolder, Workspace.Characters)
     end
     return BladeHits
 end
@@ -498,6 +513,10 @@ function FastAttack:Attack()
             else
                 RegisterHit:FireServer(self.EnemyRootPart, BladeHits)
             end
+        end)
+    else
+        pcall(function()
+            RegisterAttack:FireServer(0.05)
         end)
     end
 end
@@ -533,89 +552,124 @@ function GoToSea(placeId)
     return true
 end
 
+local _hopTried = {}
+_hopTried[tostring(game.JobId)] = true
+
+local function getServerBrowser()
+    local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+    if not sb then
+        pcall(function()
+            sb = ReplicatedStorage:WaitForChild("__ServerBrowser", 4)
+        end)
+    end
+    return sb
+end
+
+local function teleportViaServerBrowser(jobId)
+    local sb = getServerBrowser()
+    if sb then
+        local ok = pcall(function()
+            sb:InvokeServer("teleport", jobId)
+        end)
+        return ok
+    end
+    return false
+end
+
+local function getOpenServers(maxPlayers)
+    maxPlayers = maxPlayers or 11
+    local serverList = {}
+    local sb = getServerBrowser()
+
+    -- 1. Thử lấy danh sách từ __ServerBrowser của game
+    if sb then
+        for page = 1, 3 do
+            local ok, res = pcall(function() return sb:InvokeServer(page) end)
+            if ok and type(res) == "table" and next(res) ~= nil then
+                for jid, data in pairs(res) do
+                    local idStr = tostring(jid or (type(data) == "table" and data.JobId) or "")
+                    local count = type(data) == "table" and tonumber(data.Count or data.count or data.Players or data.playing) or 0
+                    if idStr ~= "" and idStr ~= tostring(game.JobId) and not _hopTried[idStr] and count <= maxPlayers then
+                        table.insert(serverList, { id = idStr, count = count })
+                    end
+                end
+                if #serverList >= 5 then break end
+            end
+        end
+    end
+
+    -- 2. Nếu __ServerBrowser chưa trả về đủ, lập tức lấy qua Roblox Public API (luôn có sẵn 100 server)
+    if #serverList == 0 then
+        pcall(function()
+            local url = string.format(
+                "https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true",
+                tostring(game.PlaceId)
+            )
+            local req = game:HttpGet(url)
+            if req and req ~= "" then
+                local body = HttpService:JSONDecode(req)
+                if body and type(body.data) == "table" then
+                    for _, s in ipairs(body.data) do
+                        local sId = tostring(s.id or "")
+                        local sPlaying = tonumber(s.playing) or 0
+                        local sMax = tonumber(s.maxPlayers) or 12
+                        if sId ~= "" and sId ~= tostring(game.JobId) and not _hopTried[sId] and sPlaying < sMax and sPlaying <= maxPlayers then
+                            table.insert(serverList, { id = sId, count = sPlaying })
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    return serverList
+end
+
 function HopServer()
     task.spawn(function()
         pcall(function()
             if uiLibrary and uiLibrary.CreateNoti then
-                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Đang tìm server để hop...", ShowTime = 3 })
+                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "⚡ Đang tìm server qua __ServerBrowser...", ShowTime = 2 })
             end
         end)
 
-        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-        if not sb then
+        local pool = getOpenServers(11)
+
+        if #pool > 0 then
+            local chosen = pool[math.random(1, #pool)]
+            _hopTried[chosen.id] = true
             pcall(function()
                 if uiLibrary and uiLibrary.CreateNoti then
-                    uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Dùng TeleportService fallback...", ShowTime = 3 })
+                    uiLibrary.CreateNoti({
+                        Title = "Skider Hub V4",
+                        Desc = string.format("🚀 Đang vào server: %s (%d/12)...", chosen.id:sub(1, 8), chosen.count),
+                        ShowTime = 3
+                    })
                 end
-                TeleportService:Teleport(game.PlaceId, localPlayer)
             end)
-            return
-        end
-
-        local triedInSession = {}
-        triedInSession[tostring(game.JobId)] = true
-
-        for page = 1, 100 do
-            local ok, servers = pcall(function()
-                return sb:InvokeServer(page) or sb:InvokeServer("getServers", page)
-            end)
-            if ok and type(servers) == "table" and next(servers) ~= nil then
-                local valid = {}
-                for jid, data in pairs(servers) do
-                    local jStr = tostring(jid or (type(data) == "table" and data.JobId) or "")
-                    if jStr ~= "" and jStr ~= tostring(game.JobId) and not triedInSession[jStr] then
-                        local count = 0
-                        if type(data) == "table" then
-                            count = tonumber(data.Count or data.count or data.Players or data.playing) or 0
-                        end
-                        if count < 12 then
-                            table.insert(valid, { id = jStr, count = count })
-                        end
+            teleportViaServerBrowser(chosen.id)
+            return true
+        else
+            -- Nếu đã thử hết server trong danh sách thì xóa tried để tìm lại
+            table.clear(_hopTried)
+            _hopTried[tostring(game.JobId)] = true
+            local pool2 = getOpenServers(11)
+            if #pool2 > 0 then
+                local chosen = pool2[math.random(1, #pool2)]
+                _hopTried[chosen.id] = true
+                pcall(function()
+                    if uiLibrary and uiLibrary.CreateNoti then
+                        uiLibrary.CreateNoti({
+                            Title = "Skider Hub V4",
+                            Desc = string.format("🚀 Đang vào server: %s (%d/12)...", chosen.id:sub(1, 8), chosen.count),
+                            ShowTime = 3
+                        })
                     end
-                end
-
-                if #valid > 0 then
-                    for i = #valid, 2, -1 do
-                        local j = math.random(1, i)
-                        valid[i], valid[j] = valid[j], valid[i]
-                    end
-
-                    for _, item in ipairs(valid) do
-                        local target = item.id
-                        triedInSession[target] = true
-                        pcall(function()
-                            if uiLibrary and uiLibrary.CreateNoti then
-                                uiLibrary.CreateNoti({
-                                    Title = "Skider Hub V4",
-                                    Desc = string.format("Đang chuyển server: %s (%d/12)...", target:sub(1, 8), item.count),
-                                    ShowTime = 3
-                                })
-                            end
-                        end)
-
-                        pcall(function()
-                            sb:InvokeServer("teleport", target)
-                        end)
-
-                        task.wait(1.5)
-
-                        pcall(function()
-                            TeleportService:TeleportToPlaceInstance(game.PlaceId, target, localPlayer)
-                        end)
-
-                        task.wait(1.5)
-                    end
-                end
+                end)
+                teleportViaServerBrowser(chosen.id)
+                return true
             end
-            task.wait(0.03)
         end
-
-        pcall(function()
-            if uiLibrary and uiLibrary.CreateNoti then
-                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Dùng TeleportService fallback...", ShowTime = 3 })
-            end
-            TeleportService:Teleport(game.PlaceId, localPlayer)
-        end)
     end)
 end
 
@@ -905,18 +959,105 @@ function PathFindChest()
 end
 
 function DetectItemPlr(name)
-    local backpack = localPlayer.Backpack:FindFirstChild(name)
+    local backpack = localPlayer.Backpack and localPlayer.Backpack:FindFirstChild(name)
     local char = localPlayer.Character and localPlayer.Character:FindFirstChild(name)
     return (backpack ~= nil or char ~= nil)
 end
 
-function CheckCountItem(name, count)
-    local item = localPlayer.Backpack:FindFirstChild(name) or (localPlayer.Character and localPlayer.Character:FindFirstChild(name))
-    if item and item:FindFirstChild("Count") then
-        return item.Count.Value >= count
+-- [[ MODERN INVENTORY CHECKING SYSTEM ]]
+local InventoryController
+local ItemConfig
+local ItemReplication
+
+pcall(function()
+    InventoryController = require(game:GetService("ReplicatedStorage").Controllers.UI.Inventory)
+    ItemConfig = require(game:GetService("ReplicatedStorage").ItemConfig)
+    ItemReplication = require(game:GetService("ReplicatedStorage").Util.ItemReplication)
+end)
+
+local function getItemCount(itemId, networkedUID)
+    if not ItemReplication then return 1 end
+    for _, field in ipairs({"Count", "Quantity", "Amount", "Stack"}) do
+        if ItemReplication[field] and typeof(ItemReplication[field].readClient) == "function" then
+            local success, val = pcall(function()
+                return ItemReplication[field].readClient(itemId, networkedUID)
+            end)
+            if success and typeof(val) == "number" then
+                return val
+            end
+        end
     end
-    local inv = ReplicatedStorage.Remotes.CommF_:InvokeServer("getInventory")
-    if type(inv) == "table" then
+    return 1
+end
+
+local function getItemMastery(itemId, networkedUID)
+    if ItemReplication and ItemReplication.Mastery and typeof(ItemReplication.Mastery.readClient) == "function" then
+        local success, val = pcall(function()
+            return ItemReplication.Mastery.readClient(itemId, networkedUID)
+        end)
+        if success and typeof(val) == "number" then
+            return val
+        end
+    end
+    return nil
+end
+
+function checkItem(itemName)
+    if not InventoryController or not ItemConfig or not ItemReplication then
+        pcall(function()
+            InventoryController = InventoryController or require(game:GetService("ReplicatedStorage").Controllers.UI.Inventory)
+            ItemConfig = ItemConfig or require(game:GetService("ReplicatedStorage").ItemConfig)
+            ItemReplication = ItemReplication or require(game:GetService("ReplicatedStorage").Util.ItemReplication)
+        end)
+    end
+
+    if not InventoryController or not InventoryController:GetIfInitialized() then
+        return false, 0, nil
+    end
+
+    local ok, tiles = pcall(function()
+        return InventoryController:GetTiles()
+    end)
+    if not ok or type(tiles) ~= "table" then
+        return false, 0, nil
+    end
+
+    for _, tile in ipairs(tiles) do
+        local cfg = nil
+        pcall(function()
+            cfg = ItemConfig.match(tile.ItemId):asNullable()
+        end)
+        if cfg then
+            local storageKey = cfg.Index and cfg.Index.StorageKey
+            local displayName = cfg.DisplayName or cfg.Name
+
+            if storageKey == itemName or displayName == itemName then
+                local count = tile.Count or tile.Amount or getItemCount(tile.ItemId, tile.NetworkedUID)
+                local mastery = getItemMastery(tile.ItemId, tile.NetworkedUID)
+
+                return true, count, mastery
+            end
+        end
+    end
+
+    return false, 0, nil
+end
+getgenv().checkItem = checkItem
+
+function CheckCountItem(name, count)
+    count = count or 1
+    local item = (localPlayer.Backpack and localPlayer.Backpack:FindFirstChild(name)) or (localPlayer.Character and localPlayer.Character:FindFirstChild(name))
+    if item and item:FindFirstChild("Count") then
+        if item.Count.Value >= count then return true end
+    end
+    local hasItem, itemCount = checkItem(name)
+    if hasItem and (itemCount or 0) >= count then
+        return true
+    end
+    local ok, inv = pcall(function()
+        return ReplicatedStorage.Remotes.CommF_:InvokeServer("getInventory")
+    end)
+    if ok and type(inv) == "table" then
         for _, itm in ipairs(inv) do
             if itm.Name == name then
                 return (itm.Count or 1) >= count
@@ -928,6 +1069,8 @@ end
 
 function CheckItemInventory(name)
     if DetectItemPlr(name) then return true end
+    local hasItem = checkItem(name)
+    if hasItem then return true end
     local ok, inv = pcall(function()
         return ReplicatedStorage.Remotes.CommF_:InvokeServer("getInventory")
     end)
@@ -938,19 +1081,6 @@ function CheckItemInventory(name)
             end
         end
     end
-    -- Fallback to ItemReplicationService (dành cho Materials / Accessories)
-    pcall(function()
-        local IRS = require(game:GetService("ReplicatedStorage").ItemReplicationService)
-        local KEYS = require(game:GetService("ReplicatedStorage").ItemReplicationService.KEYS)
-        local MATCH = require(game:GetService("ReplicatedStorage").ItemConfig.Storage).match
-        local data = IRS:GetItems(KEYS.QUANTITY)
-        for _, v in pairs(data) do
-            local item = MATCH(v.ItemId)._ok
-            if item and item.Index and item.Index.StorageKey == name then
-                return true
-            end
-        end
-    end)
     return false
 end
 
@@ -3353,122 +3483,39 @@ end
 local function joinServerByJobId(jobId)
     local clean = cleanAndValidateJobId(jobId)
     if not clean then return false end
-    local success = pcall(function()
-        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-        if sb then
-            sb:InvokeServer("teleport", clean)
+    pcall(function()
+        if uiLibrary and uiLibrary.CreateNoti then
+            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "🚀 Đang vào JobID: " .. clean:sub(1, 8) .. "...", ShowTime = 3 })
         end
     end)
-    task.delay(1.5, function()
-        pcall(function()
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, clean, localPlayer)
-        end)
-    end)
-    return success
+    return teleportViaServerBrowser(clean)
 end
 
-local _hopTried = {}
-_hopTried[tostring(game.JobId)] = true
-
 local function HopServerLessPlayer()
-    uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Scanning 100 pages for low-player servers...", ShowTime = 4 })
+    pcall(function()
+        if uiLibrary and uiLibrary.CreateNoti then
+            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "🔍 Đang tìm server ít người qua __ServerBrowser...", ShowTime = 2 })
+        end
+    end)
     task.spawn(function()
-        local browser = ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-        if not browser then
-            HopServer()
-            return
-        end
-        local byJob = {}
-        local completed = 0
-        local MAX_PAGES = 100
-        local MAX_PLAYERS = 7
-
-        for page = 1, MAX_PAGES do
-            task.delay((page - 1) * 0.02, function()
-                local servers = nil
-                for attempt = 1, 3 do
-                    local ok, res = pcall(function()
-                        return browser:InvokeServer(page)
-                    end)
-                    if ok and type(res) == "table" then
-                        servers = res
-                        break
-                    end
-                    if attempt < 3 then task.wait(0.15) end
-                end
-
-                if type(servers) == "table" then
-                    for jid, data in pairs(servers) do
-                        if type(data) == "table" then
-                            local idStr = tostring(jid or "")
-                            local count = tonumber(data.Count or data.count or data.playing)
-                            if idStr ~= ""
-                                and count
-                                and count >= 1
-                                and count <= MAX_PLAYERS
-                                and idStr ~= tostring(game.JobId)
-                                and not _hopTried[idStr]
-                            then
-                                local old = byJob[idStr]
-                                if not old or count < old.players then
-                                    byJob[idStr] = { id = idStr, players = count }
-                                end
-                            end
-                        end
-                    end
-                end
-                completed = completed + 1
-            end)
-        end
-
-        local deadline = tick() + 7
-        repeat task.wait(0.03) until completed >= MAX_PAGES or tick() >= deadline
-
-        local buckets, counts = {}, {}
-        for _, sv in pairs(byJob) do
-            local c = math.floor(sv.players)
-            if not buckets[c] then
-                buckets[c] = {}
-                table.insert(counts, c)
-            end
-            table.insert(buckets[c], sv)
-        end
-        table.sort(counts)
-
-        local pool = {}
-        local rng = Random.new()
-        for _, c in ipairs(counts) do
-            local bucket = buckets[c]
-            for i = #bucket, 2, -1 do
-                local j = rng:NextInteger(1, i)
-                bucket[i], bucket[j] = bucket[j], bucket[i]
-            end
-            for _, sv in ipairs(bucket) do
-                table.insert(pool, sv)
-            end
-        end
+        local pool = getOpenServers(7)
 
         if #pool > 0 then
-            for idx, sv in ipairs(pool) do
-                _hopTried[sv.id] = true
-                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = string.format("Hop Low: Joining [%d/%d] (%d players)...", idx, #pool, sv.players), ShowTime = 3 })
-                local ok = pcall(function()
-                    browser:InvokeServer("teleport", sv.id)
-                end)
-                if ok then
-                    task.wait(1.5)
-                    pcall(function()
-                        TeleportService:TeleportToPlaceInstance(game.PlaceId, sv.id, localPlayer)
-                    end)
-                    task.wait(1)
-                    return
+            table.sort(pool, function(a, b) return a.count < b.count end)
+            local chosen = pool[1]
+            _hopTried[chosen.id] = true
+            pcall(function()
+                if uiLibrary and uiLibrary.CreateNoti then
+                    uiLibrary.CreateNoti({
+                        Title = "Skider Hub V4",
+                        Desc = string.format("🚀 Hop Low: Vào server %s (%d player)...", chosen.id:sub(1, 8), chosen.count),
+                        ShowTime = 3
+                    })
                 end
-                task.wait(0.2)
-            end
+            end)
+            teleportViaServerBrowser(chosen.id)
+            return true
         else
-            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "No server <= 7 players in 100 pages, standard hopping...", ShowTime = 3 })
-            table.clear(_hopTried)
-            _hopTried[tostring(game.JobId)] = true
             HopServer()
         end
     end)
@@ -3902,21 +3949,180 @@ Tabs.KillTrial:AddToggle("JustUseSkillWhenPlayerActiveKen", {
 })
 
 -- [[ TAB: SETTINGS & CONFIG ]]
-SaveManager:SetLibrary(Fluent)
-InterfaceManager:SetLibrary(Fluent)
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-InterfaceManager:SetFolder("SkiderV4")
-SaveManager:SetFolder("SkiderV4/BloxFruits")
+local function ExportConfigTableString()
+    local configKeysOrder = {
+        { key = "Select Team", default = (localPlayer.Team and localPlayer.Team.Name) or "Marines" },
+        { key = "No Frog", default = false },
+        { key = "Select Weapon", default = "Melee" },
+        { key = "Auto Upgrade Race V2-V3", default = false },
+        { key = "Auto Get Cyborg", default = false },
+        { key = "Auto Get Fully Cyborg", default = false },
+        { key = "Auto Get Cyborg Hop Collect Chest", default = false },
+        { key = "Auto Get Ghoul", default = false },
+        { key = "Hop Server Get Ghoul", default = false },
+        { key = "Teleport Acient Clock", default = false },
+        { key = "Auto Pull Lever V4", default = true },
+        { key = "Auto Buy Gear", default = true },
+        { key = "Select Gear V4", default = "Omega" },
+        { key = "Auto Choose Gears", default = true },
+        { key = "Auto Finish Train Quest", default = true },
+        { key = "Stack Train With Trial Race", default = true },
+        { key = "Multi Trial", default = false },
+        { key = "Select Players Multi", default = {} },
+        { key = "Auto Reset Character", default = false },
+        { key = "Auto Trial", default = true },
+        { key = "Auto Turn On V3 Near Door", default = true },
+        { key = "V3 Countdown", default = 3 },
+        { key = "Name Helper TurnV3", default = {} },
+        { key = "Hop Server [Trial Or Pull Lever]", default = true },
+        { key = "Select Weapon Attack Trial", default = "Melee" },
+        { key = "Kill players When complete Trial", default = true },
+        { key = "Use Skill when Kill Player", default = true },
+        { key = "Just Use Skill when Player Active Ken", default = false },
+        { key = "Auto Click", default = true },
+    }
 
+    local lines = { "getgenv().Config = {" }
+    for _, item in ipairs(configKeysOrder) do
+        local k = item.key
+        local val = Settings[k]
+        if val == nil then
+            val = item.default
+        end
+
+        local prefix = string.format("    [%q]", k)
+        local pad = 46 - #prefix
+        if pad < 1 then pad = 1 end
+        local spacing = string.rep(" ", pad)
+
+        if type(val) == "boolean" then
+            table.insert(lines, prefix .. spacing .. "= " .. (val and "true" or "false") .. ",")
+        elseif type(val) == "number" then
+            table.insert(lines, prefix .. spacing .. "= " .. tostring(val) .. ",")
+        elseif type(val) == "string" then
+            table.insert(lines, prefix .. spacing .. '= "' .. tostring(val) .. '",')
+        elseif type(val) == "table" then
+            local list = {}
+            for _, subVal in pairs(val) do
+                table.insert(list, tostring(subVal))
+            end
+            if #list == 0 then
+                table.insert(lines, prefix .. spacing .. "= {},")
+            else
+                table.insert(lines, prefix .. spacing .. "= {")
+                for i, subVal in ipairs(list) do
+                    local comma = (i < #list) and "," or ""
+                    table.insert(lines, string.format('        %q%s', subVal, comma))
+                end
+                table.insert(lines, "    },")
+            end
+        else
+            table.insert(lines, prefix .. spacing .. "= " .. tostring(val) .. ",")
+        end
+    end
+    table.insert(lines, "}")
+    return table.concat(lines, "\n")
+end
+
+local ConfigSection = Tabs.Settings:AddSection("Configuration")
+
+Tabs.Settings:AddButton({
+    Title = "Copy Setting",
+    Description = "Copy entire active config to clipboard (getgenv().Config format)",
+    Callback = function()
+        local configStr = ExportConfigTableString()
+        local copyFn = setclipboard or toclipboard or (Clipboard and Clipboard.set) or (syn and syn.write_clipboard)
+        if copyFn then
+            copyFn(configStr)
+            if uiLibrary and uiLibrary.CreateNoti then
+                uiLibrary.CreateNoti({
+                    Title = "Configuration",
+                    Content = "Copied Config to Clipboard successfully!",
+                    Duration = 4
+                })
+            else
+                Fluent:Notify({
+                    Title = "Configuration",
+                    Content = "Copied Config to Clipboard successfully!",
+                    Duration = 4
+                })
+            end
+        else
+            if uiLibrary and uiLibrary.CreateNoti then
+                uiLibrary.CreateNoti({
+                    Title = "Clipboard Error",
+                    Content = "Your executor does not support setclipboard!",
+                    Duration = 4
+                })
+            end
+        end
+    end
+})
+
+Tabs.Settings:AddButton({
+    Title = "Copy Full Script",
+    Description = "Copy Config + Loader script to clipboard",
+    Callback = function()
+        local fullScript = ExportConfigTableString() .. '\n\nloadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/skiderhubv4.lua"))()'
+        local copyFn = setclipboard or toclipboard or (Clipboard and Clipboard.set) or (syn and syn.write_clipboard)
+        if copyFn then
+            copyFn(fullScript)
+            if uiLibrary and uiLibrary.CreateNoti then
+                uiLibrary.CreateNoti({
+                    Title = "Configuration",
+                    Content = "Copied Full Script to Clipboard successfully!",
+                    Duration = 4
+                })
+            else
+                Fluent:Notify({
+                    Title = "Configuration",
+                    Content = "Copied Full Script to Clipboard successfully!",
+                    Duration = 4
+                })
+            end
+        end
+    end
+})
+
+local CombatSection = Tabs.Settings:AddSection("Combat Settings")
+
+Tabs.Settings:AddToggle("AutoClickToggle", {
+    Title = "Auto Click",
+    Description = "Fast Attack continuously when holding Melee or Sword",
+    Default = Settings["Auto Click"] ~= nil and Settings["Auto Click"] or true,
+    Callback = function(enabled)
+        SaveSettings("Auto Click", enabled)
+    end
+})
+
+InterfaceManager:SetLibrary(Fluent)
+InterfaceManager:SetFolder("SkiderV4")
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
-SaveManager:BuildConfigSection(Tabs.Settings)
 
 Window:SelectTab(1)
 
 --------------------------------------------------------------------------------
 -- 7. WORKER LOOPS (Preserved and complete)
 --------------------------------------------------------------------------------
+
+-- Worker: Auto Click (Continuous Fast Attack for Melee / Sword)
+task.spawn(function()
+    while task.wait(0.03) do
+        if Settings["Auto Click"] then
+            local char = localPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if char and hum and hum.Health > 0 then
+                local tool = char:FindFirstChildOfClass("Tool")
+                if tool and (tool.ToolTip == "Melee" or tool.ToolTip == "Sword" or tool:FindFirstChild("Melee") or tool:FindFirstChild("Sword")) then
+                    pcall(function()
+                        tool:Activate()
+                    end)
+                    fastAttackInstance:Attack()
+                end
+            end
+        end
+    end
+end)
 
 -- Worker 1: Auto Upgrade Race V2-V3
 task.spawn(function()
