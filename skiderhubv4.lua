@@ -224,7 +224,7 @@ toggleBtn.Activated:Connect(onToggleActivated)
 getgenv().Settings = getgenv().Settings or {}
 local Settings = getgenv().Settings
 
-local configFolder = "Mtrchill"
+local configFolder = "SkiderV4"
 local lp = Players.LocalPlayer or Players.PlayerAdded:Wait()
 while not lp or not lp.Name or lp.Name == "" do
     task.wait(0.05)
@@ -233,24 +233,39 @@ end
 local username = lp.Name
 local configFilePath = configFolder .. "/" .. username .. "-kaiv4.json"
 
--- Tải cấu hình từ file JSON theo username người chơi
+-- Tải cấu hình từ file JSON theo username người chơi (gộp toàn bộ vào thư mục SkiderV4)
 local function LoadConfigFile()
-    if isfile and readfile and isfile(configFilePath) then
-        local success, content = pcall(readfile, configFilePath)
-        if success and content and #content > 0 then
-            local ok, data = pcall(function()
-                return HttpService:JSONDecode(content)
-            end)
-            if ok and type(data) == "table" then
-                for k, v in pairs(data) do
-                    Settings[k] = v
+    local function tryLoad(path)
+        if isfile and readfile and isfile(path) then
+            local success, content = pcall(readfile, path)
+            if success and content and #content > 0 then
+                local ok, data = pcall(function()
+                    return HttpService:JSONDecode(content)
+                end)
+                if ok and type(data) == "table" then
+                    for k, v in pairs(data) do
+                        Settings[k] = v
+                    end
+                    return true
                 end
+            end
+        end
+        return false
+    end
+
+    -- 1. Đọc file cấu hình chuẩn trong thư mục SkiderV4/<username>-kaiv4.json
+    if not tryLoad(configFilePath) then
+        -- 2. Thử đọc SkiderV4/kaiv4.json
+        if not tryLoad(configFolder .. "/kaiv4.json") then
+            -- 3. Hỗ trợ đọc chuyển tiếp từ thư mục cũ Mtrchill nếu có
+            if not tryLoad("Mtrchill/" .. username .. "-kaiv4.json") then
+                tryLoad("Mtrchill/kaiv4.json")
             end
         end
     end
 end
 
--- 1. Nạp file cấu hình đã lưu trước đó từ thư mục Mtrchill/<username>-kaiv4.json (nếu có)
+-- 1. Nạp file cấu hình đã lưu trước đó từ thư mục SkiderV4/<username>-kaiv4.json (nếu có)
 LoadConfigFile()
 
 -- 2. Nạp cấu hình từ config.lua (getgenv().Config hoặc getgenv().AccountConfigs)
@@ -283,10 +298,11 @@ local function WriteConfigFile()
         end
         local encoded = HttpService:JSONEncode(Settings)
         writefile(configFilePath, encoded)
+        writefile(configFolder .. "/kaiv4.json", encoded)
     end)
 end
 
--- 3. Tự động lưu lại cấu hình mới nhất vào file Mtrchill/<username>-kaiv4.json
+-- 3. Tự động lưu lại cấu hình mới nhất vào thư mục SkiderV4/<username>-kaiv4.json và SkiderV4/kaiv4.json
 WriteConfigFile()
 
 local function SaveSettings(key, value, value2)
@@ -2484,7 +2500,7 @@ local V3_READY_FRESH    = 5.0
 local V3_FIRE_COUNT     = 3
 local V3_FIRE_INTERVAL  = 0.05
 local V3_DOOR_DIST      = 65
-local FILE_ROOT         = "TurnV3"
+local FILE_ROOT         = "SkiderV4/TurnV3"
 
 local USERNAME = localPlayer.Name
 
@@ -2569,7 +2585,18 @@ local FILE_SYNC_AVAILABLE = type(writefile) == "function"
 local function safeMakeFolder(path)
     if not FILE_SYNC_AVAILABLE then return false end
     if isfolder(path) then return true end
-    return pcall(makefolder, path)
+    -- Đảm bảo tạo lần lượt từng cấp thư mục lồng nhau trong SkiderV4
+    local parts = path:split("/")
+    local current = ""
+    for _, part in ipairs(parts) do
+        if part ~= "" then
+            current = current == "" and part or (current .. "/" .. part)
+            if not isfolder(current) then
+                pcall(makefolder, current)
+            end
+        end
+    end
+    return isfolder(path)
 end
 
 local function safeReadJson(path)
@@ -2590,7 +2617,7 @@ local function sanitize(s)
     return s ~= "" and s or "x"
 end
 
--- FILE PATHS
+-- FILE PATHS (Toàn bộ gom vào trong thư mục SkiderV4)
 local function groupFolder()
     if not safeMakeFolder(FILE_ROOT) then return nil end
     local folder = FILE_ROOT .. "/group"
@@ -2599,11 +2626,13 @@ local function groupFolder()
 end
 
 local function ownReadyPath()
-    return sanitize(USERNAME) .. "-skiderhubv4turnv3.json"
+    if not safeMakeFolder(FILE_ROOT) then return nil end
+    return FILE_ROOT .. "/" .. sanitize(USERNAME) .. "-skiderhubv4turnv3.json"
 end
 
 local function commandPath()
-    return "command-skiderhubv4turnv3.json"
+    if not safeMakeFolder(FILE_ROOT) then return nil end
+    return FILE_ROOT .. "/command-skiderhubv4turnv3.json"
 end
 
 -- STATE
@@ -2787,10 +2816,13 @@ local function readAllReadyFiles()
     for _, name in ipairs(LOCAL_HELPERS) do
         if Players:FindFirstChild(name) then
             total = total + 1
-            local path1 = sanitize(name) .. "-skiderhubv4turnv3.json"
+            local path1 = FILE_ROOT .. "/" .. sanitize(name) .. "-skiderhubv4turnv3.json"
             local data = safeReadJson(path1)
             if not data and folder then
                 data = safeReadJson(folder .. "/ready_" .. sanitize(name) .. ".json")
+            end
+            if not data then
+                data = safeReadJson(sanitize(name) .. "-skiderhubv4turnv3.json")
             end
             local valid = data
                 and tostring(data.job_id or "") == tostring(game.JobId)
@@ -2811,6 +2843,9 @@ local function readV3Command()
     if not data then
         local f = groupFolder()
         if f then data = safeReadJson(f .. "/command.json") end
+    end
+    if not data then
+        data = safeReadJson("command-skiderhubv4turnv3.json")
     end
     if not data then return nil end
     if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
