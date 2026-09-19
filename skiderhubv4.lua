@@ -928,16 +928,34 @@ function IsInTempleOfTime()
     return (hrp.Position - Vector3.new(28286.35546875, 14896.5078125, 102.62469482422)).Magnitude < 3000
 end
 
-local topOfGreatTree = CFrame.new(3028, 2281, -7325)
+local topOfGreatTree   = CFrame.new(3028, 2281, -7325)
 local TEMPLE_ENTRY_POS = Vector3.new(28310.0234, 14895.1123, 109.456741)
+local TEMPLE_ENTRY_CF  = CFrame.new(28310.0234, 14895.1123, 109.456741)
 
 local lastEntranceTry = 0
-local entranceTryCount = 0
+local reachedGreatTree = false
+
+function getdoor(vv)
+    vv = vv or (localPlayer and localPlayer.Data and localPlayer.Data:FindFirstChild("Race") and localPlayer.Data.Race.Value)
+    BorrowTempleOfTime()
+    local temple = Workspace.Map:FindFirstChild("Temple of Time")
+    if not temple then return nil end
+    local corridor = temple:FindFirstChild(vv .. "Corridor")
+    if not corridor then
+        for _, c in ipairs(temple:GetChildren()) do
+            if c.Name:lower():find(tostring(vv):lower(), 1, true) then corridor = c; break end
+        end
+    end
+    if not corridor then return nil end
+    local door = corridor:FindFirstChild("Door")
+    if not door then return nil end
+    return door:FindFirstChild("Entrance") or door:FindFirstChildWhichIsA("BasePart") or corridor:FindFirstChildWhichIsA("BasePart")
+end
 
 function TeleportTempleOfTime()
     BorrowTempleOfTime()
     if IsInTempleOfTime() then
-        entranceTryCount = 0
+        reachedGreatTree = false
         return "arrived"
     end
 
@@ -951,61 +969,62 @@ function TeleportTempleOfTime()
     local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
     local hum = localPlayer.Character and localPlayer.Character:FindFirstChild("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then
+        reachedGreatTree = false
         return "waiting_character"
     end
 
-    -- 2. Direct entrance request (nhanh, khong can bay qua bien neu da mo cong)
+    -- 2. Direct entrance request (thu goi remote vao den dinh ky)
     if tick() - lastEntranceTry > 0.4 then
         lastEntranceTry = tick()
-        entranceTryCount = entranceTryCount + 1
         pcall(function()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
         end)
     end
 
     if IsInTempleOfTime() then
-        entranceTryCount = 0
+        reachedGreatTree = false
         return "arrived"
     end
 
-    -- 3. Sau vai lan thu remote ma chua vao duoc, kiem tra NPC Ancient One (talktoonggianaodo tu piggyv4)
-    if entranceTryCount >= 3 then
-        local v4Ok, v4Status = pcall(function()
-            return ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+    -- 3. Kiem tra tien trinh NPC Ancient One (RaceV4Progress)
+    pcall(function()
+        local v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+        if v4Status == 1 then
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
+        elseif v4Status == 2 then
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
+        elseif v4Status == 3 then
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
+        end
+    end)
+
+    -- 4. Kiem tra khoang cach toi Great Tree
+    local distToTree = (hrp.Position - topOfGreatTree.Position).Magnitude
+    if distToTree <= 80 then
+        reachedGreatTree = true
+    end
+
+    if not reachedGreatTree and distToTree > 80 then
+        -- Giai doan 1: Bay den Dinh Cay Co Thu (Great Tree)
+        ToTarget(topOfGreatTree)
+        return "moving_to_tree"
+    else
+        -- Giai doan 2: Da den Great Tree -> Kich hoat remote & TWEEN THANG VAO TEMPLE OF TIME
+        pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
+        end)
+        pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
         end)
 
-        if v4Ok and type(v4Status) == "number" then
-            if v4Status == 1 then
-                pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check") end)
-                pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin") end)
-            elseif v4Status == 2 then
-                pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport") end)
-            elseif v4Status == 3 then
-                pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check") end)
-                pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue") end)
-            end
-        end
-
-        local distToTree = (hrp.Position - topOfGreatTree.Position).Magnitude
-        if distToTree > 30 then
-            ToTarget(topOfGreatTree)
-            return "moving_to_tree"
-        else
-            pcall(function()
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
-            end)
-            pcall(function()
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
-            end)
-        end
+        -- Tween thang len den Temple of Time (den cua toc hoac san den)
+        local door = getdoor()
+        local targetCF = (door and door.CFrame) or TEMPLE_ENTRY_CF
+        ToTarget(targetCF)
+        return "moving_to_temple"
     end
-
-    local currentRaceState = CheckRace()
-    if currentRaceState == " V1" or currentRaceState == " V2" then
-        return "locked"
-    end
-
-    return "in_progress"
 end
 
 function DetectMob(nameOrTable)
@@ -3286,16 +3305,7 @@ local race_abilities = {
 	["Cyborg"] = "Energy Core"
 }
 
-function getdoor(vv)
-	vv = vv or (localPlayer and localPlayer.Data and localPlayer.Data:FindFirstChild("Race") and localPlayer.Data.Race.Value)
-	local temple = Workspace.Map:FindFirstChild("Temple of Time")
-	if not temple then return nil end
-	local corridor = temple:FindFirstChild(vv .. "Corridor")
-	if not corridor then return nil end
-	local door = corridor:FindFirstChild("Door")
-	if not door then return nil end
-	return door:FindFirstChild("Entrance") or door:FindFirstChildWhichIsA("BasePart") or corridor:FindFirstChildWhichIsA("BasePart")
-end
+-- getdoor defined above
 
 local function isshouldturnonability()
 	local count = 0
@@ -4802,7 +4812,7 @@ task.spawn(function()
                 task.wait(5)
             end
         end
-        if Settings["Auto Trial"] then
+        if Settings["Auto Trial"] or Settings["Multi Trial"] then
             pcall(AutoTrialV4)
         end
         -- Auto Reset Character cho Helper hoac khi toggle duoc bat (giu nguyen setting toggle nguoi dung)
