@@ -483,24 +483,6 @@ function TweenManager.CancelCurrent()
     end
 end
 
--- Noclip lien tuc qua RunService.Stepped de chong ket cay, tuong, dia hinh
-if not getgenv().GlobalNoclipStepped then
-    getgenv().GlobalNoclipStepped = RunService.Stepped:Connect(function()
-        local char = localPlayer.Character
-        if char then
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") and part.CanCollide then
-                    part.CanCollide = false
-                end
-            end
-        end
-    end)
-end
-
-local lastTargetPos = nil
-local lastStuckCheck = tick()
-local lastHrpPos = nil
-
 function ToTarget(targetCFrame, skipTween)
     local char = localPlayer.Character
     if not char then return end
@@ -516,11 +498,8 @@ function ToTarget(targetCFrame, skipTween)
         bv.Parent = head
     end
 
-    local hum = char:FindFirstChild("Humanoid")
-    if hum and hum.Sit then hum.Sit = false end
-
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") and part.CanCollide then
+        if part:IsA("BasePart") then
             part.CanCollide = false
         end
     end
@@ -531,43 +510,14 @@ function ToTarget(targetCFrame, skipTween)
 
     if skipTween or dist <= 15 then
         TweenManager.CancelCurrent()
-        lastTargetPos = nil
         hrp.CFrame = targetCF
         return
     end
-
-    -- Khong huy va tao lai tween neu tween DANG CHAY binh thuong va dich den khong doi
-    if CurrentTween 
-        and CurrentTween.PlaybackState == Enum.PlaybackState.Playing 
-        and lastTargetPos 
-        and (lastTargetPos - targetPos).Magnitude < 3 then
-        
-        -- Kiem tra ket vat ly (khong nhich vi tri qua 2s khi dist > 20)
-        if tick() - lastStuckCheck > 2 then
-            lastStuckCheck = tick()
-            if lastHrpPos and (hrp.Position - lastHrpPos).Magnitude < 5 and dist > 20 then
-                TweenManager.CancelCurrent()
-                lastTargetPos = nil
-            end
-            lastHrpPos = hrp.Position
-        end
-
-        if CurrentTween then
-            return CurrentTween
-        end
-    end
-
-    lastTargetPos = targetPos
-    lastStuckCheck = tick()
-    lastHrpPos = hrp.Position
 
     TweenManager.CancelCurrent()
     local tweenDuration = dist / TWEEN_SPEED
     local tweenInfo = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear)
     CurrentTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCF })
-    CurrentTween.Completed:Connect(function()
-        CurrentTween = nil
-    end)
     CurrentTween:Play()
     return CurrentTween
 end
@@ -969,118 +919,15 @@ function IsInTempleOfTime()
     return (hrp.Position - Vector3.new(28286.35546875, 14896.5078125, 102.62469482422)).Magnitude < 3000
 end
 
-local topOfGreatTree      = CFrame.new(3028, 2281, -7325)
-local topOfGreatTreeExact = CFrame.new(3035.15137, 2281.15918, -7325.19189)
-local TEMPLE_ENTRY_POS    = Vector3.new(28310.0234, 14895.1123, 109.456741)
-local TEMPLE_ENTRY_CF     = CFrame.new(28310.0234, 14895.1123, 109.456741)
-
-local lastRemoteCall = 0
-local lastInteractCall = 0
-local reachedNpc = false
-
-function getdoor(vv)
-    vv = vv or (localPlayer and localPlayer.Data and localPlayer.Data:FindFirstChild("Race") and localPlayer.Data.Race.Value)
-    BorrowTempleOfTime()
-    local temple = Workspace.Map:FindFirstChild("Temple of Time")
-    if not temple then return nil end
-    local corridor = temple:FindFirstChild(vv .. "Corridor")
-    if not corridor then
-        for _, c in ipairs(temple:GetChildren()) do
-            if c.Name:lower():find(tostring(vv):lower(), 1, true) then corridor = c; break end
-        end
-    end
-    if not corridor then return nil end
-    local door = corridor:FindFirstChild("Door")
-    if not door then return nil end
-    return door:FindFirstChild("Entrance") or door:FindFirstChildWhichIsA("BasePart") or corridor:FindFirstChildWhichIsA("BasePart")
-end
-
-local function GetGreatTreeNpcCFrame()
-    -- Quét NPC thực tế ở khu vực Đỉnh Cây Cổ Thụ (Bán kính 150 studs quanh toạ độ Cây Cổ Thụ)
-    -- Tuyệt đối KHÔNG tìm kiếm toàn cục hay dùng DetectNpc("Ancient One") vì NPC Ancient One nằm ở trong Temple of Time!
-    if Workspace:FindFirstChild("NPCs") then
-        for _, npc in ipairs(Workspace.NPCs:GetChildren()) do
-            local hrp = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("BasePart")
-            if hrp and (hrp.Position - topOfGreatTree.Position).Magnitude < 150 then
-                return hrp.CFrame
-            end
-        end
-    end
-    return topOfGreatTreeExact
-end
-
-local function InteractWithGreatTreeNpc()
-    if tick() - lastInteractCall < 0.3 then return end
-    lastInteractCall = tick()
-
-    local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    -- 1. Kích hoạt toàn bộ ProximityPrompt xung quanh NPC (bán kính 45 studs)
-    pcall(function()
-        if fireproximityprompt then
-            for _, prompt in ipairs(Workspace:GetDescendants()) do
-                if prompt:IsA("ProximityPrompt") and prompt.Enabled then
-                    local parent = prompt.Parent
-                    if parent and parent:IsA("BasePart") and (hrp.Position - parent.Position).Magnitude < 45 then
-                        fireproximityprompt(prompt, 0)
-                        fireproximityprompt(prompt, 1)
-                    end
-                end
-            end
-        end
-    end)
-
-    -- 2. Nhấn phím 'E' tương tác với NPC (chuẩn Blox Fruits cho Mysterious Force)
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true, "E", false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, "E", false, game)
-    end)
-
-    -- 3. Kích hoạt ClickDetector nếu có model NPC
-    pcall(function()
-        if fireclickdetector then
-            for _, cd in ipairs(Workspace:GetDescendants()) do
-                if cd:IsA("ClickDetector") then
-                    local parent = cd.Parent
-                    if parent and parent:IsA("BasePart") and (hrp.Position - parent.Position).Magnitude < 45 then
-                        fireclickdetector(cd)
-                    end
-                end
-            end
-        end
-    end)
-
-    -- 4. Tự động click vào lựa chọn đối thoại (Dialogue GUI) nếu xuất hiện
-    pcall(function()
-        local pgui = localPlayer:FindFirstChild("PlayerGui")
-        if pgui then
-            for _, guiName in ipairs({"Dialogue", "NPC", "Chat"}) do
-                local diag = pgui:FindFirstChild(guiName, true)
-                if diag and diag:IsA("GuiObject") and diag.Visible then
-                    for _, btn in ipairs(diag:GetDescendants()) do
-                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and btn.Visible then
-                            if firesignal then
-                                firesignal(btn.Activated)
-                                firesignal(btn.MouseButton1Click)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
+local topOfGreatTree = CFrame.new(3028, 2281, -7325)
+local TEMPLE_ENTRY_POS = Vector3.new(28310.0234, 14895.1123, 109.456741)
 
 function TeleportTempleOfTime()
     BorrowTempleOfTime()
     if IsInTempleOfTime() then
-        reachedNpc = false
         return "arrived"
     end
 
-    -- 1. Kiểm tra Sea: Temple of Time chỉ tồn tại ở Sea 3 (Zou)
     local mapAttr = Workspace:GetAttribute("MAP")
     if mapAttr and mapAttr ~= "Sea3" and game.PlaceId ~= 7449423635 and game.PlaceId ~= 100117331123089 then
         uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Cần ở Third Sea (Sea 3) để vào Temple of Time!", ShowTime = 5 })
@@ -1090,66 +937,47 @@ function TeleportTempleOfTime()
     local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
     local hum = localPlayer.Character and localPlayer.Character:FindFirstChild("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then
-        reachedNpc = false
         return "waiting_character"
     end
 
-    -- 2. Tọa độ đích đến NPC trên Đỉnh Cây Cổ Thụ (Great Tree)
-    local npcCFrame = GetGreatTreeNpcCFrame()
-    local distToNpc = (hrp.Position - npcCFrame.Position).Magnitude
+    pcall(function()
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
+    end)
 
-    -- Reset trạng thái nếu nhân vật ở xa (> 80 studs)
-    if distToNpc > 80 then
-        reachedNpc = false
-    elseif distToNpc <= 35 then
-        reachedNpc = true
+    if IsInTempleOfTime() then
+        return "arrived"
     end
 
-    -- GIAI ĐOẠN 1: Chưa đến NPC Cây Cổ Thụ -> TWEEN THẲNG ĐẾN NPC TRÊN ĐỈNH CÂY CỔ THỤ
-    if not reachedNpc then
-        -- Tránh vướng va chạm thân cây và tán lá Cây Cổ Thụ:
-        -- Nếu nhân vật còn ở xa (> 200 studs) và đang ở độ cao thấp (Y < 2300):
-        -- Tween bay lên độ cao an toàn (Y = 2350) phía trên tán cây trước, sau đó hạ cánh thẳng xuống đỉnh NPC
-        local horizDist = Vector2.new(hrp.Position.X - npcCFrame.Position.X, hrp.Position.Z - npcCFrame.Position.Z).Magnitude
-        if horizDist > 200 and hrp.Position.Y < 2300 then
-            local safeAltitudeCF = CFrame.new(npcCFrame.Position.X, 2350, npcCFrame.Position.Z)
-            ToTarget(safeAltitudeCF)
-        else
-            ToTarget(npcCFrame)
+    pcall(function()
+        local v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+        if v4Status == 1 then
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
+        elseif v4Status == 2 then
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
+        elseif v4Status == 3 then
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
         end
-        return "moving_to_npc"
-    end
+    end)
 
-    -- GIAI ĐOẠN 2: Đã đến sát bên cạnh NPC Cây Cổ Thụ -> BẤM VÔ NPC (Interact) & GỌI REMOTE VÀO TEMPLE
-    InteractWithGreatTreeNpc()
-
-    if tick() - lastRemoteCall > 0.6 then
-        lastRemoteCall = tick()
+    local distToTree = (hrp.Position - topOfGreatTree.Position).Magnitude
+    if distToTree > 30 then
+        ToTarget(topOfGreatTree)
+        return "moving_to_tree"
+    else
         pcall(function()
-            local v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-            if v4Status == 1 then
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
-            elseif v4Status == 2 then
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
-            elseif v4Status == 3 then
-                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
-            end
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
         end)
         pcall(function()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
         end)
     end
 
-    if IsInTempleOfTime() then
-        reachedNpc = false
-        return "arrived"
+    local currentRaceState = CheckRace()
+    if currentRaceState == " V1" or currentRaceState == " V2" then
+        return "locked"
     end
 
-    -- Từ vị trí NPC Cây Cổ Thụ, tiếp tục bay thẳng vào Temple of Time (cửa tộc hoặc sảnh đền)
-    local door = getdoor()
-    local targetTempleCF = (door and door.CFrame) or TEMPLE_ENTRY_CF
-    ToTarget(targetTempleCF)
-    return "moving_to_temple"
+    return "in_progress"
 end
 
 function DetectMob(nameOrTable)
@@ -3459,39 +3287,26 @@ local function isshouldturnonability()
 end
 
 function AutoTrialV4()
-	local mapAttr = workspace:GetAttribute("MAP")
-	local placeId = game.PlaceId
-	local isSea3 = (mapAttr == "Sea3") or (placeId == 7449423635) or (placeId == 100117331123089)
-	if not isSea3 then
-		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Trial requires Sea 3! Traveling to Sea 3...", ShowTime = 5 })
-		ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
-		task.wait(5)
+	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
 		return
 	end
-	if (Settings["Auto Finish Train Quest"] or Settings["Stack Train With Trial Race"]) and (CheckGoTrain()) then
-		return
-	end
-	if isCurrentlyTraining or blockHopAfterTrial then
-		return
-	end
-	local lookup6 = Lighting.ClockTime
+	local lookup6 = game.Lighting.ClockTime
 	if
 		(CheckMoon() == "Full Moon" and not (lookup6 > 5 and lookup6 < 12) or CheckMoon() == "Next Night")
 		and Settings["Hop Server [Trial Or Pull Lever]"]
 	then
-		if ToggleHopServerTrial then
-			ToggleHopServerTrial:SetValue(false)
+		if getgenv().TurnOffHOPSVPullAndTrial then
+			if getgenv().TurnOffHOPSVPullAndTrial.SetValue then
+				getgenv().TurnOffHOPSVPullAndTrial:SetValue(false)
+			elseif getgenv().TurnOffHOPSVPullAndTrial.SetStage then
+				getgenv().TurnOffHOPSVPullAndTrial:SetStage(false)
+			end
 		end
 		task.wait(3)
 	elseif Settings["Hop Server [Trial Or Pull Lever]"] then
-		if CheckGoTrain() or isCurrentlyTraining or blockHopAfterTrial or IsInTempleOfTime() then
-			return
-		end
 		HopServer()
 		return
 	end
-
-	-- 1. Neu chua o trong Temple of Time va khong o phong Trial, tele len den
 	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
 		if TeleportTempleOfTime() == "locked" then
 			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Temple of Time is locked", ShowTime = 5 })
@@ -3499,120 +3314,177 @@ function AutoTrialV4()
 		end
 		return
 	end
-
-	-- 2. Kiem tra trang thai FFA (khi cac phong trial xong va cuoc chien FFA dien ra)
-	local temple = GetTempleOfTime()
-	if temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield") and temple.FFABorder.Forcefield.Transparency == 0 then
-		if isHelperAccount() or Settings["Auto Reset Character"] then
-			-- Helper / Auto Reset: Reset ngay lap tuc de tai khoan Main thang trial!
-			pcall(function()
-				local char = localPlayer.Character
-				if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
-					char.Humanoid.Health = 0
-				end
-			end)
-			return
-		else
-			-- Tai khoan Main: Tieu diet cac doi thu con lai trong FFA
-			local target = PlayerTrial()
-			if target and target:FindFirstChild("HumanoidRootPart") and target:FindFirstChild("Humanoid") and target.Humanoid.Health > 0 then
-				ToTarget(target.HumanoidRootPart.CFrame * CFrame.new(0, 3, 0))
-				EquipTool(NameWeapon(Settings["Select Weapon"]))
-				pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso") end)
-				ClickM1(target)
-				UsedualFlock()
+	lookup6 = GetTempleOfTime()
+	if
+		lookup6
+			and (lookup6.FFABorder:FindFirstChild("Forcefield"))
+			and lookup6.FFABorder.Forcefield.Transparency == 1
+		or (VerifyNearbyTrial())
+	then
+		if game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible then
+			if VerifyNearbyTrial() and not getgenv().VerifyTrial then
+				getgenv().VerifyTrial = true
 			end
-			return
-		end
-	end
-
-	-- 3. Kiem tra trang thai Trial dang dien ra (Logic chuan tu piggyv4 testtrialhop.lua)
-	local myRace = localPlayer.Data.Race.Value
-	local trialPlace = races_trial_place[myRace]
-	local inTrial = (trialPlace and localPlayer:DistanceFromCharacter(trialPlace.Position) < 1500) or VerifyNearbyTrial()
-
-	if inTrial then
-		getgenv().VerifyTrial = true
-		if myRace == "Skypiea" then
-			-- Skypiea Trial (Tu piggyv4 testtrialhop.lua: di chuyen truc tiep den FinishPart)
-			pcall(function()
-				if not Workspace.Map:FindFirstChild("SkyTrial") and ReplicatedStorage:FindFirstChild("MapStash") and ReplicatedStorage.MapStash:FindFirstChild("SkyTrial") then
-					ReplicatedStorage.MapStash.SkyTrial.Parent = Workspace.Map
-				end
-				local skyTrial = Workspace.Map:FindFirstChild("SkyTrial")
-				local finishPart = (skyTrial and skyTrial:FindFirstChild("Model") and skyTrial.Model:FindFirstChild("FinishPart"))
-					or (skyTrial and skyTrial:FindFirstChild("FinishPart", true))
-				if finishPart then
-					ToTarget(finishPart.CFrame * CFrame.new(0, 3, 0))
-				end
-			end)
-		elseif myRace == "Mink" then
-			pcall(function()
-				if Workspace.Map:FindFirstChild("MinkTrial") and Workspace.Map.MinkTrial:FindFirstChild("Ceiling") then
-					ToTarget(Workspace.Map.MinkTrial.Ceiling.CFrame * CFrame.new(0, -20, 0))
-				elseif Workspace:FindFirstChild("StartPoint") then
-					ToTarget(Workspace.StartPoint.CFrame * CFrame.new(0, 2, 0))
-				end
-			end)
-		elseif myRace == "Cyborg" then
-			pcall(function()
-				if Workspace.Map:FindFirstChild("CyborgTrial") and Workspace.Map.CyborgTrial:FindFirstChild("Floor") then
-					ToTarget(Workspace.Map.CyborgTrial.Floor.CFrame * CFrame.new(0, 500, 0))
-				else
-					ToTarget(CFrame.new(28282.5703125, 15396.8505859375, 105.1042709350586))
-				end
-			end)
-		elseif myRace == "Human" or myRace == "Ghoul" then
-			local character3 = (myRace == "Human") and TrialHuman() or TrialGhoul()
-			if character3 and character3:FindFirstChild("HumanoidRootPart") and character3:FindFirstChild("Humanoid") and character3.Humanoid.Health > 0 then
-				EquipTool(NameWeapon(Settings["Select Weapon"]))
-				pcall(function()
-					ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
-				end)
-				SizePart(character3)
-				ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(0, 30, 0))
-				ClickM1(character3)
-				UsedualFlock()
-			end
-		elseif myRace == "Fishman" then
-			local humanoid4 = GetSeaBeastTrial()
-			if not localPlayer.Backpack:FindFirstChild("Sharkman Karate") and not (localPlayer.Character and localPlayer.Character:FindFirstChild("Sharkman Karate")) then
-				pcall(function()
-					ReplicatedStorage.Remotes.CommF_:InvokeServer("BuySharkmanKarate")
-				end)
-			end
-			pcall(function() EquipTool("Sharkman Karate") end)
-			if humanoid4 and humanoid4:FindFirstChild("HumanoidRootPart") and humanoid4:FindFirstChild("Health") and humanoid4.Health.Value > 0 then
-				local rootPart7 = humanoid4.HumanoidRootPart
-				getgenv().AimPos = CFrame.new(rootPart7.Position.X, 40, rootPart7.Position.Z)
-				ToTarget(rootPart7.CFrame * CFrame.new(0, 500, 0))
-				AutoAllSkill()
-			end
-		end
-		return
-	end
-
-	-- 4. O trong Temple of Time cho truoc cua toc (Race Door)
-	if IsInTempleOfTime() then
-		local door = getdoor(myRace)
-		if door then
-			local dist = localPlayer:DistanceFromCharacter(door.Position)
-			if dist > 8 then
-				ToTarget(door.CFrame)
-			else
-				-- Da dung truoc cua toc: Bat ky nang toc ("T") khi san sang
-				if isshouldturnonability() or CheckMultiPlayerNearDoor() or (Settings["Multi Trial"] and CheckMultiTeleDoor()) then
-					VirtualInputManager:SendKeyEvent(true, "T", false, game)
+			repeat
+				wait()
+			until VerifyNearbyTrial()
+				or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+			local localPlayer4 = game.Players.LocalPlayer.Data.Race.Value
+			if localPlayer4 == "Human" then
+				repeat
 					task.wait()
-					VirtualInputManager:SendKeyEvent(false, "T", false, game)
+					local character3 = TrialHuman()
+					if character3 then
+						repeat
+							task.wait()
+							SizePart(character3)
+							if Settings["Select Weapon"] == "Blox Fruit" then
+								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
+							else
+								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
+							end
+							ClickM1(character3)
+							UsedualFlock()
+						until not IsMobAlive(character3)
+							or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+							or (game.Players.LocalPlayer.Character.HumanoidRootPart.Position - game:GetService(
+									"Workspace"
+								)._WorldOrigin.Locations["Trial of Strength"].Position).Magnitude
+								> 1000
+					end
+				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+					or (
+							game.Players.LocalPlayer.Character.HumanoidRootPart.Position
+							- game:GetService("Workspace")._WorldOrigin.Locations["Trial of Strength"].Position
+						).Magnitude
+						> 1000
+			elseif localPlayer4 == "Skypiea" then
+				repeat
+					task.wait()
+					if
+						game:GetService("Workspace")._WorldOrigin.Locations:FindFirstChild("Trial of the King")
+						and (game.Players.LocalPlayer.Character.HumanoidRootPart.Position - game:GetService(
+								"Workspace"
+							)._WorldOrigin.Locations["Trial of the King"].CFrame.Position).Magnitude
+							<= 1000
+					then
+						if game:GetService("Workspace").Map:FindFirstChild("SkyTrial") and game:GetService("Workspace").Map.SkyTrial:FindFirstChild("Model") and game:GetService("Workspace").Map.SkyTrial.Model:FindFirstChild("FinishPart") then
+							ToTarget(game:GetService("Workspace").Map.SkyTrial.Model.FinishPart.CFrame)
+						end
+						task.wait(3)
+					end
+				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+					or workspace.Map:FindFirstChild("Temple of Time") and workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+					or (game:GetService("Workspace").Map:FindFirstChild("SkyTrial") and game:GetService("Workspace").Map.SkyTrial:FindFirstChild("Model") and game:GetService("Workspace").Map.SkyTrial.Model:FindFirstChild("FinishPart") and localPlayer:DistanceFromCharacter(
+							game:GetService("Workspace").Map.SkyTrial.Model.FinishPart.Position
+						)
+						> 1000)
+			elseif localPlayer4 == "Fishman" then
+				local part2 = game:GetService("Workspace")._WorldOrigin.Locations:FindFirstChild("Trial of Water")
+				if part2 and localPlayer:DistanceFromCharacter(part2.Position) < 1500 then
+					local humanoid4 = GetSeaBeastTrial()
+					repeat
+						task.wait()
+						if humanoid4 then
+							local rootPart7 = humanoid4:FindFirstChild("HumanoidRootPart")
+							if rootPart7 then
+								getgenv().AimPos = CFrame.new(rootPart7.Position.X, 40, rootPart7.Position.Z)
+								TeleportSeabeast2(humanoid4)
+								if localPlayer:DistanceFromCharacter(rootPart7.Position) < 400 then
+									AutoAllSkill()
+								end
+							end
+						end
+					until not humanoid4
+						or not humanoid4.Parent
+						or humanoid4.Health.Value == 0
+						or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+						or workspace.Map:FindFirstChild("Temple of Time") and workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+						or localPlayer:DistanceFromCharacter(
+								game:GetService("Workspace")._WorldOrigin.Locations
+									:FindFirstChild("Trial of Water").Position
+							)
+							> 1000
 				end
+			elseif localPlayer4 == "Mink" then
+				repeat
+					task.wait()
+					if
+						(
+							game.Players.LocalPlayer.Character.HumanoidRootPart.Position
+							- game:GetService("Workspace")._WorldOrigin.Locations["Trial of Speed"].Position
+						).Magnitude <= 1000
+					then
+						if game:GetService("Workspace"):FindFirstChild("StartPoint") then
+							ToTarget(game:GetService("Workspace").StartPoint.CFrame * CFrame.new(0, 2, 0))
+						end
+					end
+				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+					or localPlayer:DistanceFromCharacter(
+							game:GetService("Workspace")._WorldOrigin.Locations
+								:FindFirstChild("Trial of Speed").Position
+						)
+						> 1000
+			elseif localPlayer4 == "Ghoul" then
+				repeat
+					task.wait()
+					local character3 = TrialGhoul()
+					if character3 then
+						repeat
+							task.wait()
+							SizePart(character3)
+							if Settings["Select Weapon"] == "Blox Fruit" then
+								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
+							else
+								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
+							end
+							UsedualFlock()
+							ClickM1(character3)
+						until not IsMobAlive(character3)
+							or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+							or localPlayer:DistanceFromCharacter(
+									game:GetService("Workspace")._WorldOrigin.Locations
+										:FindFirstChild("Trial of Carnage").Position
+								)
+								> 1000
+					end
+				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+					or localPlayer:DistanceFromCharacter(
+							game:GetService("Workspace")._WorldOrigin.Locations
+								:FindFirstChild("Trial of Carnage").Position
+						)
+						> 1000
+			elseif localPlayer4 == "Cyborg" then
+				repeat
+					task.wait()
+					ToTarget(CFrame.new(28282.5703125, 14896.8505859375, 105.1042709350586))
+				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+			end
+		else
+			if not lookup6 then
+				return
+			end
+			local part2 = lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door.RightDoor.Union
+			if localPlayer:DistanceFromCharacter(part2.Position) > 8 then
+				ToTarget(part2.CFrame)
+			end
+			if
+				Settings["Multi Trial"]
+				and (CheckMultiTeleDoor())
+				and localPlayer:DistanceFromCharacter(part2.Position) <= 8
+			then
+				game:service("VirtualInputManager"):SendKeyEvent(true, "T", false, game)
+				task.wait()
+				game:service("VirtualInputManager"):SendKeyEvent(false, "T", false, game)
+				return
+			end
+			if Settings["Auto Turn On V3 Near Door"] and (CheckMultiPlayerNearDoor()) then
+				game:service("VirtualInputManager"):SendKeyEvent(true, "T", false, game)
+				task.wait()
+				game:service("VirtualInputManager"):SendKeyEvent(false, "T", false, game)
 			end
 		end
-		return
-	end
-
-	-- 5. Don dep trang thai khi ket thuc Trial
-	if getgenv().VerifyTrial then
+	elseif getgenv().VerifyTrial then
 		if not Settings["Multi Trial"] and not Settings["Auto Reset Character"] and not isHelperAccount() then
 			Settings["Auto Trial"] = false
 			if ToggleAutoTrial then
@@ -3624,15 +3496,20 @@ function AutoTrialV4()
 end
 
 function PlayerTrial()
-	if not Workspace.Map:FindFirstChild("Temple of Time") or not Workspace.Map["Temple of Time"]:FindFirstChild("FFABorder") then return nil end
-	local player = Workspace.Map["Temple of Time"].FFABorder.Forcefield
+	local temple = workspace.Map:FindFirstChild("Temple of Time")
+	if not temple or not temple:FindFirstChild("FFABorder") or not temple.FFABorder:FindFirstChild("Forcefield") then
+		return nil
+	end
+	local player = temple.FFABorder.Forcefield
 	local position9, value7 = player.Position, player.Size
-	for key, value8 in pairs(Workspace:FindPartsInRegion3(Region3.new(position9 - value7 / 2, position9 + value7 / 2), nil, math.huge)) do
+	for key, value8 in
+		pairs((workspace:FindPartsInRegion3(Region3.new(position9 - value7 / 2, position9 + value7 / 2), nil, 1 / 0)))
+	do
 		key = value8.Parent
 		if key and (key:FindFirstChild("Humanoid")) then
-			local plr = Players:GetPlayerFromCharacter(key)
-			if plr and plr.Name ~= localPlayer.Name and plr.Character and plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health > 0 then
-				return plr.Character
+			player = game.Players:GetPlayerFromCharacter(key)
+			if player and player.Name ~= localPlayer.Name and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+				return player.Character
 			end
 		end
 	end
@@ -4848,114 +4725,104 @@ local pos_plr_trial = {
     CFrame.new(28742.4688, 14887.5596, -18.2120056)
 }
 
--- Worker 9: Kill Players When Complete Trial
+-- Worker 9: Kill players when complete trial (from kaiv4.lua)
 task.spawn(function()
-    while task.wait(0.1) do
-        pcall(function()
-            if Settings["Kill players When complete Trial"] then
-                local temple = GetTempleOfTime()
-                if temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield") and temple.FFABorder.Forcefield.Transparency ~= 1 then
-                    if localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("TopHUDList") and localPlayer.PlayerGui.Main.TopHUDList:FindFirstChild("RaidTimer") and localPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible then
-                        local character3 = PlayerTrial()
-                        if not character3 then
-                            for _, v in pairs(Players:GetPlayers()) do
-                                if v ~= localPlayer and v.Character and v.Character:FindFirstChild("Humanoid") and v.Character:FindFirstChild("HumanoidRootPart") and v.Character.Humanoid.Health > 0 then
-                                    for _, pos in pairs(pos_plr_trial) do
-                                        if (v.Character.HumanoidRootPart.Position - pos.Position).Magnitude < 15 then
-                                            character3 = v.Character
-                                            break
-                                        end
-                                    end
-                                    if character3 then break end
-                                end
-                            end
-                        end
-                        if character3 and character3:FindFirstChild("HumanoidRootPart") and character3:FindFirstChild("Humanoid") and character3.Humanoid.Health > 0 then
-                            repeat
-                                task.wait()
-                                task.spawn(function()
-                                    if Lighting:FindFirstChild("Blur") and not Lighting.Blur.Enabled then
-                                        VirtualInputManager:SendKeyEvent(true, "E", false, game)
-                                        task.wait()
-                                        VirtualInputManager:SendKeyEvent(false, "E", false, game)
-                                        task.wait(3)
-                                    end
-                                    getgenv().AimPos = character3.HumanoidRootPart.CFrame
-                                end)
-                                local offset = CFrame.new(
-                                    (math.random(1, 2) == 1 and 1 or -1) * math.random(1, 4),
-                                    3,
-                                    (math.random(1, 2) == 1 and 1 or -1) * math.random(1, 4)
-                                )
-                                localPlayer.Character.HumanoidRootPart.CFrame = character3.HumanoidRootPart.CFrame * offset
-                                EquipTool(NameWeapon(Settings["Select Weapon Attack Trial"]))
-                                ClickM1(character3)
-                                if Settings["Use Skill when Kill Player"] or Settings["Just Use Skill when Player Active Ken"] then
-                                    local targetPlr = Players:FindFirstChild(character3.Name)
-                                    if (Settings["Just Use Skill when Player Active Ken"] and targetPlr and targetPlr:GetAttribute("KenActive"))
-                                        or not Settings["Just Use Skill when Player Active Ken"]
-                                    then
-                                        task.spawn(function()
-                                            local object = CheckCDSkill(NameWeapon(Settings["Select Weapon Attack Trial"]))
-                                            if object then
-                                                VirtualInputManager:SendKeyEvent(true, object.Name, false, game)
-                                                task.wait(0.05)
-                                                VirtualInputManager:SendKeyEvent(false, object.Name, false, game)
-                                            end
-                                        end)
-                                    end
-                                end
-                            until not character3
-                                or not character3.Parent
-                                or not character3:FindFirstChild("Humanoid")
-                                or character3.Humanoid.Health <= 0
-                                or not Settings["Kill players When complete Trial"]
-                                or not localPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-                                or not localPlayer.Character
-                                or not localPlayer.Character:FindFirstChild("Humanoid")
-                                or localPlayer.Character.Humanoid.Health <= 0
-                                or (temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield") and temple.FFABorder.Forcefield.Transparency == 1)
-                        end
-                    end
-                end
-            end
-        end)
-    end
+	while task.wait(0.1) do
+		pcall(function()
+			if Settings["Kill players When complete Trial"] then
+				local temple = GetTempleOfTime()
+				if temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield") and temple.FFABorder.Forcefield.Transparency ~= 1 then
+					if game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible then
+						local character3, enabled7 = PlayerTrial(), false
+						if character3 then
+							repeat
+								task.wait()
+								task.spawn(function()
+									if Lighting:FindFirstChild("Blur") and not Lighting.Blur.Enabled then
+										game:GetService("VirtualInputManager"):SendKeyEvent(true, "E", false, game)
+										task.wait()
+										game:GetService("VirtualInputManager"):SendKeyEvent(false, "E", false, game)
+										task.wait(3)
+									end
+									getgenv().AimPos = character3.HumanoidRootPart.CFrame
+								end)
+								if HasCooldownChanged(character3) then
+									local timestamp = tick()
+									repeat
+										task.wait()
+										task.spawn(getgenv().AttackFunctionnhungSuperTrial)
+										localPlayer.Character.HumanoidRootPart.CFrame = character3.HumanoidRootPart.CFrame
+											* CFrame.new(0, 50, 0)
+									until tick() - timestamp >= 0.75
+									enabled7 = false
+								else
+									if enabled7 then
+										return
+									end
+									localPlayer.Character.HumanoidRootPart.CFrame = character3.HumanoidRootPart.CFrame
+										* CFrame.new(0, 0, 4)
+								end
+								task.spawn(getgenv().AttackFunctionnhungSuperTrial)
+								EquipTool(NameWeapon(Settings["Select Weapon Attack Trial"]))
+								if
+									Settings["Use Skill when Kill Player"]
+									or Settings["Just Use Skill when Player Active Ken"]
+								then
+									if
+										Settings["Just Use Skill when Player Active Ken"]
+											and (game.Players[character3.Name]:GetAttribute("KenActive"))
+										or not Settings["Just Use Skill when Player Active Ken"]
+									then
+										task.spawn(function()
+											local object =
+												CheckCDSkill(NameWeapon(Settings["Select Weapon Attack Trial"]))
+											if object then
+												game:GetService("VirtualInputManager")
+													:SendKeyEvent(true, object.Name, false, game)
+												task.wait(0.05)
+												game:GetService("VirtualInputManager")
+													:SendKeyEvent(false, object.Name, false, game)
+											end
+										end)
+									end
+								end
+							until not character3
+								or not character3.Parent
+								or not character3:FindFirstChild("Humanoid")
+								or character3.Humanoid.Health <= 0
+								or not Settings["Kill players When complete Trial"]
+								or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
+								or not localPlayer.Character
+								or not localPlayer.Character:FindFirstChild("Humanoid")
+								or localPlayer.Character.Humanoid.Health <= 0
+						end
+					end
+				end
+			end
+		end)
+	end
 end)
 
--- Worker 10: Auto Trial & Auto Reset Character
+-- Worker 10: Auto Trial & Auto Reset Character (from kaiv4.lua)
 task.spawn(function()
-    while task.wait(0.1) do
-        if Settings["Auto Trial"] or Settings["Multi Trial"] then
-            local mapAttr = workspace:GetAttribute("MAP")
-            local placeId = game.PlaceId
-            local isSea3 = (mapAttr == "Sea3") or (placeId == 7449423635) or (placeId == 100117331123089)
-            if not isSea3 then
-                pcall(function()
-                    ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
-                end)
-                task.wait(5)
-            end
-        end
-        if Settings["Auto Trial"] or Settings["Multi Trial"] then
-            pcall(AutoTrialV4)
-        end
-        -- Auto Reset Character cho Helper hoac khi toggle duoc bat (giu nguyen setting toggle nguoi dung)
-        if Settings["Auto Reset Character"] or isHelperAccount() then
-            pcall(function()
-                local temple = GetTempleOfTime()
-                if temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield") then
-                    local trans = temple.FFABorder.Forcefield.Transparency
-                    if trans == 0 then
-                        local char = localPlayer.Character
-                        if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
-                            char.Humanoid.Health = 0
-                        end
-                    end
-                end
-            end)
-        end
-    end
+	while task.wait(0.1) do
+		if Settings["Auto Trial"] or Settings["Multi Trial"] then
+			local success, result = pcall(function()
+				AutoTrialV4()
+			end)
+			if result then
+				print(success, result)
+			end
+		end
+		if Settings["Auto Reset Character"] or isHelperAccount() then
+			pcall(function()
+				local temple = GetTempleOfTime()
+				if temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield") and temple.FFABorder.Forcefield.Transparency ~= 1 then
+					localPlayer.Character.Humanoid.Health = 0
+				end
+			end)
+		end
+	end
 end)
 
 -- FFA Watcher & Post-Trial Out Temple (From piggyv4)
