@@ -522,153 +522,227 @@ function ToTarget(targetCFrame, skipTween)
     return CurrentTween
 end
 
--- [BRING MOB MODULE] From 3tn.lua CombatController.Grab
-function BringMob(Mob)
-    pcall(sethiddenproperty, localPlayer, "SimulationRadius", math.huge)
-    if not Mob or not Mob:FindFirstChild("HumanoidRootPart") then return end
-    local targetName = Mob.Name
-    local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    for _, enemy in ipairs(Workspace.Enemies:GetChildren()) do
-        if enemy.Name == targetName and enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 and enemy:FindFirstChild("HumanoidRootPart") then
-            if isnetworkowner and isnetworkowner(enemy.PrimaryPart or enemy.HumanoidRootPart) then
-                local rootPart = enemy.HumanoidRootPart
-                local bv = rootPart:FindFirstChild("FarmingVelocity")
-                if not bv then
-                    bv = Instance.new("BodyVelocity")
-                    bv.Name = "FarmingVelocity"
-                    bv.MaxForce = Vector3.new(4000, 4000, 4000)
-                    bv.Velocity = Vector3.zero
-                    bv.Parent = rootPart
-                end
-
-                local bp = rootPart:FindFirstChild("FarmingPosition")
-                if not bp then
-                    bp = Instance.new("BodyPosition")
-                    bp.Name = "FarmingPosition"
-                    bp.MaxForce = Vector3.new(4000, 4000, 4000)
-                    bp.P = 4.12
-                    bp.D = 1000
-                    bp.Parent = rootPart
-                end
-
-                enemy:SetAttribute("IsGrabbed", true)
-                local midPos = hrp.CFrame * CFrame.new(0, 0, -5)
-                rootPart.CFrame = midPos
-                bp.Position = midPos.Position
+-- [COMBAT & FAST ATTACK MODULE] Stable Engine from skider hub god max/loader.lua
+local r, id
+for _, v in {
+    ReplicatedStorage:FindFirstChild("Util"),
+    ReplicatedStorage:FindFirstChild("Common"),
+    ReplicatedStorage:FindFirstChild("Remotes"),
+    ReplicatedStorage:FindFirstChild("Assets"),
+    ReplicatedStorage:FindFirstChild("FX"),
+} do
+    if v then
+        for _, n in ipairs(v:GetChildren()) do
+            if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+                r, id = n, n:GetAttribute("Id")
             end
         end
-    end
-end
-
--- [FAST ATTACK MODULE] From 3tn.lua
-local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
-local RegisterAttack = Net:WaitForChild("RE/RegisterAttack")
-local RegisterHit = Net:WaitForChild("RE/RegisterHit")
-
-local FastAttack = {}
-FastAttack.__index = FastAttack
-function FastAttack.new()
-    local self = setmetatable({
-        Debounce = 0,
-        ComboDebounce = 0,
-        EnemyRootPart = nil
-    }, FastAttack)
-    pcall(function()
-        local Modules = ReplicatedStorage:WaitForChild("Modules")
-        self.CombatFlags = require(Modules.Flags).COMBAT_REMOTE_THREAD
-        local LocalScript = localPlayer:WaitForChild("PlayerScripts"):FindFirstChildOfClass("LocalScript")
-        if LocalScript and getsenv then
-            self.HitFunction = getsenv(LocalScript)._G.SendHitsToServer
-        end
-    end)
-    return self
-end
-
-function FastAttack:IsEntityAlive(entity)
-    local humanoid = entity and entity:FindFirstChild("Humanoid")
-    return humanoid and humanoid.Health > 0
-end
-
-function FastAttack:GetBladeHits(Character, Distance)
-    Distance = Distance or 60
-    local Position = Character:GetPivot().Position
-    local BladeHits = {}
-
-    local function checkTarget(Enemy)
-        if Enemy ~= Character and self:IsEntityAlive(Enemy) then
-            local BasePart = Enemy:FindFirstChild("HumanoidRootPart")
-            if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
-                if not self.EnemyRootPart then
-                    self.EnemyRootPart = BasePart
-                else
-                    table.insert(BladeHits, {Enemy, BasePart})
-                    table.insert(BladeHits, {})
-                end
+        v.ChildAdded:Connect(function(n)
+            if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+                r, id = n, n:GetAttribute("Id")
             end
-        end
+        end)
     end
-
-    local function checkFolder(folder)
-        if not folder then return end
-        for _, Enemy in ipairs(folder:GetChildren()) do
-            pcall(checkTarget, Enemy)
-        end
-    end
-
-    if Workspace:FindFirstChild("Enemies") then
-        pcall(checkFolder, Workspace.Enemies)
-    end
-    if Workspace:FindFirstChild("Characters") then
-        pcall(checkFolder, Workspace.Characters)
-    end
-    -- Scan all players directly (PvP, Trial, FFA, etc.)
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= localPlayer and plr.Character then
-            pcall(checkTarget, plr.Character)
-        end
-    end
-
-    return BladeHits
 end
 
-function FastAttack:Attack()
-    if (tick() - self.Debounce) < 0.05 then return end
-    self.Debounce = tick()
+-- equipWeapon tu loader.lua
+function equipWeapon(weapon_type)
+    if not weapon_type then
+        weapon_type = Settings["Select Weapon"] or "Melee"
+    end
     local char = localPlayer.Character
-    if not char or not self:IsEntityAlive(char) then return end
-    local equipped = char:FindFirstChildOfClass("Tool")
-    if not equipped then return end
-
-    self.EnemyRootPart = nil
-    local BladeHits = self:GetBladeHits(char, 60)
-    if self.EnemyRootPart then
+    if not char or not char:FindFirstChildOfClass("Humanoid") then return end
+    if not char:FindFirstChild("HasBuso") then
         pcall(function()
-            RegisterAttack:FireServer(0.05)
-            if self.CombatFlags and self.HitFunction then
-                self.HitFunction(self.EnemyRootPart, BladeHits)
-            else
-                RegisterHit:FireServer(self.EnemyRootPart, BladeHits)
-            end
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
         end)
-    else
-        pcall(function()
-            RegisterAttack:FireServer(0.05)
-        end)
+    end
+    local curTool = char:FindFirstChildOfClass("Tool")
+    if curTool and (curTool.ToolTip == weapon_type or curTool.Name == weapon_type) then
+        return
+    end
+    for _, v in ipairs(localPlayer.Backpack:GetChildren()) do
+        if v:IsA("Tool") and (v.ToolTip == weapon_type or v.Name == weapon_type) then
+            char.Humanoid:EquipTool(v)
+            return
+        end
     end
 end
 
-local fastAttackInstance = FastAttack.new()
+function EquipTool(name)
+    equipWeapon(name)
+end
+
+-- bringMob on dinh tu loader.lua
+function BringMob(v)
+    local char = localPlayer.Character
+    if not char or not char.PrimaryPart then return end
+    local targets = {}
+    local mobName = typeof(v) == "Instance" and v.Name or v
+    if Workspace:FindFirstChild("Enemies") then
+        for _, x in ipairs(Workspace.Enemies:GetChildren()) do
+            local h = x:FindFirstChildOfClass("Humanoid")
+            local hrp = x.PrimaryPart or x:FindFirstChild("HumanoidRootPart")
+            if hrp and h and h.Health > 0 and (not mobName or x.Name == mobName or x.Name:find(mobName)) and (char.PrimaryPart.Position - hrp.Position).Magnitude <= 180 then
+                targets[#targets + 1] = x
+                if #targets == 4 then break end
+            end
+        end
+    end
+    if #targets == 0 then return end
+    local targetPos = (typeof(v) == "Instance" and (v.PrimaryPart or v:FindFirstChild("HumanoidRootPart"))) and (v.PrimaryPart or v.HumanoidRootPart).CFrame or targets[1].PrimaryPart.CFrame
+    for _, x in ipairs(targets) do
+        local part = x.PrimaryPart or x:FindFirstChild("HumanoidRootPart")
+        if part and isnetworkowner and isnetworkowner(part) then
+            part.CFrame = targetPos
+        end
+    end
+end
+
+-- FastAttack tu loader.lua (ho tro ca Net RegisterAttack/Hit va encrypted remote)
+function FastAttack()
+    local char = localPlayer.Character
+    if not char then return end
+    local hrpPlayer = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+    if not hrpPlayer then return end
+
+    local parts = {}
+    if Workspace:FindFirstChild("Enemies") then
+        for _, v in ipairs(Workspace.Enemies:GetChildren()) do
+            local hrp = v:FindFirstChild("HumanoidRootPart") or v.PrimaryPart
+            local hum = v:FindFirstChildOfClass("Humanoid")
+            if v ~= char and hrp and hum and hum.Health > 0 and (hrpPlayer.Position - hrp.Position).Magnitude <= 50 then
+                for _, _v in ipairs(v:GetChildren()) do
+                    if _v:IsA("BasePart") then
+                        parts[#parts + 1] = { v, _v }
+                    end
+                end
+            end
+        end
+    end
+    -- Quet ca player trong Trial / FFA / PvP
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= localPlayer and p.Character then
+            local hrp = p.Character:FindFirstChild("HumanoidRootPart") or p.Character.PrimaryPart
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hrp and hum and hum.Health > 0 and (hrpPlayer.Position - hrp.Position).Magnitude <= 50 then
+                for _, _v in ipairs(p.Character:GetChildren()) do
+                    if _v:IsA("BasePart") then
+                        parts[#parts + 1] = { p.Character, _v }
+                    end
+                end
+            end
+        end
+    end
+
+    if #parts == 0 then return end
+
+    local tool = char:FindFirstChildOfClass("Tool")
+    if #parts > 0 and tool and (tool.ToolTip == "Melee" or tool.ToolTip == "Sword" or tool.ToolTip == "Blox Fruit" or tool.ToolTip == "Gun") then
+        pcall(function()
+            ReplicatedStorage.Modules.Net["RE/RegisterAttack"]:FireServer(0)
+        end)
+        local head = parts[1][1]:FindFirstChild("Head") or parts[1][1]:FindFirstChild("HumanoidRootPart") or parts[1][2]
+        pcall(function()
+            ReplicatedStorage.Modules.Net["RE/RegisterHit"]:FireServer(
+                head,
+                parts,
+                {},
+                tostring(localPlayer.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15)
+            )
+        end)
+        if r and id then
+            pcall(function()
+                local netModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+                local seedVal = (netModule and netModule:FindFirstChild("seed")) and netModule.seed:InvokeServer() or 1
+                local remoteFunc = cloneref and cloneref(r) or r
+                remoteFunc:FireServer(
+                    string.gsub("RE/RegisterHit", ".", function(c)
+                        return string.char(bit32.bxor(string.byte(c), math.floor(workspace:GetServerTimeNow() / 10 % 10) + 1))
+                    end),
+                    bit32.bxor(id + 909090, seedVal * 2),
+                    head,
+                    parts
+                )
+            end)
+        end
+    end
+end
+
+-- Adapter cho cac phan code goi fastAttackInstance:Attack()
+local fastAttackInstance = {
+    Attack = FastAttack
+}
 
 function ClickM1(target)
-    fastAttackInstance:Attack()
+    FastAttack()
 end
 
 getgenv().AttackFunctionnhungSuperTrial = function()
-    fastAttackInstance:Attack()
+    FastAttack()
 end
 
+-- KillMonster tu loader.lua: ham tieu diet quai/boss chuan muc, on dinh
+function KillMonster(_v, fallbackCFrame)
+    local char = localPlayer.Character
+    if not char or not char:FindFirstChildOfClass("Humanoid") or char.Humanoid.Health <= 0 then
+        return false
+    end
+    local targetFound = false
+    for _, v2 in ipairs({ Workspace:FindFirstChild("Enemies"), ReplicatedStorage }) do
+        if v2 then
+            for _, v in ipairs(v2:GetChildren()) do
+                local hum = v:FindFirstChildOfClass("Humanoid")
+                local hrp = v.PrimaryPart or v:FindFirstChild("HumanoidRootPart")
+                if v.Name:find(_v) and hrp and hum and hum.Health > 0 then
+                    targetFound = true
+                    repeat
+                        task.wait()
+                        char = localPlayer.Character
+                        if not char or not char:FindFirstChildOfClass("Humanoid") or char.Humanoid.Health <= 0 then break end
+                        if not v or not v.Parent or not v:FindFirstChildOfClass("Humanoid") or v:FindFirstChildOfClass("Humanoid").Health <= 0 then break end
+                        hrp = v.PrimaryPart or v:FindFirstChild("HumanoidRootPart")
+                        if not hrp then break end
+
+                        local targetPos = hrp.Position + Vector3.new(0, 25, 7)
+                        local dist = (char.HumanoidRootPart.Position - hrp.Position).Magnitude
+                        ToTarget(CFrame.new(targetPos))
+
+                        if dist <= 50 then
+                            BringMob(v.Name)
+                            equipWeapon(Settings["Select Weapon"])
+                            FastAttack()
+                        end
+                    until not v
+                        or not v.Parent
+                        or not v.PrimaryPart
+                        or not v:FindFirstChildOfClass("Humanoid")
+                        or v:FindFirstChildOfClass("Humanoid").Health <= 0
+                        or char.Humanoid.Health <= 0
+                        or not char:FindFirstChild("Humanoid")
+                    return true
+                end
+            end
+        end
+    end
+    if not targetFound and fallbackCFrame then
+        ToTarget(fallbackCFrame)
+    end
+    return targetFound
+end
+
+-- Auto Dodge tu loader.lua
+task.spawn(function()
+    while true do
+        pcall(function()
+            local char = localPlayer.Character
+            if char and char.PrimaryPart and char:FindFirstChildOfClass("Humanoid") and char.Humanoid.Health > 0 then
+                ReplicatedStorage.Remotes.CommE:FireServer("Dodge", nil, 30, true, workspace:GetServerTimeNow())
+            end
+        end)
+        task.wait(1.5)
+    end
+end)
 --------------------------------------------------------------------------------
 -- 4. MISSING HELPER FUNCTIONS (ngu.md Section 2)
 --------------------------------------------------------------------------------
@@ -1320,26 +1394,9 @@ function AutoQuestBarito()
     if type(res) == "table" then
         if not res.KilledBandits then
             ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", "BartiloQuest", 1)
-            local mob = DetectMob("Swan Pirate")
-            if mob then
-                BringMob(mob)
-                SizePart(mob)
-                ClickM1(mob)
-                ToTarget(mob.HumanoidRootPart.CFrame * CFrame.new(0, 20, 7))
-            else
-                local sp = DetectPartSpawnMob("Swan Pirate")
-                if sp then ToTarget(sp.CFrame * CFrame.new(0, 50, 0)) end
-            end
+            KillMonster("Swan Pirate", CFrame.new(932.624451, 156.106079, 1180.27466))
         elseif not res.KilledSpring then
-            local boss = CheckNameBoss("Jeremy")
-            if boss then
-                BringMob(boss)
-                SizePart(boss)
-                ClickM1(boss)
-                ToTarget(boss.HumanoidRootPart.CFrame * CFrame.new(0, 20, 7))
-            else
-                ToTarget(CFrame.new(2316.0397949219, 448.95474243164, 767.72882080078))
-            end
+            KillMonster("Jeremy", CFrame.new(2316.0397949219, 448.95474243164, 767.72882080078))
         elseif not res.DidPlates then
             local colosseumCode = {
                 CFrame.new(-1836.0, 11, 1714),
@@ -1641,54 +1698,7 @@ function UpgradeRaceV2AndV3()
 			elseif not DetectItemPlr("Flower 2") and Workspace:FindFirstChild("Flower2") then
 				ToTarget(Workspace.Flower2.CFrame)
 			elseif not DetectItemPlr("Flower 3") then
-				local character3 = DetectMob("Swan Pirate")
-				if not character3 then
-					local text2 = "Swan Pirate"
-					if typeof(text2) == "table" then
-						if #items3 >= 11 then
-							items3 = {}
-							return
-						end
-						local part2 = DetectPartSpawnMob(DetectNameTablePart(text2))
-						if part2 then
-							table.insert(items3, DetectNameTablePart(text2))
-							repeat
-								wait()
-								ToTarget(part2.CFrame * CFrame.new(0, 60, 0))
-							until localPlayer:DistanceFromCharacter(part2.Position) <= 100
-								or (DetectMob(text2))
-								or not Settings["Auto Upgrade Race V2-V3"]
-							wait(1)
-						end
-					else
-						local part2 = DetectPartSpawnMob(text2, true)
-						if part2 then
-							Instance.new("IntValue", part2).Name = "Ignored"
-							repeat
-								wait()
-								ToTarget(part2.CFrame * CFrame.new(0, 60, 0))
-							until localPlayer:DistanceFromCharacter(part2.Position) <= 100
-								or (DetectMob(text2))
-								or not Settings["Auto Upgrade Race V2-V3"]
-							wait(1)
-						else
-							DeleteIgnoredMobSpawn()
-						end
-					end
-				else
-					repeat
-						task.wait()
-						SizePart(character3)
-						BringMob(character3)
-						UsedualFlock()
-						ClickM1(character3)
-						if Settings["Select Weapon"] == "Blox Fruit" then
-							ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-						else
-							ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-						end
-					until not IsMobAlive(character3) or not Settings["Auto Upgrade Race V2-V3"]
-				end
+				KillMonster("Swan Pirate", CFrame.new(932.624451, 156.106079, 1180.27466))
 			end
 		elseif alchemistStep == 2 then
 			if localPlayer:DistanceFromCharacter(Vector3.new(-2777.6001, 72.9661407, -3571.42285)) > 8 then
@@ -1714,26 +1724,17 @@ function UpgradeRaceV2AndV3()
 		end
 		remoteResult2 = localPlayer.Data.Race.Value .. value7
 		if remoteResult2 == "Human V2" then
-			local object = not table.find(BlBossHuman, "Jeremy") and (CheckNameBoss("Jeremy"))
-				or not table.find(BlBossHuman, "Orbitus") and (CheckNameBoss("Orbitus") or CheckNameBoss("Fajita"))
-				or not table.find(BlBossHuman, "Diamond") and (CheckNameBoss("Diamond"))
-			if object then
-				local name4 = CheckNameBoss(object.Name)
-				if name4 then
-					repeat
-						task.wait()
-						SizePart(name4)
-						UsedualFlock()
-						ClickM1(name4)
-						if Settings["Select Weapon"] == "Blox Fruit" then
-							ToTarget(name4.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-						else
-							ToTarget(name4.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-						end
-					until not IsMobAlive(name4)
-					if not table.find(BlBossHuman, object.Name) then
-						table.insert(BlBossHuman, object.Name)
-					end
+			if not table.find(BlBossHuman, "Jeremy") then
+				if KillMonster("Jeremy", CFrame.new(2333.209228515625, 449.2427062988281, 699.5128784179688)) then
+					table.insert(BlBossHuman, "Jeremy")
+				end
+			elseif not table.find(BlBossHuman, "Diamond") then
+				if KillMonster("Diamond", CFrame.new(-1713.5589599609375, 198.99554443359375, -104.31584167480469)) then
+					table.insert(BlBossHuman, "Diamond")
+				end
+			elseif not table.find(BlBossHuman, "Orbitus") then
+				if KillMonster("Orbitus", CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375)) or KillMonster("Fajita", CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375)) then
+					table.insert(BlBossHuman, "Orbitus")
 				end
 			else
 				uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Waiting Boss Spawn", ShowTime = 5 })
@@ -4574,38 +4575,31 @@ local function runRaceTrainingWork()
         else
             repeat
                 task.wait()
-                -- Trang bị vũ khí
-                EquipTool(NameWeapon(Settings["Select Weapon"]))
-                -- Bật Buso Haki
-                if not char:FindFirstChild("HasBuso") then
-                    pcall(function()
-                        ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
-                    end)
+                char = localPlayer.Character
+                if not char or not char:FindFirstChildOfClass("Humanoid") or char.Humanoid.Health <= 0 then break end
+                if not mob or not mob.Parent or not mob:FindFirstChildOfClass("Humanoid") or mob:FindFirstChildOfClass("Humanoid").Health <= 0 then break end
+
+                local mobHrp = mob.PrimaryPart or mob:FindFirstChild("HumanoidRootPart")
+                if not mobHrp or not char:FindFirstChild("HumanoidRootPart") then break end
+
+                local targetPos = mobHrp.Position + Vector3.new(0, 25, 7)
+                local dist = (char.HumanoidRootPart.Position - mobHrp.Position).Magnitude
+                ToTarget(CFrame.new(targetPos))
+
+                if dist <= 50 then
+                    BringMob(mob.Name)
+                    equipWeapon(Settings["Select Weapon"])
+                    FastAttack()
                 end
 
-                pcall(function()
-                    char = localPlayer.Character
-                    if not char then return end
-                    local energy = char:FindFirstChild("RaceEnergy")
-                    local mobHrp = mob:FindFirstChild("HumanoidRootPart")
-                    if mobHrp and char:FindFirstChild("HumanoidRootPart") then
-                        local d = (char.HumanoidRootPart.Position - mobHrp.Position).Magnitude
-                        local nowT = tick()
-                        if d > ATTACK_RANGE and (nowT - lastTweenAt > 0.5) then
-                            lastTweenAt = nowT
-                            ToTarget(mobHrp.CFrame * CFrame.new(0, 15, 0))
-                        end
-                        -- Tấn công quái
-                        BringMob(mob)
-                        ClickM1(mob)
-                    end
-                    -- Nhấn Y kích hoạt Race V4 khi energy đầy
-                    if energy and energy.Value >= 1 then
-                        VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-                        task.wait(0.05)
-                        VirtualInputManager:SendKeyEvent(false, "Y", false, game)
-                    end
-                end)
+                -- Nhấn Y kích hoạt Race V4 khi energy đầy
+                local energy = char:FindFirstChild("RaceEnergy")
+                if energy and energy.Value >= 1 then
+                    VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+                end
+
                 currentTrainingStatus = "[" .. tostring(islandName) .. "] Farming mobs & charging V4"
             until not checkmob_(mob) or shouldStopTraining()
         end
