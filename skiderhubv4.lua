@@ -1431,14 +1431,14 @@ function CheckRace()
 end
 
 function DetectPlayerAngel()
-	for unusedIndex, player in pairs(Players:GetChildren()) do
+	for _, player in pairs(Players:GetPlayers()) do
 		if
-			player.Name ~= localPlayer.Name
-			and (Workspace.Characters:FindFirstChild(player.Name))
+			player ~= localPlayer
 			and player:FindFirstChild("Data") and player.Data:FindFirstChild("Race") and player.Data.Race.Value == "Skypiea"
 			and not table.find(items16, player.Name)
-			and (player.Character and player.Character:FindFirstChild("Humanoid"))
+			and player.Character and player.Character:FindFirstChild("Humanoid")
 			and player.Character.Humanoid.Health > 0
+			and player.Character:FindFirstChild("HumanoidRootPart")
 		then
 			return player
 		end
@@ -1446,13 +1446,13 @@ function DetectPlayerAngel()
 end
 
 function DetectPlayerGhoul()
-	for unusedIndex, player in pairs(Players:GetChildren()) do
+	for _, player in pairs(Players:GetPlayers()) do
 		if
-			player.Name ~= localPlayer.Name
-			and (Workspace.Characters:FindFirstChild(player.Name))
+			player ~= localPlayer
 			and not table.find(items17, player.Name)
-			and (player.Character and player.Character:FindFirstChild("Humanoid"))
+			and player.Character and player.Character:FindFirstChild("Humanoid")
 			and player.Character.Humanoid.Health > 0
+			and player.Character:FindFirstChild("HumanoidRootPart")
 		then
 			return player
 		end
@@ -1509,10 +1509,10 @@ function UpgradeRaceV2AndV3()
 		if alchemistStep == 0 then
 			ReplicatedStorage.Remotes.CommF_:InvokeServer("Alchemist", "2")
 		elseif alchemistStep == 1 then
-			if not DetectItemPlr("Flower 1") then
-				if Workspace:FindFirstChild("Flower1") then ToTarget(Workspace.Flower1.CFrame) end
-			elseif not DetectItemPlr("Flower 2") then
-				if Workspace:FindFirstChild("Flower2") then ToTarget(Workspace.Flower2.CFrame) end
+			if not DetectItemPlr("Flower 1") and Workspace:FindFirstChild("Flower1") then
+				ToTarget(Workspace.Flower1.CFrame)
+			elseif not DetectItemPlr("Flower 2") and Workspace:FindFirstChild("Flower2") then
+				ToTarget(Workspace.Flower2.CFrame)
 			elseif not DetectItemPlr("Flower 3") then
 				local character3 = DetectMob("Swan Pirate")
 				if not character3 then
@@ -1588,7 +1588,7 @@ function UpgradeRaceV2AndV3()
 		remoteResult2 = localPlayer.Data.Race.Value .. value7
 		if remoteResult2 == "Human V2" then
 			local object = not table.find(BlBossHuman, "Jeremy") and (CheckNameBoss("Jeremy"))
-				or not table.find(BlBossHuman, "Orbitus") and (CheckNameBoss("Orbitus"))
+				or not table.find(BlBossHuman, "Orbitus") and (CheckNameBoss("Orbitus") or CheckNameBoss("Fajita"))
 				or not table.find(BlBossHuman, "Diamond") and (CheckNameBoss("Diamond"))
 			if object then
 				local name4 = CheckNameBoss(object.Name)
@@ -1618,6 +1618,13 @@ function UpgradeRaceV2AndV3()
 			if not CheckFruitplr() then
 				if TakeFruitInventory(true) then
 					ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadFruit", TakeFruitInventory(true))
+				end
+			else
+				local aroweCFrame = CFrame.new(288.7, 287.3, -2430.4)
+				if localPlayer:DistanceFromCharacter(aroweCFrame.Position) > 10 then
+					ToTarget(aroweCFrame)
+				else
+					ReplicatedStorage.Remotes.CommF_:InvokeServer("Wenlocktoad", "2")
 				end
 			end
 		elseif remoteResult2 == "Fishman V2" then
@@ -3110,6 +3117,15 @@ local ToggleAutoTrial
 local ToggleHopServerTrial
 
 function AutoTrialV4()
+	local mapAttr = workspace:GetAttribute("MAP")
+	local placeId = game.PlaceId
+	local isSea3 = (mapAttr == "Sea3") or (placeId == 7449423635) or (placeId == 100117331123089)
+	if not isSea3 then
+		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Trial requires Sea 3! Traveling to Sea 3...", ShowTime = 5 })
+		ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
+		task.wait(5)
+		return
+	end
 	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
 		return
 	end
@@ -3615,6 +3631,59 @@ Tabs.StatusServer:AddButton({
     end
 })
 
+local SeaTeleportSection = Tabs.StatusServer:AddSection("Sea Teleport")
+
+local function TeleportToSea(seaNum)
+    local mapAttr = workspace:GetAttribute("MAP")
+    local placeId = game.PlaceId
+    if seaNum == 1 then
+        if mapAttr == "Sea1" or placeId == 2753915549 then
+            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "You are already in Sea 1!", ShowTime = 3 })
+            return
+        end
+        uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Teleporting to Sea 1...", ShowTime = 4 })
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelMain")
+    elseif seaNum == 2 then
+        if mapAttr == "Sea2" or placeId == 4442272183 then
+            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "You are already in Sea 2!", ShowTime = 3 })
+            return
+        end
+        uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Teleporting to Sea 2...", ShowTime = 4 })
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelDressrosa")
+    elseif seaNum == 3 then
+        if mapAttr == "Sea3" or placeId == 7449423635 or placeId == 100117331123089 then
+            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "You are already in Sea 3!", ShowTime = 3 })
+            return
+        end
+        uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Teleporting to Sea 3...", ShowTime = 4 })
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
+    end
+end
+
+Tabs.StatusServer:AddButton({
+    Title = "Sea 1",
+    Description = "Teleport to First Sea (Main)",
+    Callback = function()
+        TeleportToSea(1)
+    end
+})
+
+Tabs.StatusServer:AddButton({
+    Title = "Sea 2",
+    Description = "Teleport to Second Sea (Dressrosa)",
+    Callback = function()
+        TeleportToSea(2)
+    end
+})
+
+Tabs.StatusServer:AddButton({
+    Title = "Sea 3",
+    Description = "Teleport to Third Sea (Zou)",
+    Callback = function()
+        TeleportToSea(3)
+    end
+})
+
 -- Heartbeat / Loop Live Update for Status Tab
 task.spawn(function()
     while task.wait(1) do
@@ -3885,6 +3954,15 @@ Tabs.RaceV4:AddToggle("MultiTrial", {
     Default = Settings["Multi Trial"] or false,
     Callback = function(enabled)
         SaveSettings("Multi Trial", enabled)
+        if enabled then
+            local mapAttr = workspace:GetAttribute("MAP")
+            local placeId = game.PlaceId
+            local isSea3 = (mapAttr == "Sea3") or (placeId == 7449423635) or (placeId == 100117331123089)
+            if not isSea3 then
+                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Multi Trial requires Sea 3! Traveling to Sea 3...", ShowTime = 5 })
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
+            end
+        end
     end
 })
 
@@ -3901,6 +3979,15 @@ ToggleAutoTrial = Tabs.RaceV4:AddToggle("AutoTrial", {
     Default = Settings["Auto Trial"] or false,
     Callback = function(enabled)
         SaveSettings("Auto Trial", enabled)
+        if enabled then
+            local mapAttr = workspace:GetAttribute("MAP")
+            local placeId = game.PlaceId
+            local isSea3 = (mapAttr == "Sea3") or (placeId == 7449423635) or (placeId == 100117331123089)
+            if not isSea3 then
+                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Auto Trial requires Sea 3! Traveling to Sea 3...", ShowTime = 5 })
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
+            end
+        end
     end
 })
 
@@ -4365,6 +4452,17 @@ end)
 -- Worker 10: Auto Trial & Auto Reset Character
 task.spawn(function()
     while task.wait(0.1) do
+        if Settings["Auto Trial"] or Settings["Multi Trial"] then
+            local mapAttr = workspace:GetAttribute("MAP")
+            local placeId = game.PlaceId
+            local isSea3 = (mapAttr == "Sea3") or (placeId == 7449423635) or (placeId == 100117331123089)
+            if not isSea3 then
+                pcall(function()
+                    ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
+                end)
+                task.wait(5)
+            end
+        end
         if Settings["Auto Trial"] then
             pcall(AutoTrialV4)
         end
