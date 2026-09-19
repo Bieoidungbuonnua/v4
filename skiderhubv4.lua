@@ -305,19 +305,146 @@ local function SaveSettings(key, value, value2)
 end
 
 local items3 = {}
-local items6 = {
-    "Swan Pirate",
-    "Forest Pirate",
-    "Mythological Pirate",
-    "Dragon Crew Warrior",
-    "Dragon Crew Archer",
-    "Jungle Pirate",
-    "Musketeer Pirate",
-    "Reborn Skeleton",
-    "Living Zombie",
-    "Demonic Soul",
-    "Posessed Mummy"
+
+-- Race V4 Training Island Data & Engine (From piggyv4)
+local TrainingIslandData = {
+    ["Haunted Castle"] = {
+        Position = CFrame.new(-9530.61035, 200.860657, 5763.13477),
+        Mobs = { ["Reborn Skeleton"] = true, ["Living Zombie"] = true, ["Demonic Soul"] = true, ["Possessed Mummy"] = true }
+    },
+    ["Tiki Outpost"] = {
+        Position = CFrame.new(-16490.9727, 98.1144867, 1245.58984, -0.034969449, 0, 0.999388516, 0, 1, 0, -0.999388516, 0, -0.034969449),
+        Mobs = { ["Isle Outlaw"] = true, ["Island Boy"] = true, ["Sun-kissed Warrior"] = true, ["Isle Champion"] = true }
+    },
+    ["Great Tree"] = {
+        Positions = {
+            CFrame.new(2527.22119, 88.0126953, -7554.48096, -0.999390602, -0.0349089168, -1.05798244e-06, 1.05798244e-06, -6.05583191e-05, 1, -0.0349089168, 0.999390483, 6.05583191e-05),
+            CFrame.new(2923.90332, 91.6738281, -7734.71631, 0.997561574, -0, -0.0697919354, 0, 1, -0, 0.0697919354, 0, 0.997561574),
+            CFrame.new(3778.4248, 116.34375, -6938.81641, -0.667134643, -0.731317759, 0.141794443, -0.207926333, 2.65836716e-05, -0.978144467, 0.71533066, -0.682036817, -0.152077913)
+        },
+        Mobs = {
+            ["Marine Commodore"] = true,
+            ["Marine Rear Admiral"] = true
+        }
+    },
+    ["Ice Cream Island"] = {
+        Position = CFrame.new(-851.74633789062, 65.819496154785, -10932.150390625),
+        Mobs = { ["Peanut Scout"] = true, ["Peanut President"] = true, ["Ice Cream Chef"] = true, ["Ice Cream Commander"] = true }
+    },
+    ["Port Town"] = {
+        Positions = {
+            CFrame.new(-172.031281, 52.8853912, 5851.12793, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627),
+            CFrame.new(-638.581543, 50.9266357, 5627.74951, 0.258864343, 0, 0.965913713, 0, 1, 0, -0.965913713, 0, 0.258864343),
+            CFrame.new(-61.3757935, 48.8545227, 6151.30762, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627),
+            CFrame.new(-662.967041, 65.9991913, 5804.41699, 0.965938151, 0.050586991, -0.253780305, -4.01213765e-06, 0.980709016, 0.195473209, 0.258773029, -0.188813999, 0.947304487)
+        },
+        Mobs = { ["Pirate Millionaire"] = true, ["Pistol Billionaire"] = true }
+    },
+    ["Peanut Island"] = {
+        Position = CFrame.new(-2087.0561523438, 11.722011566162, -10002.080078125),
+        Mobs = { ["Peanut Scout"] = true, ["Peanut President"] = true }
+    }
 }
+local TrainingIslandOrder = {
+    "Tiki Outpost", "Ice Cream Island", "Haunted Castle", "Great Tree", "Port Town", "Peanut Island"
+}
+local MAX_ACCS_PER_ISLAND = 2
+local myAssignedIsland = nil
+local isCurrentlyTraining = false
+local currentTrainingStatus = "Idle"
+local blockHopAfterTrial = false
+local postTrialHopDone = false
+local postTrialResetScheduled = false
+local lastFFAState = 1
+
+local function countAccountsAtIsland(islandName)
+    local data = TrainingIslandData[islandName]
+    if not data then return 0 end
+    local islandPos
+    if data.Positions then
+        islandPos = data.Positions[1].Position
+    else
+        islandPos = data.Position.Position
+    end
+    local count = 0
+    for _, plr in pairs(Players:GetPlayers()) do
+        if plr ~= localPlayer and plr.Character then
+            local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and (hrp.Position - islandPos).Magnitude < 1000 then
+                count = count + 1
+            end
+        end
+    end
+    return count
+end
+
+local function assignTrainingIsland()
+    local bestIsland = nil
+    local bestCount = math.huge
+    for _, islandName in ipairs(TrainingIslandOrder) do
+        if TrainingIslandData[islandName] then
+            local count = countAccountsAtIsland(islandName)
+            if count < MAX_ACCS_PER_ISLAND and count < bestCount then
+                bestCount = count
+                bestIsland = islandName
+            end
+        end
+    end
+    if not bestIsland then
+        for _, islandName in ipairs(TrainingIslandOrder) do
+            if TrainingIslandData[islandName] then
+                local count = countAccountsAtIsland(islandName)
+                if count < bestCount then
+                    bestCount = count
+                    bestIsland = islandName
+                end
+            end
+        end
+    end
+    myAssignedIsland = bestIsland or TrainingIslandOrder[1]
+    return myAssignedIsland
+end
+
+local function forceReassignIsland()
+    myAssignedIsland = nil
+end
+
+local function CheckMonster(...)
+    local args = { ... }
+    local containers = { Workspace:FindFirstChild("Enemies"), ReplicatedStorage }
+    for i = 1, #args do
+        for _, container in ipairs(containers) do
+            if container then
+                local m = container:FindFirstChild(args[i])
+                if m and m:IsA("Model") and m.Name ~= "Blank Buddy" then
+                    local h = m:FindFirstChildWhichIsA("Humanoid")
+                    local r = m:FindFirstChild("HumanoidRootPart")
+                    if h and r and h.Health > 0 then return m end
+                end
+            end
+        end
+    end
+    for _, container in ipairs(containers) do
+        if container then
+            for _, m in ipairs(container:GetChildren()) do
+                local h = m:FindFirstChild("Humanoid")
+                local r = m:FindFirstChild("HumanoidRootPart")
+                if m:IsA("Model") and h and r and h.Health > 0 and m.Name ~= "Blank Buddy" then
+                    for i = 1, #args do
+                        if m.Name == args[i] or m.Name:lower():find(args[i]:lower()) then
+                            return m
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function checkmob_(v)
+    return v and v.Parent and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0
+end
 
 getgenv().Chests = getgenv().Chests or {}
 getgenv().BlBossHuman = getgenv().BlBossHuman or {}
@@ -3126,7 +3253,10 @@ function AutoTrialV4()
 		task.wait(5)
 		return
 	end
-	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
+	if (Settings["Auto Finish Train Quest"] or Settings["Stack Train With Trial Race"]) and (CheckGoTrain()) then
+		return
+	end
+	if isCurrentlyTraining or blockHopAfterTrial then
 		return
 	end
 	local lookup6 = Lighting.ClockTime
@@ -3139,6 +3269,9 @@ function AutoTrialV4()
 		end
 		task.wait(3)
 	elseif Settings["Hop Server [Trial Or Pull Lever]"] then
+		if CheckGoTrain() or isCurrentlyTraining or blockHopAfterTrial or IsInTempleOfTime() then
+			return
+		end
 		HopServer()
 		return
 	end
@@ -3708,7 +3841,8 @@ task.spawn(function()
                 "• Mirage Island: " .. mirageStr .. "\n" ..
                 "• Valkyrie Helm: " .. valkStr .. "\n" ..
                 "• Mirror Fractal: " .. fractalStr .. "\n" ..
-                "• Ancient One: " .. ancientStr
+                "• Ancient One: " .. ancientStr .. "\n" ..
+                "• Training: " .. tostring(currentTrainingStatus or "Idle")
             )
 
             ServerInfoParagraph:SetDesc(
@@ -4301,66 +4435,215 @@ task.spawn(function()
     end
 end)
 
+-- Race V4 Training Execution Engine (From piggyv4)
+local function runRaceTrainingWork()
+    local char = localPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") or not char:FindFirstChild("Humanoid") then
+        currentTrainingStatus = "Waiting for character"
+        task.wait(1)
+        return false
+    end
+
+    -- 1. Nếu đang ở trong Temple of Time mà cần training -> Reset để Out Temple ra Sea 3
+    if IsInTempleOfTime() then
+        currentTrainingStatus = "Out Temple: Resetting character..."
+        pcall(function()
+            char.Humanoid.Health = 0
+        end)
+        task.wait(3)
+        return false
+    end
+
+    -- 2. Kiểm tra tiến trình training
+    if not CheckGoTrain() then
+        local code = nil
+        pcall(function()
+            code = ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check")
+        end)
+        if code == 2 or code == 4 or code == 7 then
+            currentTrainingStatus = "Buying V4 upgrade..."
+            BuyGearV4()
+            task.wait(1)
+        else
+            currentTrainingStatus = "Training complete - Ready for trial"
+        end
+        isCurrentlyTraining = false
+        blockHopAfterTrial = false
+        return true
+    end
+
+    -- 3. Kiểm tra RaceTransformed khi vừa respawn sau trial reset
+    if not char:FindFirstChild("RaceTransformed") then
+        if postTrialResetScheduled then
+            currentTrainingStatus = "Waiting character load after trial reset..."
+            local waitStart = tick()
+            repeat
+                task.wait(0.3)
+                char = localPlayer.Character
+            until (char and char:FindFirstChild("RaceTransformed")) or tick() - waitStart > 6
+            char = localPlayer.Character
+            if not char or not char:FindFirstChild("RaceTransformed") then
+                return false
+            end
+        else
+            local ok, vp = pcall(function()
+                return ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+            end)
+            if ok and vp == 1 then
+                pcall(function() ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin") end)
+            end
+        end
+    end
+
+    isCurrentlyTraining = true
+    blockHopAfterTrial = true
+
+    -- 4. Kích hoạt Race V4 nếu thanh năng lượng đã đầy
+    pcall(function()
+        local energy = char:FindFirstChild("RaceEnergy")
+        local transformed = char:FindFirstChild("RaceTransformed")
+        if energy and energy.Value >= 1 and transformed and not transformed.Value then
+            VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+        end
+    end)
+
+    -- 5. Chọn đảo training phù hợp (vắng người nhất)
+    local islandName = assignTrainingIsland()
+    if not islandName then
+        currentTrainingStatus = "No island available - Retrying"
+        return false
+    end
+    local islandData = TrainingIslandData[islandName]
+    if not islandData then
+        forceReassignIsland()
+        return false
+    end
+
+    local trainingPositions = nil
+    if islandData.Positions then
+        trainingPositions = islandData.Positions
+    elseif islandData.Position then
+        trainingPositions = { islandData.Position }
+    else
+        return false
+    end
+
+    local currentPosIndex = 1
+    local function getCurrentPos()
+        return trainingPositions[currentPosIndex]
+    end
+    local function advancePosition()
+        currentPosIndex = currentPosIndex + 1
+        if currentPosIndex > #trainingPositions then currentPosIndex = 1 end
+    end
+
+    local trainingPos = getCurrentPos()
+    local hrp = char.HumanoidRootPart
+    local distToIsland = (hrp.Position - trainingPos.Position).Magnitude
+    if distToIsland >= 1500 then
+        currentTrainingStatus = "Moving to [" .. tostring(islandName) .. "] for training"
+        ToTarget(trainingPos)
+        return false
+    end
+
+    local mobNames = {}
+    for name in pairs(islandData.Mobs) do
+        table.insert(mobNames, name)
+    end
+
+    local ATTACK_RANGE = 15
+    local lastTweenAt = 0
+
+    local function shouldStopTraining()
+        if not Settings["Auto Finish Train Quest"] then return true end
+        if not CheckGoTrain() then return true end
+        return false
+    end
+
+    -- 6. Vòng lặp tìm quái và đánh sạc V4
+    local cycleStart = tick()
+    while not shouldStopTraining() and (tick() - cycleStart < 25) do
+        local mob = CheckMonster(table.unpack(mobNames))
+        if not mob then
+            currentTrainingStatus = "[" .. tostring(islandName) .. "] Waiting for mobs..."
+            ToTarget(getCurrentPos())
+            task.wait(0.8)
+            advancePosition()
+        else
+            repeat
+                task.wait()
+                -- Trang bị vũ khí
+                EquipTool(NameWeapon(Settings["Select Weapon"]))
+                -- Bật Buso Haki
+                if not char:FindFirstChild("HasBuso") then
+                    pcall(function()
+                        ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
+                    end)
+                end
+
+                pcall(function()
+                    char = localPlayer.Character
+                    if not char then return end
+                    local energy = char:FindFirstChild("RaceEnergy")
+                    local mobHrp = mob:FindFirstChild("HumanoidRootPart")
+                    if mobHrp and char:FindFirstChild("HumanoidRootPart") then
+                        local d = (char.HumanoidRootPart.Position - mobHrp.Position).Magnitude
+                        local nowT = tick()
+                        if d > ATTACK_RANGE and (nowT - lastTweenAt > 0.5) then
+                            lastTweenAt = nowT
+                            ToTarget(mobHrp.CFrame * CFrame.new(0, 15, 0))
+                        end
+                        -- Tấn công quái
+                        BringMob(mob)
+                        ClickM1(mob)
+                    end
+                    -- Nhấn Y kích hoạt Race V4 khi energy đầy
+                    if energy and energy.Value >= 1 then
+                        VirtualInputManager:SendKeyEvent(true, "Y", false, game)
+                        task.wait(0.05)
+                        VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+                    end
+                end)
+                currentTrainingStatus = "[" .. tostring(islandName) .. "] Farming mobs & charging V4"
+            until not checkmob_(mob) or shouldStopTraining()
+        end
+    end
+
+    -- 7. Kiểm tra sau vòng training xem đã hoàn tất chưa
+    if not CheckGoTrain() then
+        local code = nil
+        pcall(function()
+            code = ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check")
+        end)
+        if code == 2 or code == 4 or code == 7 then
+            currentTrainingStatus = "Training done! Buying V4 upgrade..."
+            BuyGearV4()
+            task.wait(1)
+        end
+        isCurrentlyTraining = false
+        blockHopAfterTrial = false
+        forceReassignIsland()
+        return true
+    end
+
+    return false
+end
+
 -- Worker 8: Auto Finish Train Quest
 task.spawn(function()
-    while task.wait(0.1) do
+    while task.wait(0.2) do
         if Settings["Auto Finish Train Quest"] then
             pcall(function()
                 if Settings["Stack Train With Trial Race"] and not CheckGoTrain() then
+                    isCurrentlyTraining = false
                     return
                 end
-                TurnOnV4()
-                BuyGearV4()
-                local character3 = DetectMob(items6)
-                if character3 then
-                    repeat
-                        task.wait()
-                        SizePart(character3)
-                        BringMob(character3)
-                        UsedualFlock()
-                        ClickM1(character3)
-                        if Settings["Select Weapon"] == "Blox Fruit" then
-                            ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-                        else
-                            ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-                        end
-                    until not IsMobAlive(character3)
-                        or not Settings["Auto Finish Train Quest"]
-                        or not CheckGoTrain()
-                elseif typeof(items6) == "table" then
-                    if #items3 >= #items6 then
-                        items3 = {}
-                        return
-                    end
-                    local part2 = DetectPartSpawnMob(DetectNameTablePart(items6))
-                    if part2 then
-                        table.insert(items3, DetectNameTablePart(items6))
-                        repeat
-                            wait()
-                            ToTarget(part2.CFrame * CFrame.new(0, 60, 0))
-                        until localPlayer:DistanceFromCharacter(part2.Position) <= 100
-                            or (DetectMob(items6))
-                            or not Settings["Auto Finish Train Quest"]
-                            or not CheckGoTrain()
-                        wait(1)
-                    end
-                else
-                    local part2 = DetectPartSpawnMob(items6, true)
-                    if part2 then
-                        Instance.new("IntValue", part2).Name = "Ignored"
-                        repeat
-                            wait()
-                            ToTarget(part2.CFrame * CFrame.new(0, 60, 0))
-                        until localPlayer:DistanceFromCharacter(part2.Position) <= 100
-                            or (DetectMob(items6))
-                            or not Settings["Auto Finish Train Quest"]
-                            or not CheckGoTrain()
-                        wait(1)
-                    else
-                        DeleteIgnoredMobSpawn()
-                    end
-                end
+                runRaceTrainingWork()
             end)
+        else
+            isCurrentlyTraining = false
         end
     end
 end)
@@ -4474,6 +4757,63 @@ task.spawn(function()
                 end
             end)
         end
+    end
+end)
+
+-- FFA Watcher & Post-Trial Out Temple (From piggyv4)
+task.spawn(function()
+    while task.wait(0.3) do
+        pcall(function()
+            local temple = GetTempleOfTime()
+            if not temple or not temple:FindFirstChild("FFABorder") or not temple.FFABorder:FindFirstChild("Forcefield") then
+                return
+            end
+            local trans = temple.FFABorder.Forcefield.Transparency
+            if trans == 0 then
+                -- FFA dang dien ra
+                lastFFAState = 0
+                postTrialResetScheduled = false
+            elseif lastFFAState == 0 then
+                -- Chuyen tu 0 sang 1: FFA vua ket thuc! Nguoi chien thang o lai den
+                lastFFAState = 1
+                if not postTrialResetScheduled then
+                    postTrialResetScheduled = true
+                    blockHopAfterTrial = true
+                    postTrialHopDone = true
+
+                    task.spawn(function()
+                        if uiLibrary and uiLibrary.CreateNoti then
+                            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Trial completed! Claiming gear...", ShowTime = 5 })
+                        end
+                        -- 1. Nhan gear va mua gear tai den
+                        task.wait(1)
+                        pcall(ChooseGearV4)
+                        task.wait(1)
+                        pcall(BuyGearV4)
+
+                        -- 2. Cho 5s de server luu roi reset de Out Temple ra Sea 3
+                        if uiLibrary and uiLibrary.CreateNoti then
+                            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Out Temple: Resetting character in 5s...", ShowTime = 5 })
+                        end
+                        task.wait(5)
+
+                        pcall(function()
+                            local char = localPlayer.Character
+                            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
+                                char.Humanoid.Health = 0
+                            end
+                        end)
+
+                        if uiLibrary and uiLibrary.CreateNoti then
+                            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Out Temple complete! Respawning in Sea 3...", ShowTime = 5 })
+                        end
+
+                        task.wait(15)
+                        postTrialResetScheduled = false
+                    end)
+                end
+            end
+        end)
     end
 end)
 
