@@ -468,30 +468,41 @@ function FastAttack:GetBladeHits(Character, Distance)
     Distance = Distance or 60
     local Position = Character:GetPivot().Position
     local BladeHits = {}
+
+    local function checkTarget(Enemy)
+        if Enemy ~= Character and self:IsEntityAlive(Enemy) then
+            local BasePart = Enemy:FindFirstChild("HumanoidRootPart")
+            if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
+                if not self.EnemyRootPart then
+                    self.EnemyRootPart = BasePart
+                else
+                    table.insert(BladeHits, {Enemy, BasePart})
+                    table.insert(BladeHits, {})
+                end
+            end
+        end
+    end
+
     local function checkFolder(folder)
         if not folder then return end
         for _, Enemy in ipairs(folder:GetChildren()) do
-            pcall(function()
-                if Enemy ~= Character and self:IsEntityAlive(Enemy) then
-                    local BasePart = Enemy:FindFirstChild("HumanoidRootPart")
-                    if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
-                        if not self.EnemyRootPart then
-                            self.EnemyRootPart = BasePart
-                        else
-                            table.insert(BladeHits, {Enemy, BasePart})
-                            table.insert(BladeHits, {})
-                        end
-                    end
-                end
-            end)
+            pcall(checkTarget, Enemy)
         end
     end
+
     if Workspace:FindFirstChild("Enemies") then
         pcall(checkFolder, Workspace.Enemies)
     end
     if Workspace:FindFirstChild("Characters") then
         pcall(checkFolder, Workspace.Characters)
     end
+    -- Scan all players directly (PvP, Trial, FFA, etc.)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= localPlayer and plr.Character then
+            pcall(checkTarget, plr.Character)
+        end
+    end
+
     return BladeHits
 end
 
