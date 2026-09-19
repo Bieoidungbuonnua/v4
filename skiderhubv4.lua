@@ -928,9 +928,10 @@ function IsInTempleOfTime()
     return (hrp.Position - Vector3.new(28286.35546875, 14896.5078125, 102.62469482422)).Magnitude < 3000
 end
 
-local topOfGreatTree   = CFrame.new(3028, 2281, -7325)
-local TEMPLE_ENTRY_POS = Vector3.new(28310.0234, 14895.1123, 109.456741)
-local TEMPLE_ENTRY_CF  = CFrame.new(28310.0234, 14895.1123, 109.456741)
+local topOfGreatTree      = CFrame.new(3028, 2281, -7325)
+local topOfGreatTreeExact = CFrame.new(3035.15137, 2281.15918, -7325.19189)
+local TEMPLE_ENTRY_POS    = Vector3.new(28310.0234, 14895.1123, 109.456741)
+local TEMPLE_ENTRY_CF     = CFrame.new(28310.0234, 14895.1123, 109.456741)
 
 local lastRemoteCall = 0
 local reachedNpc = false
@@ -952,12 +953,18 @@ function getdoor(vv)
     return door:FindFirstChild("Entrance") or door:FindFirstChildWhichIsA("BasePart") or corridor:FindFirstChildWhichIsA("BasePart")
 end
 
-local function GetAncientOneCFrame()
-    local npc = DetectNpc("Ancient One")
-    if npc and npc:FindFirstChild("HumanoidRootPart") then
-        return npc.HumanoidRootPart.CFrame
+local function GetGreatTreeNpcCFrame()
+    -- Quét NPC thực tế ở khu vực Đỉnh Cây Cổ Thụ (Bán kính 150 studs quanh toạ độ Cây Cổ Thụ)
+    -- Tuyệt đối KHÔNG tìm kiếm toàn cục hay dùng DetectNpc("Ancient One") vì NPC Ancient One nằm ở trong Temple of Time!
+    if Workspace:FindFirstChild("NPCs") then
+        for _, npc in ipairs(Workspace.NPCs:GetChildren()) do
+            local hrp = npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("BasePart")
+            if hrp and (hrp.Position - topOfGreatTree.Position).Magnitude < 150 then
+                return hrp.CFrame
+            end
+        end
     end
-    return topOfGreatTree
+    return topOfGreatTreeExact
 end
 
 function TeleportTempleOfTime()
@@ -967,10 +974,10 @@ function TeleportTempleOfTime()
         return "arrived"
     end
 
-    -- 1. Kiem tra Sea: Temple of Time chi ton tai o Sea 3 (Zou)
+    -- 1. Kiểm tra Sea: Temple of Time chỉ tồn tại ở Sea 3 (Zou)
     local mapAttr = Workspace:GetAttribute("MAP")
     if mapAttr and mapAttr ~= "Sea3" and game.PlaceId ~= 7449423635 and game.PlaceId ~= 100117331123089 then
-        uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Can o Third Sea (Sea 3) de vao Temple of Time!", ShowTime = 5 })
+        uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Cần ở Third Sea (Sea 3) để vào Temple of Time!", ShowTime = 5 })
         return "wrong_sea"
     end
 
@@ -981,7 +988,24 @@ function TeleportTempleOfTime()
         return "waiting_character"
     end
 
-    -- 2. Goi remote dinh ky (khong dung task.wait gay dung/ngat quang tween)
+    -- 2. Tọa độ đích đến NPC trên Đỉnh Cây Cổ Thụ (Great Tree)
+    local npcCFrame = GetGreatTreeNpcCFrame()
+    local distToNpc = (hrp.Position - npcCFrame.Position).Magnitude
+
+    -- Reset trạng thái nếu nhân vật ở xa (> 80 studs)
+    if distToNpc > 80 then
+        reachedNpc = false
+    elseif distToNpc <= 30 then
+        reachedNpc = true
+    end
+
+    -- GIAI ĐOẠN 1: Chưa đến NPC Cây Cổ Thụ -> TWEEN THẲNG ĐẾN NPC TRÊN ĐỈNH CÂY CỔ THỤ
+    if not reachedNpc then
+        ToTarget(npcCFrame)
+        return "moving_to_npc"
+    end
+
+    -- GIAI ĐOẠN 2: Đã đến sát bên cạnh NPC Cây Cổ Thụ -> Gọi remote và tiếp tục tween vào Temple of Time
     if tick() - lastRemoteCall > 0.8 then
         lastRemoteCall = tick()
         pcall(function()
@@ -1004,33 +1028,11 @@ function TeleportTempleOfTime()
         return "arrived"
     end
 
-    -- 3. TWEEN DEN NPC ANCIENT ONE (CÂY CỔ THỤ)
-    local npcCFrame = GetAncientOneCFrame()
-    local distToNpc = (hrp.Position - npcCFrame.Position).Magnitude
-
-    if distToNpc <= 35 then
-        reachedNpc = true
-    end
-
-    if not reachedNpc and distToNpc > 35 then
-        -- Giai doan 1: Tween muot ma den NPC Ancient One tren Dinh Cay Co Thu
-        ToTarget(npcCFrame)
-        return "moving_to_npc"
-    else
-        -- Giai doan 2: Da den ben canh NPC Ancient One -> Kich hoat remote teleport va TWEEN THANG VAO TEMPLE
-        pcall(function()
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
-        end)
-        pcall(function()
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
-        end)
-
-        -- Tu NPC tiep tuc tween thang vao Temple of Time (den cua toc hoac san den)
-        local door = getdoor()
-        local targetTempleCF = (door and door.CFrame) or TEMPLE_ENTRY_CF
-        ToTarget(targetTempleCF)
-        return "moving_to_temple"
-    end
+    -- Từ vị trí NPC Cây Cổ Thụ, tiếp tục bay thẳng vào Temple of Time (cửa tộc hoặc sảnh đền)
+    local door = getdoor()
+    local targetTempleCF = (door and door.CFrame) or TEMPLE_ENTRY_CF
+    ToTarget(targetTempleCF)
+    return "moving_to_temple"
 end
 
 function DetectMob(nameOrTable)
