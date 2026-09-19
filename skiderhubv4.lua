@@ -535,33 +535,87 @@ end
 
 function HopServer()
     task.spawn(function()
+        pcall(function()
+            if uiLibrary and uiLibrary.CreateNoti then
+                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Đang tìm server để hop...", ShowTime = 3 })
+            end
+        end)
+
         local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-        if not sb then return end
+        if not sb then
+            pcall(function()
+                if uiLibrary and uiLibrary.CreateNoti then
+                    uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Dùng TeleportService fallback...", ShowTime = 3 })
+                end
+                TeleportService:Teleport(game.PlaceId, localPlayer)
+            end)
+            return
+        end
+
+        local triedInSession = {}
+        triedInSession[tostring(game.JobId)] = true
+
         for page = 1, 100 do
             local ok, servers = pcall(function()
-                return sb:InvokeServer(page)
+                return sb:InvokeServer(page) or sb:InvokeServer("getServers", page)
             end)
             if ok and type(servers) == "table" and next(servers) ~= nil then
                 local valid = {}
                 for jid, data in pairs(servers) do
-                    local jStr = tostring(jid or "")
-                    if jStr ~= "" and jStr ~= tostring(game.JobId) then
-                        local count = type(data) == "table" and tonumber(data.Count or data.count or data.playing) or 0
-                        if count and count < (Players.MaxPlayers or 12) then
-                            table.insert(valid, jStr)
+                    local jStr = tostring(jid or (type(data) == "table" and data.JobId) or "")
+                    if jStr ~= "" and jStr ~= tostring(game.JobId) and not triedInSession[jStr] then
+                        local count = 0
+                        if type(data) == "table" then
+                            count = tonumber(data.Count or data.count or data.Players or data.playing) or 0
+                        end
+                        if count < 12 then
+                            table.insert(valid, { id = jStr, count = count })
                         end
                     end
                 end
+
                 if #valid > 0 then
-                    local target = valid[math.random(1, #valid)]
-                    pcall(function()
-                        sb:InvokeServer("teleport", target)
-                    end)
-                    return
+                    for i = #valid, 2, -1 do
+                        local j = math.random(1, i)
+                        valid[i], valid[j] = valid[j], valid[i]
+                    end
+
+                    for _, item in ipairs(valid) do
+                        local target = item.id
+                        triedInSession[target] = true
+                        pcall(function()
+                            if uiLibrary and uiLibrary.CreateNoti then
+                                uiLibrary.CreateNoti({
+                                    Title = "Skider Hub V4",
+                                    Desc = string.format("Đang chuyển server: %s (%d/12)...", target:sub(1, 8), item.count),
+                                    ShowTime = 3
+                                })
+                            end
+                        end)
+
+                        pcall(function()
+                            sb:InvokeServer("teleport", target)
+                        end)
+
+                        task.wait(1.5)
+
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(game.PlaceId, target, localPlayer)
+                        end)
+
+                        task.wait(1.5)
+                    end
                 end
             end
-            task.wait(0.05)
+            task.wait(0.03)
         end
+
+        pcall(function()
+            if uiLibrary and uiLibrary.CreateNoti then
+                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Dùng TeleportService fallback...", ShowTime = 3 })
+            end
+            TeleportService:Teleport(game.PlaceId, localPlayer)
+        end)
     end)
 end
 
@@ -3305,6 +3359,11 @@ local function joinServerByJobId(jobId)
             sb:InvokeServer("teleport", clean)
         end
     end)
+    task.delay(1.5, function()
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, clean, localPlayer)
+        end)
+    end)
     return success
 end
 
@@ -3397,7 +3456,11 @@ local function HopServerLessPlayer()
                     browser:InvokeServer("teleport", sv.id)
                 end)
                 if ok then
-                    task.wait(2)
+                    task.wait(1.5)
+                    pcall(function()
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, sv.id, localPlayer)
+                    end)
+                    task.wait(1)
                     return
                 end
                 task.wait(0.2)
