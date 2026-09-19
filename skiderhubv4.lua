@@ -932,8 +932,8 @@ local topOfGreatTree   = CFrame.new(3028, 2281, -7325)
 local TEMPLE_ENTRY_POS = Vector3.new(28310.0234, 14895.1123, 109.456741)
 local TEMPLE_ENTRY_CF  = CFrame.new(28310.0234, 14895.1123, 109.456741)
 
-local lastEntranceTry = 0
-local reachedGreatTree = false
+local lastRemoteCall = 0
+local reachedNpc = false
 
 function getdoor(vv)
     vv = vv or (localPlayer and localPlayer.Data and localPlayer.Data:FindFirstChild("Race") and localPlayer.Data.Race.Value)
@@ -952,10 +952,18 @@ function getdoor(vv)
     return door:FindFirstChild("Entrance") or door:FindFirstChildWhichIsA("BasePart") or corridor:FindFirstChildWhichIsA("BasePart")
 end
 
+local function GetAncientOneCFrame()
+    local npc = DetectNpc("Ancient One")
+    if npc and npc:FindFirstChild("HumanoidRootPart") then
+        return npc.HumanoidRootPart.CFrame
+    end
+    return topOfGreatTree
+end
+
 function TeleportTempleOfTime()
     BorrowTempleOfTime()
     if IsInTempleOfTime() then
-        reachedGreatTree = false
+        reachedNpc = false
         return "arrived"
     end
 
@@ -969,49 +977,47 @@ function TeleportTempleOfTime()
     local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
     local hum = localPlayer.Character and localPlayer.Character:FindFirstChild("Humanoid")
     if not hrp or not hum or hum.Health <= 0 then
-        reachedGreatTree = false
+        reachedNpc = false
         return "waiting_character"
     end
 
-    -- 2. Direct entrance request (thu goi remote vao den dinh ky)
-    if tick() - lastEntranceTry > 0.4 then
-        lastEntranceTry = tick()
+    -- 2. Goi remote dinh ky (khong dung task.wait gay dung/ngat quang tween)
+    if tick() - lastRemoteCall > 0.8 then
+        lastRemoteCall = tick()
+        pcall(function()
+            local v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+            if v4Status == 1 then
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
+            elseif v4Status == 2 then
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
+            elseif v4Status == 3 then
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
+            end
+        end)
         pcall(function()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
         end)
     end
 
     if IsInTempleOfTime() then
-        reachedGreatTree = false
+        reachedNpc = false
         return "arrived"
     end
 
-    -- 3. Kiem tra tien trinh NPC Ancient One (RaceV4Progress)
-    pcall(function()
-        local v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-        if v4Status == 1 then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
-        elseif v4Status == 2 then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
-        elseif v4Status == 3 then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
-        end
-    end)
+    -- 3. TWEEN DEN NPC ANCIENT ONE (CÂY CỔ THỤ)
+    local npcCFrame = GetAncientOneCFrame()
+    local distToNpc = (hrp.Position - npcCFrame.Position).Magnitude
 
-    -- 4. Kiem tra khoang cach toi Great Tree
-    local distToTree = (hrp.Position - topOfGreatTree.Position).Magnitude
-    if distToTree <= 80 then
-        reachedGreatTree = true
+    if distToNpc <= 35 then
+        reachedNpc = true
     end
 
-    if not reachedGreatTree and distToTree > 80 then
-        -- Giai doan 1: Bay den Dinh Cay Co Thu (Great Tree)
-        ToTarget(topOfGreatTree)
-        return "moving_to_tree"
+    if not reachedNpc and distToNpc > 35 then
+        -- Giai doan 1: Tween muot ma den NPC Ancient One tren Dinh Cay Co Thu
+        ToTarget(npcCFrame)
+        return "moving_to_npc"
     else
-        -- Giai doan 2: Da den Great Tree -> Kich hoat remote & TWEEN THANG VAO TEMPLE OF TIME
+        -- Giai doan 2: Da den ben canh NPC Ancient One -> Kich hoat remote teleport va TWEEN THANG VAO TEMPLE
         pcall(function()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
         end)
@@ -1019,10 +1025,10 @@ function TeleportTempleOfTime()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
         end)
 
-        -- Tween thang len den Temple of Time (den cua toc hoac san den)
+        -- Tu NPC tiep tuc tween thang vao Temple of Time (den cua toc hoac san den)
         local door = getdoor()
-        local targetCF = (door and door.CFrame) or TEMPLE_ENTRY_CF
-        ToTarget(targetCF)
+        local targetTempleCF = (door and door.CFrame) or TEMPLE_ENTRY_CF
+        ToTarget(targetTempleCF)
         return "moving_to_temple"
     end
 end
