@@ -225,7 +225,7 @@ do
         print("[Config] Applying Config 1 for Helper: " .. username)
         getgenv().Config = {
             ["Select Team"]                = "Marine",
-            ["Auto Reset Character"]       = false,
+            ["Auto Reset Character"]       = true,
             ["Auto Choose Gears"]          = true,
             ["Auto Buy Gear"]              = true,
             ["Auto Finish Train Quest"]    = true,
