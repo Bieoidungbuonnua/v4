@@ -2448,7 +2448,6 @@ function CheckMultiTeleDoor()
 	return false
 end
 
-
 -- ══════════════════════════════════════════════════════════════════
 -- ══════════════════════════════════════════════════════════════════
 -- [2/3] TURNV3 (Đồng bộ V3 Countdown & Watchdog Ghost Temple)
@@ -2528,7 +2527,65 @@ do
         CommF_ = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("CommF_", 5)
     end)
 
-    refreshTurnV3Roles()
+    -- ════════════ ROLE DETECTION ════════════
+    -- Helper = có trong HelperList
+    -- Main   = KHÔNG có trong HelperList
+    local LOCAL_HELPERS   = {}
+
+    local HelpWhitelist   = {}
+
+    do
+
+        local seen = {}
+
+        local function addH(raw)
+
+            if type(raw) == "table" then
+
+                for k, v in pairs(raw) do
+
+                    if type(k) == "number" and type(v) == "string" then addH(v)
+
+                    elseif type(k) == "string" and (v == true or type(v) == "table") then addH(k)
+
+                    elseif type(v) == "string" then addH(v) end
+
+                end
+
+            elseif type(raw) == "string" then
+
+                local name = raw:match("^%s*(.-)%s*$")
+
+                if name ~= "" and not seen[name] then
+
+                    seen[name] = true
+
+                    table.insert(LOCAL_HELPERS, name)
+
+                    HelpWhitelist[name] = true
+
+                end
+
+            end
+
+        end
+
+        -- Multi-source: HelperList, JoinV4Config, Config, Settings
+
+        addH(getgenv().HelperList)
+
+        if getgenv().JoinV4Config and getgenv().JoinV4Config["Helper"] then addH(getgenv().JoinV4Config["Helper"]) end
+
+        if getgenv().Config and getgenv().Config["Name Helper TurnV3"] then addH(getgenv().Config["Name Helper TurnV3"]) end
+
+        if getgenv().Settings and getgenv().Settings["Name Helper TurnV3"] then addH(getgenv().Settings["Name Helper TurnV3"]) end
+
+        if getgenv().Settings and getgenv().Settings["Select Players Multi"] then addH(getgenv().Settings["Select Players Multi"]) end
+
+    end
+
+    local isUper = not HelpWhitelist[USERNAME]   -- MAIN: không trong whitelist
+    local isAlly =     HelpWhitelist[USERNAME]   -- HELPER: có trong whitelist
 
     print(string.format("[TurnV3] Role check: USERNAME='%s' | isMain=%s | isHelper=%s | HelperList=%s",
         USERNAME, tostring(isUper), tostring(isAlly),
@@ -2732,57 +2789,56 @@ do
             and st.nearDoor
             and not st.timerVisible
 
-        if not isUper then
-            ready = ready and (not st.alive or st.nearDoor)
-        else
-            local v4 = getV4StatusSimple()
-            if v4 and (v4.needsTraining or v4.needsPurchase) then
-                ready = false
-            end
-        end
-
-        local payload = {
-            username     = USERNAME,
-            job_id       = game.JobId,
-            ready        = ready,
-            timestamp    = v3ServerNow(),
-            handled      = handledRoundId ~= "",
-            fired_round  = handledRoundId,
-            near_door    = st.nearDoor,
-            distance     = math.floor(st.distance),
-            alive        = st.alive,
-        }
-
-        readySent = safeWriteJson(path, payload) and ready
-        return readySent
+        readySent = ready
+        safeWriteJson(path, {
+            job_id      = game.JobId,
+            username    = USERNAME,
+            ready       = ready,
+            near_door   = st.nearDoor,
+            updated_at  = v3ServerNow(),
+            fired_round = handledRoundId,
+        })
+        return ready
     end
 
-    -- READ ALL READY FILES (MAIN only)
+    -- READ ALL READY FILES
     local function readAllReadyFiles()
-        local now        = v3ServerNow()
+        local folder = groupFolder()
+        if not folder then return 0, false end
+
         local readyCount = 0
-        local allReady   = true
+        local total      = 0
+        local now        = v3ServerNow()
 
         for _, name in ipairs(LOCAL_HELPERS) do
-            local path = groupFolder() .. "/ready_" .. sanitize(name) .. ".json"
-            local data = safeReadJson(path)
-            local isReady = false
-
-            if data and tostring(data.job_id or "") == tostring(game.JobId) then
-                local age = now - (tonumber(data.timestamp) or 0)
-                if age <= V3_READY_FRESH and data.ready == true then
-                    isReady = true
-                end
-            end
-
-            if isReady then
-                readyCount = readyCount + 1
-            else
-                allReady = false
+            if Players:FindFirstChild(name) then
+                total = total + 1
+                local path = folder .. "/ready_" .. sanitize(name) .. ".json"
+                local data = safeReadJson(path)
+                local valid = data
+                    and tostring(data.job_id or "") == tostring(game.JobId)
+                    and data.ready == true
+                    and tonumber(data.updated_at)
+                    and math.abs(now - tonumber(data.updated_at)) <= V3_READY_FRESH
+                if valid then readyCount = readyCount + 1 end
             end
         end
 
-        return readyCount, allReady and (#LOCAL_HELPERS > 0)
+        return readyCount, total >= 1 and readyCount >= total
+    end
+
+    -- READ V3 COMMAND
+    local function readV3Command()
+        local path = commandPath()
+        if not path then return nil end
+        local data = safeReadJson(path)
+        if not data then return nil end
+        if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
+
+        local now       = v3ServerNow()
+        local expiresAt = tonumber(data.expires_at) or 0
+        if expiresAt <= now then return nil end
+        return data
     end
 
     -- MAIN CREATE ROUND
@@ -2818,9 +2874,8 @@ do
             return nil
         end
 
-        local countdownVal = tonumber(Settings and Settings["V3 Countdown"]) or tonumber(getgenv().Config and getgenv().Config["V3 Countdown"]) or 4
         local now     = v3ServerNow()
-        local fireAt  = now + countdownVal
+        local fireAt  = now + V3_COUNTDOWN
         local roundId = sanitize(USERNAME) .. "_" .. tostring(math.floor(fireAt * 1000))
 
         local members = {}
@@ -2842,48 +2897,24 @@ do
             created_at = now,
             fire_at    = fireAt,
             expires_at = fireAt + 10,
-            countdown  = countdownVal,
+            countdown  = V3_COUNTDOWN,
         }
 
         if safeWriteJson(commandPath(), command) then
-            setStatus(string.format("Main | Tao lenh: fire sau %.1fs", countdownVal))
+            setStatus(string.format("Main | V3 countdown %.0fs...", V3_COUNTDOWN))
             return command
         end
         return nil
-    end
-
-    -- READ V3 COMMAND
-    function readV3Command()
-        local data = safeReadJson(commandPath())
-        if not data then return nil end
-        if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
-
-        local now       = v3ServerNow()
-        local fireAt    = tonumber(data.fire_at) or 0
-        local expiresAt = tonumber(data.expires_at) or (fireAt + 10)
-
-        if now > expiresAt then return nil end
-
-        local isMember = false
-        if tostring(data.main or "") == USERNAME then
-            isMember = true
-        else
-            for _, m in ipairs(data.members or {}) do
-                if tostring(m) == USERNAME then isMember = true; break end
-            end
-        end
-        if not isMember then return nil end
-
-        return data
     end
 
     -- WAIT FOR SHARED FIRE TIME
     local function waitForSharedFireTime(fireAt)
         while true do
             local remaining = fireAt - v3ServerNow()
-            if remaining <= 0.002 then break end
-            if remaining > 0.05 then
-                task.wait(math.min(remaining * 0.4, 0.05))
+            if remaining <= 0 then return end
+            setStatus(string.format("V3 countdown %.2fs", remaining))
+            if remaining > 0.25 then
+                task.wait(math.min(0.10, math.max(0.03, remaining - 0.15)))
             else
                 RunService.Heartbeat:Wait()
             end
@@ -2892,26 +2923,20 @@ do
 
     -- SCHEDULE WORKSPACE ROUND
     local function scheduleWorkspaceRound(command)
-        local roundId = tostring(command.round_id or "")
-        if roundId == "" or roundId == handledRoundId or roundId == scheduledRoundId then
-            return false
+        local roundId = tostring(command and command.round_id or "")
+        local fireAt  = tonumber(command and command.fire_at) or 0
+        if roundId == "" or fireAt <= 0 then return false end
+        if roundId == handledRoundId or roundId == scheduledRoundId then return false end
+
+        local inMembers = false
+        for _, m in ipairs(command.members or {}) do
+            if tostring(m) == USERNAME then inMembers = true; break end
         end
+        if not inMembers then return false end
 
         scheduledRoundId = roundId
-        local fireAt     = tonumber(command.fire_at) or 0
 
         task.spawn(function()
-            local countdown = tonumber(command.countdown) or 4
-            task.spawn(function()
-                while scheduledRoundId == roundId do
-                    local left = fireAt - v3ServerNow()
-                    if left <= 0 then break end
-                    local prefix = isUper and "Main" or "Helper"
-                    setStatus(string.format("%s | Countdown %.1fs", prefix, math.max(0, left)))
-                    task.wait(0.05)
-                end
-            end)
-
             waitForSharedFireTime(fireAt)
 
             local st    = localDoorState()
@@ -2997,8 +3022,6 @@ do
         end)
         if ffaNow or tick() < abilityCooldown then return false end
 
-        refreshTurnV3Roles()
-
         activating = true
         pcall(writeOwnReadyFile, false)
 
@@ -3025,6 +3048,102 @@ do
     task.spawn(function()
         while task.wait(V3_FILE_POLL) do
             pcall(tryActivateAbility)
+        end
+    end)
+
+    -- =========================================================
+    -- HOP RANDOM SERVER VIA __ServerBrowser (sau khi xong trial / training)
+    -- =========================================================
+    local function hopRandomServer()
+        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+            or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+        if not sb then return false end
+
+        local servers = nil
+        for page = 1, 10 do
+            local ok, res = pcall(function()
+                return sb:InvokeServer("getServers", page) or sb:InvokeServer(page)
+            end)
+            if ok and type(res) == "table" and next(res) ~= nil then
+                servers = res
+                break
+            end
+        end
+
+        if not servers then return false end
+
+        local validList = {}
+        for jobId, data in pairs(servers) do
+            local jid = tostring(jobId or (type(data) == "table" and data.JobId) or "")
+            local count = tonumber(type(data) == "table" and (data.Count or data.Players or data.PlayerCount) or 0) or 0
+            if jid ~= "" and jid ~= tostring(game.JobId) and count > 0 and count <= 11 then
+                table.insert(validList, jid)
+            end
+        end
+
+        if #validList > 0 then
+            local target = validList[math.random(1, #validList)]
+            setStatus(string.format("Hop random -> %s...", target:sub(1, 8)))
+            pcall(function()
+                sb:InvokeServer("teleport", target)
+            end)
+            return true
+        end
+        return false
+    end
+
+    -- FFA BORDER WATCHER: trial kết thúc -> invalidate V4 cache
+    local lastFFAState_hop = 1
+    task.spawn(function()
+        while task.wait(0.3) do
+            pcall(function()
+                local ok, trans = pcall(function()
+                    return workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency
+                end)
+                if not ok then return end
+                if trans == 0 then
+                    lastFFAState_hop = 0
+                elseif lastFFAState_hop == 0 then
+                    lastFFAState_hop = 1
+                    -- Trial xong: xóa cache V4 để cập nhật trạng thái training mới ngay lập tức
+                    invalidateV4Cache()
+                    task.spawn(function()
+                        task.wait(8)  -- server cần vài giây để cập nhật trạng thái
+                        invalidateV4Cache()
+                    end)
+                end
+            end)
+        end
+    end)
+
+    -- HOP RANDOM AFTER TRIAL / TRAINING LOOP (chạy mỗi 5s)
+    local lastRandomHopAt = 0
+    task.spawn(function()
+        task.wait(25)  -- đợi game load xong hoàn toàn
+        while task.wait(5) do
+            pcall(function()
+                -- Helper KHONG BAO GIO random hop (tranh xung dot voi HopFM loop)
+                if isAlly then return end
+                -- Neu dang Full Moon: KHONG hop random, o lai lam trial
+                local fmNow = isnight() and isfullmoon()
+                if fmNow then return end
+                -- Sap FM: o lai cho
+                if isPreFMReady() then return end
+                -- Kiem tra trang thai V4
+                local v4 = getV4StatusSimple()
+                if not v4 or v4.key == nil then setStatus("Status loading..."); return end
+                if v4.key == "check_failed" then setStatus("Checking V4..."); return end
+                if v4.needsTraining or v4.needsPurchase then
+                    setStatus("Main | Dang training..."); return
+                end
+                if v4.canTrial then setStatus("Main | Trial ready - stay"); return end
+                if v4.complete then setStatus("Main | V4 complete - wait FM"); return end
+                -- Khi khong co Full Moon va da xong training -> Hop random tim server moi
+                if tick() - lastRandomHopAt >= 10 then
+                    lastRandomHopAt = tick()
+                    hopRandomServer()
+                end
+            end)
         end
     end)
 
@@ -3328,10 +3447,37 @@ function AutoTrialV4()
 	-- Nếu trước đó đang làm trial mà hiện tại đã bị dịch chuyển về Temple of Time (hết trial zone):
 	-- Tức là trial cá nhân đã hoàn tất, chuyển sang trạng thái đứng chờ FFA!
 	if trialInProgress and not VerifyNearbyTrial() and IsInTempleOfTime() then
-		myTrialCompleted = true
-		trialInProgress = false
-		TweenManager.CancelCurrent()
-		return
+
+		-- Nếu là Helper bị chết/fail giữa trial -> KHÔNG set myTrialCompleted
+
+		-- để họ quay về door và thử lại (không đứng chờ FFA)
+
+		if isAlly then
+
+			-- Helper bị fail trial: reset trạng thái để về door retry
+
+			trialInProgress = false
+
+			myTrialCompleted = false
+
+			TweenManager.CancelCurrent()
+
+			return
+
+		else
+
+			-- Main: đã thoát khỏi trial zone => đứng chờ FFA
+
+			myTrialCompleted = true
+
+			trialInProgress = false
+
+			TweenManager.CancelCurrent()
+
+			return
+
+		end
+
 	end
 
 	if
@@ -4221,14 +4367,6 @@ Tabs.RaceV4:AddToggle("MultiTrial", {
     end
 })
 
-Tabs.RaceV4:AddToggle("AutoResetCharacter", {
-    Title = "Auto Reset Character",
-    Default = Settings["Auto Reset Character"] or false,
-    Callback = function(enabled)
-        SaveSettings("Auto Reset Character", enabled)
-    end
-})
-
 ToggleAutoTrial = Tabs.RaceV4:AddToggle("AutoTrial", {
     Title = "Auto Trial",
     Default = Settings["Auto Trial"] or false,
@@ -4331,7 +4469,6 @@ local function ExportConfigTableString()
         { key = "Stack Train With Trial Race", default = true },
         { key = "Multi Trial", default = false },
         { key = "Select Players Multi", default = {} },
-        { key = "Auto Reset Character", default = false },
         { key = "Auto Trial", default = true },
         { key = "Auto Turn On V3 Near Door", default = true },
         { key = "V3 Countdown", default = 3 },
@@ -4859,13 +4996,16 @@ task.spawn(function()
 	end
 end)
 
--- Worker 10: Auto Trial & Auto Reset Character (from kaiv4.lua)
+
+-- Worker 10: Auto Trial & Auto Reset Character
+-- Helper bắt buộc reset khi FFA active (nguyên si logic kaiv4.lua gốc)
+-- Out Temple (ChooseGear/BuyGear) chỉ dành cho Main
 task.spawn(function()
-	-- Cache role mỗi 2s để tránh gọi refreshTurnV3Roles() quá thường xuyên
+	-- Cache role mỗi 2s để tránh rebuild HelpWhitelist quá thường xuyên
 	local cachedIsHelper = isAlly
 	local lastRoleRefresh = 0
 	while task.wait(0.1) do
-		-- Refresh cache role mỗi 2 giây
+		-- Refresh role cache mỗi 2 giây
 		if tick() - lastRoleRefresh > 2 then
 			refreshTurnV3Roles()
 			cachedIsHelper = isAlly
@@ -4873,10 +5013,7 @@ task.spawn(function()
 		end
 
 		-- Nếu Helper đang training -> nhường Worker 8 train xong rồi mới làm trial/reset
-		-- CheckGoTrain() + isCurrentlyTraining đảm bảo chỉ block khi đang THỰC SỰ train
 		if cachedIsHelper and isCurrentlyTraining and Settings["Auto Finish Train Quest"] and CheckGoTrain() then
-			-- Thông báo 1 lần (tránh spam)
-			-- Chờ vòng lặp tiếp theo, nhường cho Worker 8
 			continue
 		end
 
@@ -4888,26 +5025,23 @@ task.spawn(function()
 				print(success, result)
 			end
 		end
-		-- Auto Reset: chỉ reset khi là Helper (từ HelpWhitelist) HOẶC bật Auto Reset Character
-		-- Không reset nếu Helper đang training (tránh đứt quá trình train)
-		if (Settings["Auto Reset Character"] or cachedIsHelper) and not (cachedIsHelper and isCurrentlyTraining and Settings["Auto Finish Train Quest"]) then
-			pcall(function()
-				local temple = GetTempleOfTime()
-				local forcefield = temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield")
-				if forcefield and forcefield.Transparency == 0 and not isInsideOwnTrial() then
-					local char = localPlayer.Character
-					local hum = char and char:FindFirstChild("Humanoid")
-					if hum and hum.Health > 0 then
-						hum.Health = 0
-						pcall(function() char:BreakJoints() end)
-					end
+
+		-- Auto Reset (nguyên si logic kaiv4.lua gốc):
+		-- Helper BẮT BUỘC reset khi FFA active (không cần bật toggle)
+		pcall(function()
+			local temple = GetTempleOfTime()
+			if temple and temple.FFABorder.Forcefield.Transparency ~= 1 then
+				if cachedIsHelper then
+					-- Helper: bắt buộc reset khi FFA (dù không bật toggle)
+					localPlayer.Character.Humanoid.Health = 0
 				end
-			end)
-		end
+			end
+		end)
 	end
 end)
 
 -- FFA Watcher & Post-Trial Out Temple (From piggyv4)
+-- Out Temple (ChooseGear/BuyGear/Reset) chỉ dành cho Main (isUper)
 task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
@@ -4917,48 +5051,43 @@ task.spawn(function()
             end
             local trans = temple.FFABorder.Forcefield.Transparency
             if trans == 0 then
-                -- FFA dang dien ra
+                -- FFA đang diễn ra
                 lastFFAState = 0
                 postTrialResetScheduled = false
             elseif lastFFAState == 0 then
-                -- Chuyen tu 0 sang 1: FFA vua ket thuc! Nguoi chien thang o lai den
+                -- Chuyển từ 0 sang 1: FFA vừa kết thúc!
                 lastFFAState = 1
-                if not postTrialResetScheduled then
+                -- Chỉ Main mới làm Out Temple (nhận gear + reset ra Sea 3)
+                if isUper and not postTrialResetScheduled then
                     postTrialResetScheduled = true
                     blockHopAfterTrial = true
                     postTrialHopDone = true
-
                     task.spawn(function()
                         if uiLibrary and uiLibrary.CreateNoti then
                             uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Trial completed! Claiming gear...", ShowTime = 5 })
                         end
-                        -- 1. Nhan gear va mua gear tai den
+                        -- 1. Nhận gear và mua gear tại đền
                         task.wait(1)
                         pcall(ChooseGearV4)
                         task.wait(1)
                         pcall(BuyGearV4)
-
-                        -- 2. Cho 5s de server luu roi reset de Out Temple ra Sea 3
+                        -- 2. Chờ 5s rồi reset để Out Temple ra Sea 3
                         if uiLibrary and uiLibrary.CreateNoti then
                             uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Out Temple: Resetting character in 5s...", ShowTime = 5 })
                         end
                         task.wait(5)
-
                         pcall(function()
                             local char = localPlayer.Character
                             if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
                                 char.Humanoid.Health = 0
                             end
                         end)
-
                         if uiLibrary and uiLibrary.CreateNoti then
                             uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Out Temple complete! Respawning in Sea 3...", ShowTime = 5 })
                         end
-
                         task.wait(10)
                         postTrialResetScheduled = false
                         blockHopAfterTrial = false
-
                         if Settings["Hop After Trial"] ~= false and Settings["Hop Server [Trial Or Pull Lever]"] then
                             task.wait(2)
                             HopServer()
@@ -4969,6 +5098,8 @@ task.spawn(function()
         end)
     end
 end)
+
+
 
 uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Script loaded successfully", ShowTime = 5 })
  
