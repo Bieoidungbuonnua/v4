@@ -906,10 +906,13 @@ end
 
 function BorrowTempleOfTime()
     if not Workspace:FindFirstChild("Map") then return end
-    if not Workspace.Map:FindFirstChild("Temple of Time") then
-        if ReplicatedStorage:FindFirstChild("MapStash") and ReplicatedStorage.MapStash:FindFirstChild("Temple of Time") then
-            ReplicatedStorage.MapStash["Temple of Time"].Parent = Workspace.Map
-        end
+    local ms = ReplicatedStorage:FindFirstChild("MapStash")
+    if not ms then return end
+    if not Workspace.Map:FindFirstChild("Temple of Time") and ms:FindFirstChild("Temple of Time") then
+        ms["Temple of Time"].Parent = Workspace.Map
+    end
+    if not Workspace.Map:FindFirstChild("CyborgTrial") and ms:FindFirstChild("CyborgTrial") then
+        ms["CyborgTrial"].Parent = Workspace.Map
     end
 end
 
@@ -3028,6 +3031,85 @@ local function scheduleWorkspaceRound(command)
     return true
 end
 
+local function getRaceTrialPlace(race)
+    local locs = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
+    if not locs then return nil end
+    local map = {
+        Human = "Trial of Strength",
+        Mink = "Trial of Speed",
+        Fishman = "Trial of Water",
+        Skypiea = "Trial of the King",
+        Ghoul = "Trial of Carnage",
+        Cyborg = "Trial of the Machine",
+    }
+    local name = map[race]
+    return name and locs:FindFirstChild(name)
+end
+
+local function isInsideOwnTrial()
+    local race = ""
+    pcall(function() race = localPlayer.Data.Race.Value end)
+    local trialPart = getRaceTrialPlace(race)
+    if trialPart then
+        local ok, dist = pcall(function()
+            local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+            return hrp and (hrp.Position - trialPart.Position).Magnitude or math.huge
+        end)
+        if ok and dist < 1500 then return true end
+    end
+    if race == "Cyborg" then
+        local cyborgFloor = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CyborgTrial") and Workspace.Map.CyborgTrial:FindFirstChild("Floor")
+        if cyborgFloor then
+            local ok, dist = pcall(function()
+                local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+                return hrp and (hrp.Position - cyborgFloor.Position).Magnitude or math.huge
+            end)
+            if ok and dist < 1500 then return true end
+        end
+    end
+    local timerVisible = false
+    pcall(function()
+        timerVisible = (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("Timer") and localPlayer.PlayerGui.Main.Timer.Visible == true)
+            or (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("TopHUDList") and localPlayer.PlayerGui.Main.TopHUDList:FindFirstChild("RaidTimer") and localPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible == true)
+    end)
+    return timerVisible
+end
+
+local function forceMatchedAccountToTemple()
+    if not (isnight() and isfullmoon()) then return false end
+    if isInsideOwnTrial() then return true end
+
+    local char = localPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+
+    BorrowTempleOfTime()
+    local door = getDoor()
+    local templeDist = (hrp.Position - TEMPLE_ENTRY_POS).Magnitude
+
+    if not door or templeDist > 3000 then
+        setStatus("Helper | Vao Temple of Time...")
+        pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
+        end)
+        if (hrp.Position - TEMPLE_ENTRY_POS).Magnitude > 3000 then
+            TeleportTempleOfTime()
+        end
+        return false
+    end
+
+    local dist = (door.Position - hrp.Position).Magnitude
+    if dist > V3_DOOR_DIST then
+        setStatus(string.format("Helper | Di toi cua (%.0f)...", dist))
+        ToTarget(door.CFrame)
+        return false
+    else
+        setStatus("Helper | Cho Main countdown...")
+        ToTarget(door.CFrame)
+        return true
+    end
+end
+
 -- TRY ACTIVATE ABILITY
 local activating = false
 
@@ -3057,8 +3139,13 @@ local function tryActivateAbility()
     else
         command = readV3Command()
         if not command then
-            local st = localDoorState()
-            setStatus(st.nearDoor and "Helper | Cho Main countdown..." or "Helper | Di toi cua...")
+            local insideTrial = isInsideOwnTrial()
+            if not insideTrial and not ffaNow then
+                forceMatchedAccountToTemple()
+            else
+                local st = localDoorState()
+                setStatus(st.nearDoor and "Helper | Cho Main countdown..." or "Helper | Di toi cua...")
+            end
         else
             setStatus(string.format("Helper | Nhan lenh %.1fs",
                 math.max(0, (tonumber(command.fire_at) or 0) - v3ServerNow())))
@@ -3315,7 +3402,7 @@ local function isshouldturnonability()
 end
 
 function AutoTrialV4()
-	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
+	if not isHelperAccount() and Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
 		return
 	end
 	local lookup6 = game.Lighting.ClockTime
@@ -3352,7 +3439,8 @@ function AutoTrialV4()
 
 	lookup6 = GetTempleOfTime()
 	local forcefield = lookup6 and lookup6:FindFirstChild("FFABorder") and lookup6.FFABorder:FindFirstChild("Forcefield")
-	local isFFAActive = forcefield and forcefield.Transparency ~= 1
+	-- Chỉ coi FFA active khi forcefield hiện lên (Transparency == 0) VÀ người chơi không còn trong phòng trial riêng
+	local isFFAActive = forcefield and forcefield.Transparency == 0 and not isInsideOwnTrial()
 
 	-- Nếu FFA đang diễn ra: Dừng tween ngay, nhường quyền cho FFA
 	if isFFAActive then
@@ -3551,17 +3639,20 @@ function AutoTrialV4()
 				repeat
 					task.wait()
 					pcall(function()
-						local cyborgMap = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CyborgTrial")
-						if cyborgMap and cyborgMap:FindFirstChild("Floor") then
-							ToTarget(cyborgMap.Floor.CFrame * CFrame.new(0, 500, 0))
-						elseif Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations") and Workspace._WorldOrigin.Locations:FindFirstChild("Trial of the Machine") then
-							ToTarget(Workspace._WorldOrigin.Locations["Trial of the Machine"].CFrame * CFrame.new(0, 500, 0))
-						elseif localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
-							ToTarget(localPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0, 500, 0))
+						local cyborgFloor = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CyborgTrial") and Workspace.Map.CyborgTrial:FindFirstChild("Floor")
+						if cyborgFloor then
+							ToTarget(cyborgFloor.CFrame * CFrame.new(0, 500, 0))
+						else
+							local part = getRaceTrialPlace("Cyborg")
+							if part then
+								ToTarget(part.CFrame * CFrame.new(0, 500, 0))
+							elseif localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+								ToTarget(localPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0, 500, 0))
+							end
 						end
 					end)
-				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-					or not VerifyNearbyTrial()
+				until not isInsideOwnTrial()
+					or (Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Temple of Time") and Workspace.Map["Temple of Time"]:FindFirstChild("FFABorder") and Workspace.Map["Temple of Time"].FFABorder:FindFirstChild("Forcefield") and Workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0)
 				myTrialCompleted = true
 				trialInProgress = false
 				TweenManager.CancelCurrent()
@@ -3572,8 +3663,8 @@ function AutoTrialV4()
 				if not lookup6 then
 					return
 				end
-				local part2 = lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door.RightDoor.Union
-				if localPlayer:DistanceFromCharacter(part2.Position) > 8 then
+				local part2 = getDoor() or (lookup6:FindFirstChild(localPlayer.Data.Race.Value .. "Corridor") and lookup6[localPlayer.Data.Race.Value .. "Corridor"]:FindFirstChild("Door") and lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door:FindFirstChild("Door") and lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door:FindFirstChild("RightDoor") and lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door.RightDoor:FindFirstChild("Union"))
+				if part2 and localPlayer:DistanceFromCharacter(part2.Position) > 8 then
 					ToTarget(part2.CFrame)
 				end
 				if
@@ -4939,7 +5030,7 @@ task.spawn(function()
 			pcall(function()
 				local temple = GetTempleOfTime()
 				local forcefield = temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield")
-				if forcefield and forcefield.Transparency ~= 1 then
+				if forcefield and forcefield.Transparency == 0 and not isInsideOwnTrial() then
 					local char = localPlayer.Character
 					local hum = char and char:FindFirstChild("Humanoid")
 					if hum and hum.Health > 0 then
