@@ -906,13 +906,10 @@ end
 
 function BorrowTempleOfTime()
     if not Workspace:FindFirstChild("Map") then return end
-    local ms = ReplicatedStorage:FindFirstChild("MapStash")
-    if not ms then return end
-    if not Workspace.Map:FindFirstChild("Temple of Time") and ms:FindFirstChild("Temple of Time") then
-        ms["Temple of Time"].Parent = Workspace.Map
-    end
-    if not Workspace.Map:FindFirstChild("CyborgTrial") and ms:FindFirstChild("CyborgTrial") then
-        ms["CyborgTrial"].Parent = Workspace.Map
+    if not Workspace.Map:FindFirstChild("Temple of Time") then
+        if ReplicatedStorage:FindFirstChild("MapStash") and ReplicatedStorage.MapStash:FindFirstChild("Temple of Time") then
+            ReplicatedStorage.MapStash["Temple of Time"].Parent = Workspace.Map
+        end
     end
 end
 
@@ -2484,754 +2481,647 @@ end
 
 
 -- ══════════════════════════════════════════════════════════════════
--- TURNV3 (Đồng bộ V3 Countdown & Watchdog Ghost Temple)
+-- ══════════════════════════════════════════════════════════════════
+-- [2/3] TURNV3 (Đồng bộ V3 Countdown & Watchdog Ghost Temple)
 -- Tích hợp nguyên bản từ Kaiv4-BNN/kaiv4mixbnncrack-nam.lua
 -- ══════════════════════════════════════════════════════════════════
-local V3_FILE_POLL      = 0.05
-local V3_READY_FRESH    = 5.0
-local V3_FIRE_COUNT     = 3
-local V3_FIRE_INTERVAL  = 0.05
-local V3_DOOR_DIST      = 65
-local FILE_ROOT         = "SkiderV4/TurnV3"
-
-local USERNAME = localPlayer.Name
-
-local CommF_ = nil
-pcall(function()
-    CommF_ = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("CommF_", 5)
-end)
-
--- ════════════ ROLE DETECTION ════════════
--- Helper = có trong Name Helper TurnV3
--- Main   = KHÔNG có trong Name Helper TurnV3
-local LOCAL_HELPERS   = {}
-local HelpWhitelist   = {}
 local isUper = true
 local isAlly = false
+local HelpWhitelist = {}
+local LOCAL_HELPERS = {}
 
 local function refreshTurnV3Roles()
     table.clear(LOCAL_HELPERS)
     table.clear(HelpWhitelist)
-    local raw = Settings["Name Helper TurnV3"]
-        or (type(getgenv().Config) == "table" and getgenv().Config["Name Helper TurnV3"])
-        or (type(getgenv().HelperList) == "table" and getgenv().HelperList)
-        or Settings["Select Players Multi"]
-        or {}
-
     local seen = {}
-    local function parseItem(item)
-        if type(item) == "table" then
-            for k, v in pairs(item) do
+    local function addH(raw)
+        if type(raw) == "table" then
+            for k, v in pairs(raw) do
                 if type(k) == "number" and type(v) == "string" then
-                    parseItem(v)
-                elseif type(k) == "string" and v == true then
-                    parseItem(k)
-                elseif type(v) == "table" then
-                    parseItem(v)
+                    addH(v)
+                elseif type(k) == "string" and (v == true or type(v) == "table") then
+                    addH(k)
+                elseif type(v) == "table" or type(v) == "string" then
+                    addH(v)
                 end
             end
-        elseif type(item) == "string" then
-            local clean = item:match("^%s*(.-)%s*$")
-            if clean ~= "" and not seen[clean] then
-                seen[clean] = true
-                table.insert(LOCAL_HELPERS, clean)
-                HelpWhitelist[clean] = true
+        elseif type(raw) == "string" then
+            local name = raw:match("^%s*(.-)%s*$")
+            if name ~= "" and not seen[name] then
+                seen[name] = true
+                table.insert(LOCAL_HELPERS, name)
+                HelpWhitelist[name] = true
             end
         end
     end
-    parseItem(raw)
 
-    isUper = not HelpWhitelist[USERNAME]
-    isAlly = HelpWhitelist[USERNAME] == true
+    addH(getgenv().HelperList)
+    if getgenv().JoinV4Config and getgenv().JoinV4Config["Helper"] then addH(getgenv().JoinV4Config["Helper"]) end
+    if getgenv().Config and getgenv().Config["Name Helper TurnV3"] then addH(getgenv().Config["Name Helper TurnV3"]) end
+    if Settings and Settings["Name Helper TurnV3"] then addH(Settings["Name Helper TurnV3"]) end
+    if Settings and Settings["Select Players Multi"] then addH(Settings["Select Players Multi"]) end
+
+    local myName = localPlayer.Name
+    local myDisplay = localPlayer.DisplayName
+    isUper = not (HelpWhitelist[myName] or HelpWhitelist[myDisplay])
+    isAlly = (HelpWhitelist[myName] == true or HelpWhitelist[myDisplay] == true)
 end
-
-refreshTurnV3Roles()
 
 local function isHelperAccount()
-    local isHelper = false
+    refreshTurnV3Roles()
+    local myName = localPlayer.Name
+    local myDisplay = localPlayer.DisplayName
+    return isAlly == true or HelpWhitelist[myName] == true or HelpWhitelist[myDisplay] == true or (Settings and Settings["Auto Reset Character"] == true)
+end
+
+do
+    local V3_COUNTDOWN      = 4
+    local V3_FILE_POLL      = 0.05
+    local V3_READY_FRESH    = 5.0
+    local V3_FIRE_COUNT     = 3
+    local V3_FIRE_INTERVAL  = 0.05
+    local V3_DOOR_DIST      = 65
+    local FILE_ROOT         = "SkiderV4/TurnV3"
+
+    -- SERVICES
+    local Players           = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local RunService        = game:GetService("RunService")
+    local HttpService       = game:GetService("HttpService")
+    local Lighting          = game:GetService("Lighting")
+    local LocalPlayer       = Players.LocalPlayer
+    local USERNAME          = LocalPlayer.Name
+
+    local CommF_ = nil
     pcall(function()
-        refreshTurnV3Roles()
-        local myName = (localPlayer and localPlayer.Name) or USERNAME
-        local myDisplay = (localPlayer and localPlayer.DisplayName) or USERNAME
-        isHelper = (Settings["Auto Reset Character"] == true)
-            or (isAlly == true)
-            or (HelpWhitelist[myName] == true)
-            or (HelpWhitelist[myDisplay] == true)
-            or (isUper == false)
+        CommF_ = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("CommF_", 5)
     end)
-    return isHelper
-end
-
--- SERVER TIME
-local function v3ServerNow()
-    local ok, v = pcall(function() return Workspace:GetServerTimeNow() end)
-    return (ok and tonumber(v)) and tonumber(v) or tick()
-end
-
--- FILE SYNC API
-local FILE_SYNC_AVAILABLE = type(writefile) == "function"
-    and type(readfile)   == "function"
-    and type(isfile)     == "function"
-    and type(makefolder) == "function"
-    and type(isfolder)   == "function"
-
-local function safeMakeFolder(path)
-    if not FILE_SYNC_AVAILABLE then return false end
-    if isfolder(path) then return true end
-    -- Đảm bảo tạo lần lượt từng cấp thư mục lồng nhau trong SkiderV4
-    local parts = path:split("/")
-    local current = ""
-    for _, part in ipairs(parts) do
-        if part ~= "" then
-            current = current == "" and part or (current .. "/" .. part)
-            if not isfolder(current) then
-                pcall(makefolder, current)
-            end
-        end
-    end
-    return isfolder(path)
-end
-
-local function safeReadJson(path)
-    if not FILE_SYNC_AVAILABLE or not isfile(path) then return nil end
-    local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
-    if ok and type(data) == "table" then return data end
-    return nil
-end
-
-local function safeWriteJson(path, data)
-    if not FILE_SYNC_AVAILABLE then return false end
-    local ok = pcall(function() writefile(path, HttpService:JSONEncode(data)) end)
-    return ok
-end
-
-local function sanitize(s)
-    s = tostring(s or "x"):gsub("[^%w%-_%.]", "_")
-    return s ~= "" and s or "x"
-end
-
--- FILE PATHS (Toàn bộ gom vào trong thư mục SkiderV4)
-local function groupFolder()
-    if not safeMakeFolder(FILE_ROOT) then return nil end
-    local folder = FILE_ROOT .. "/group"
-    if not safeMakeFolder(folder) then return nil end
-    return folder
-end
-
-local function ownReadyPath()
-    if not safeMakeFolder(FILE_ROOT) then return nil end
-    return FILE_ROOT .. "/" .. sanitize(USERNAME) .. "-skiderhubv4turnv3.json"
-end
-
-local function commandPath()
-    if not safeMakeFolder(FILE_ROOT) then return nil end
-    return FILE_ROOT .. "/command-skiderhubv4turnv3.json"
-end
-
--- STATE
-local readySent        = false
-local lastReadyWrite   = 0
-local handledRoundId   = ""
-local scheduledRoundId = ""
-local abilityCooldown  = 0
-local currentStatus    = "Dang khoi dong..."
-
-local function setStatus(s) currentStatus = tostring(s or "") end
-
--- V4 STATUS CHECK
-local v4Cache       = { at = 0, data = nil }
-local V4_CACHE_TIME = 10.0
-
-local function invalidateV4Cache()
-    v4Cache.at   = 0
-    v4Cache.data = nil
-end
-
-local function getV4StatusSimple()
-    if v4Cache.data and tick() - v4Cache.at < V4_CACHE_TIME then
-        return v4Cache.data
-    end
-    local s = { canTrial = true, needsTraining = false, needsPurchase = false, complete = false }
-    if not CommF_ then
-        v4Cache.at = tick(); v4Cache.data = s; return s
-    end
-    local ok, err = pcall(function()
-        local char        = localPlayer.Character
-        local transformed = char and char:FindFirstChild("RaceTransformed")
-        if transformed then
-            local ok2, code = pcall(function() return CommF_:InvokeServer("UpgradeRace", "Check") end)
-            if ok2 and code ~= nil then
-                code = tonumber(code)
-                if code == 0 then
-                    s.canTrial = true
-                elseif code == 5 then
-                    s.complete = true; s.canTrial = true
-                elseif code == 1 or code == 3 or code == 6 or code == 8 then
-                    s.canTrial = false; s.needsTraining = true
-                elseif code == 2 or code == 4 or code == 7 then
-                    s.canTrial = false; s.needsPurchase = true
-                end
-            end
-        else
-            local ok2, progress = pcall(function()
-                return CommF_:InvokeServer("RaceV4Progress", "Check")
-            end)
-            if ok2 and tonumber(progress) then
-                progress = tonumber(progress)
-                if progress >= 4 then
-                    s.canTrial = true
-                else
-                    s.canTrial      = false
-                    s.needsTraining = true
-                end
-            end
-        end
-    end)
-    if not ok then
-        s = { canTrial = true, needsTraining = false, needsPurchase = false, complete = false }
-    end
-    v4Cache.at = tick(); v4Cache.data = s; return s
-end
-
-local function isnight()
-    local c = Lighting.ClockTime
-    return c >= 16 or c < 5
-end
-
-local function isfullmoon()
-    return Lighting:GetAttribute("MoonPhase") == 5
-end
-
--- DOOR CHECK
-local function getDoor()
-    local data = localPlayer:FindFirstChild("Data")
-    local race = data and data:FindFirstChild("Race")
-    if not race then return nil end
-
-    local temple = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Temple of Time")
-    if not temple then
-        local ms = ReplicatedStorage:FindFirstChild("MapStash")
-        temple = ms and ms:FindFirstChild("Temple of Time")
-    end
-    if not temple then return nil end
-
-    local raceVal  = race.Value
-    local corridor = temple:FindFirstChild(raceVal .. "Corridor")
-    if not corridor then
-        for _, c in ipairs(temple:GetChildren()) do
-            if c.Name:lower():find(raceVal:lower(), 1, true) then corridor = c; break end
-        end
-    end
-    if not corridor then return nil end
-
-    local door = corridor:FindFirstChild("Door")
-    if not door then return nil end
-    pcall(function()
-        local union = door.Door.RightDoor.Union
-        if union and union:IsA("BasePart") then
-            door = union
-        end
-    end)
-    if door:IsA("BasePart") then return door end
-    local entrance = door:FindFirstChild("Entrance") or door
-    if entrance:IsA("BasePart") then return entrance end
-    return entrance:FindFirstChildWhichIsA("BasePart", true)
-end
-
-local function localDoorState()
-    local char     = localPlayer.Character
-    local hrp      = char and char:FindFirstChild("HumanoidRootPart")
-    local hum      = char and char:FindFirstChildOfClass("Humanoid")
-    local door     = getDoor()
-    local distance = math.huge
-    if door and hrp then distance = (door.Position - hrp.Position).Magnitude end
-    local timerVisible = false
-    pcall(function()
-        timerVisible = (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("Timer") and localPlayer.PlayerGui.Main.Timer.Visible == true)
-            or (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("TopHUDList") and localPlayer.PlayerGui.Main.TopHUDList:FindFirstChild("RaidTimer") and localPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible == true)
-    end)
-    local alive = hum ~= nil and hum.Health > 0
-    return {
-        nearDoor     = alive and door ~= nil and distance <= V3_DOOR_DIST,
-        distance     = distance,
-        timerVisible = timerVisible,
-        alive        = alive,
-    }
-end
-
--- WRITE OWN READY FILE
-local function writeOwnReadyFile(force)
-    if not FILE_SYNC_AVAILABLE then return false end
-    if not force and tick() - lastReadyWrite < V3_FILE_POLL then return readySent end
-    lastReadyWrite = tick()
-
-    local path = ownReadyPath()
-    if not path then return false end
-
-    if handledRoundId == "" then
-        local prev = safeReadJson(path)
-        if prev and tostring(prev.fired_round or "") ~= "" then
-            handledRoundId = tostring(prev.fired_round)
-        end
-    end
-
-    local st    = localDoorState()
-    local ready = tick() >= abilityCooldown
-        and st.alive
-        and st.nearDoor
-        and not st.timerVisible
-
-    readySent = ready
-    local payload = {
-        job_id      = game.JobId,
-        username    = USERNAME,
-        role        = isAlly and "helper" or "main",
-        ready       = ready,
-        near_door   = st.nearDoor,
-        updated_at  = v3ServerNow(),
-        fired_round = handledRoundId,
-    }
-    safeWriteJson(path, payload)
-    pcall(function()
-        local f = groupFolder()
-        if f then safeWriteJson(f .. "/ready_" .. sanitize(USERNAME) .. ".json", payload) end
-    end)
-    return ready
-end
-
--- READ ALL READY FILES
-local function readAllReadyFiles()
-    local readyCount = 0
-    local total      = 0
-    local now        = v3ServerNow()
-    local folder     = groupFolder()
-
-    for _, name in ipairs(LOCAL_HELPERS) do
-        if Players:FindFirstChild(name) then
-            total = total + 1
-            local path1 = FILE_ROOT .. "/" .. sanitize(name) .. "-skiderhubv4turnv3.json"
-            local data = safeReadJson(path1)
-            if not data and folder then
-                data = safeReadJson(folder .. "/ready_" .. sanitize(name) .. ".json")
-            end
-            if not data then
-                data = safeReadJson(sanitize(name) .. "-skiderhubv4turnv3.json")
-            end
-            local valid = data
-                and tostring(data.job_id or "") == tostring(game.JobId)
-                and data.ready == true
-                and tonumber(data.updated_at)
-                and math.abs(now - tonumber(data.updated_at)) <= V3_READY_FRESH
-            if valid then readyCount = readyCount + 1 end
-        end
-    end
-
-    return readyCount, total >= 1 and readyCount >= total
-end
-
--- READ V3 COMMAND
-local function readV3Command()
-    local path = commandPath()
-    local data = safeReadJson(path)
-    if not data then
-        local f = groupFolder()
-        if f then data = safeReadJson(f .. "/command.json") end
-    end
-    if not data then
-        data = safeReadJson("command-skiderhubv4turnv3.json")
-    end
-    if not data then return nil end
-    if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
-
-    local now       = v3ServerNow()
-    local expiresAt = tonumber(data.expires_at) or 0
-    if expiresAt <= now then return nil end
-    return data
-end
-
--- MAIN CREATE ROUND
-local function mainCreateRound()
-    if not isUper then return nil end
-
-    local v4 = getV4StatusSimple()
-    if v4 and (v4.needsTraining or v4.needsPurchase) then
-        setStatus("Main | Dang training - bo qua countdown")
-        return nil
-    end
-
-    local ffaNow = false
-    pcall(function()
-        ffaNow = Workspace.Map:FindFirstChild("Temple of Time") and Workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-    end)
-    if ffaNow then return nil end
-
-    if scheduledRoundId ~= "" then
-        return readV3Command()
-    end
-
-    local current = readV3Command()
-    if current then return current end
-
-    local readyCount, allReady = readAllReadyFiles()
-    if not allReady then
-        local helperTotal = 0
-        for _, n in ipairs(LOCAL_HELPERS) do
-            if Players:FindFirstChild(n) then helperTotal = helperTotal + 1 end
-        end
-        setStatus(string.format("Main | Cho helper ready %d/%d...", readyCount, helperTotal))
-        return nil
-    end
-
-    local countdownVal = tonumber(Settings["V3 Countdown"]) or tonumber(getgenv().Config and getgenv().Config["V3 Countdown"]) or 3
-    local now     = v3ServerNow()
-    local fireAt  = now + countdownVal
-    local roundId = sanitize(USERNAME) .. "_" .. tostring(math.floor(fireAt * 1000))
-
-    local members = {}
-    local seen    = {}
-    local function addMember(name)
-        name = tostring(name or "")
-        if name ~= "" and not seen[name] then seen[name] = true; table.insert(members, name) end
-    end
-    addMember(USERNAME)
-    for _, name in ipairs(LOCAL_HELPERS) do
-        addMember(name)
-    end
-
-    local command = {
-        job_id     = game.JobId,
-        round_id   = roundId,
-        main       = USERNAME,
-        members    = members,
-        created_at = now,
-        fire_at    = fireAt,
-        expires_at = fireAt + 10,
-        countdown  = countdownVal,
-    }
-
-    if safeWriteJson(commandPath(), command) then
-        pcall(function()
-            local f = groupFolder()
-            if f then safeWriteJson(f .. "/command.json", command) end
-        end)
-        setStatus(string.format("Main | V3 countdown %.0fs...", countdownVal))
-        return command
-    end
-    return nil
-end
-
--- WAIT FOR SHARED FIRE TIME
-local function waitForSharedFireTime(fireAt)
-    while true do
-        local remaining = fireAt - v3ServerNow()
-        if remaining <= 0 then return end
-        setStatus(string.format("V3 countdown %.2fs", remaining))
-        if remaining > 0.25 then
-            task.wait(math.min(0.10, math.max(0.03, remaining - 0.15)))
-        else
-            RunService.Heartbeat:Wait()
-        end
-    end
-end
-
--- SCHEDULE WORKSPACE ROUND
-local function scheduleWorkspaceRound(command)
-    local roundId = tostring(command and command.round_id or "")
-    local fireAt  = tonumber(command and command.fire_at) or 0
-    if roundId == "" or fireAt <= 0 then return false end
-    if roundId == handledRoundId or roundId == scheduledRoundId then return false end
-
-    local inMembers = false
-    for _, m in ipairs(command.members or {}) do
-        if tostring(m) == USERNAME then inMembers = true; break end
-    end
-    if not inMembers then return false end
-
-    scheduledRoundId = roundId
-
-    task.spawn(function()
-        waitForSharedFireTime(fireAt)
-
-        local st    = localDoorState()
-        local jobOk = tostring(command.job_id or "") == tostring(game.JobId)
-
-        if jobOk and st.nearDoor and not st.timerVisible then
-            setStatus(isUper and "Main | Kich hoat V3!" or "Helper | Kich hoat V3!")
-
-            pcall(function()
-                local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.AssemblyLinearVelocity  = Vector3.zero
-                    hrp.AssemblyAngularVelocity = Vector3.zero
-                end
-            end)
-
-            for i = 1, V3_FIRE_COUNT do
-                pcall(function()
-                    ReplicatedStorage.Remotes.CommE:FireServer("ActivateAbility")
-                end)
-                pcall(function()
-                    VirtualInputManager:SendKeyEvent(true, "T", false, game)
-                    task.wait()
-                    VirtualInputManager:SendKeyEvent(false, "T", false, game)
-                end)
-                if i < V3_FIRE_COUNT then task.wait(V3_FIRE_INTERVAL) end
-            end
-
-            handledRoundId  = roundId
-            abilityCooldown = tick() + 30
-            readySent       = false
-            pcall(writeOwnReadyFile, true)
-
-            task.spawn(function()
-                local myRound = roundId
-                for _ = 1, 15 do
-                    task.wait(1)
-                    if handledRoundId ~= myRound then return end
-                    local ffaOk = false
-                    pcall(function()
-                        ffaOk = Workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-                    end)
-                    if ffaOk then return end
-                    local timerOk = false
-                    pcall(function()
-                        timerOk = (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("Timer") and localPlayer.PlayerGui.Main.Timer.Visible == true)
-                            or (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("TopHUDList") and localPlayer.PlayerGui.Main.TopHUDList:FindFirstChild("RaidTimer") and localPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible == true)
-                    end)
-                    if timerOk then return end
-                end
-                if handledRoundId ~= roundId then return end
-                local st2       = localDoorState()
-                local ffaActive = false
-                local insideTrial = false
-                pcall(function()
-                    ffaActive = Workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-                end)
-                pcall(function()
-                    insideTrial = (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("Timer") and localPlayer.PlayerGui.Main.Timer.Visible == true)
-                        or (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("TopHUDList") and localPlayer.PlayerGui.Main.TopHUDList:FindFirstChild("RaidTimer") and localPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible == true)
-                end)
-                if st2.nearDoor and not ffaActive and not insideTrial then
-                    setStatus("Ghost Temple! Resetting...")
-                    handledRoundId  = ""
-                    abilityCooldown = tick() + 8
-                    pcall(function() localPlayer.Character.Humanoid.Health = 0 end)
-                end
-            end)
-        else
-            handledRoundId  = roundId
-            abilityCooldown = tick() + 5
-            readySent       = false
-            pcall(writeOwnReadyFile, true)
-            setStatus(string.format("[MISS] Cach cua %.0f studs - cho 5s", st.distance))
-        end
-
-        scheduledRoundId = ""
-    end)
-    return true
-end
-
-local function getRaceTrialPlace(race)
-    local locs = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
-    if not locs then return nil end
-    local map = {
-        Human = "Trial of Strength",
-        Mink = "Trial of Speed",
-        Fishman = "Trial of Water",
-        Skypiea = "Trial of the King",
-        Ghoul = "Trial of Carnage",
-        Cyborg = "Trial of the Machine",
-    }
-    local name = map[race]
-    return name and locs:FindFirstChild(name)
-end
-
-local function isInsideOwnTrial()
-    local race = ""
-    pcall(function() race = localPlayer.Data.Race.Value end)
-    local trialPart = getRaceTrialPlace(race)
-    if trialPart then
-        local ok, dist = pcall(function()
-            local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-            return hrp and (hrp.Position - trialPart.Position).Magnitude or math.huge
-        end)
-        if ok and dist < 1500 then return true end
-    end
-    if race == "Cyborg" then
-        local cyborgFloor = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CyborgTrial") and Workspace.Map.CyborgTrial:FindFirstChild("Floor")
-        if cyborgFloor then
-            local ok, dist = pcall(function()
-                local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-                return hrp and (hrp.Position - cyborgFloor.Position).Magnitude or math.huge
-            end)
-            if ok and dist < 1500 then return true end
-        end
-    end
-    local timerVisible = false
-    pcall(function()
-        timerVisible = (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("Timer") and localPlayer.PlayerGui.Main.Timer.Visible == true)
-            or (localPlayer.PlayerGui:FindFirstChild("Main") and localPlayer.PlayerGui.Main:FindFirstChild("TopHUDList") and localPlayer.PlayerGui.Main.TopHUDList:FindFirstChild("RaidTimer") and localPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible == true)
-    end)
-    return timerVisible
-end
-
-local function forceMatchedAccountToTemple()
-    if not (isnight() and isfullmoon()) then return false end
-    if isInsideOwnTrial() then return true end
-
-    local char = localPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-
-    BorrowTempleOfTime()
-    local door = getDoor()
-    local templeDist = (hrp.Position - TEMPLE_ENTRY_POS).Magnitude
-
-    if not door or templeDist > 3000 then
-        setStatus("Helper | Vao Temple of Time...")
-        pcall(function()
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
-        end)
-        if (hrp.Position - TEMPLE_ENTRY_POS).Magnitude > 3000 then
-            TeleportTempleOfTime()
-        end
-        return false
-    end
-
-    local dist = (door.Position - hrp.Position).Magnitude
-    if dist > V3_DOOR_DIST then
-        setStatus(string.format("Helper | Di toi cua (%.0f)...", dist))
-        ToTarget(door.CFrame)
-        return false
-    else
-        setStatus("Helper | Cho Main countdown...")
-        ToTarget(door.CFrame)
-        return true
-    end
-end
-
--- TRY ACTIVATE ABILITY
-local activating = false
-
-local function tryActivateAbility()
-    if not (Settings["Multi Trial"] == true and Settings["Auto Turn On V3 Near Door"] == true) then
-        return false
-    end
-    if activating then return false end
-    if not (isnight() and isfullmoon()) then
-        return false
-    end
-
-    local ffaNow = false
-    pcall(function()
-        ffaNow = Workspace.Map:FindFirstChild("Temple of Time") and Workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-    end)
-    if ffaNow or tick() < abilityCooldown then return false end
 
     refreshTurnV3Roles()
 
-    activating = true
-    pcall(writeOwnReadyFile, false)
+    print(string.format("[TurnV3] Role check: USERNAME='%s' | isMain=%s | isHelper=%s | HelperList=%s",
+        USERNAME, tostring(isUper), tostring(isAlly),
+        table.concat(LOCAL_HELPERS, ", ")))
 
-    local command = nil
-    if isUper then
-        command = mainCreateRound()
-    else
-        command = readV3Command()
-        if not command then
-            local insideTrial = isInsideOwnTrial()
-            if not insideTrial and not ffaNow then
-                forceMatchedAccountToTemple()
+    -- SERVER TIME
+    local function v3ServerNow()
+        local ok, v = pcall(function() return game:GetService("Workspace"):GetServerTimeNow() end)
+        return (ok and tonumber(v)) and tonumber(v) or tick()
+    end
+
+    -- FILE SYNC API
+    local FILE_SYNC_AVAILABLE = type(writefile) == "function"
+        and type(readfile)   == "function"
+        and type(isfile)     == "function"
+        and type(makefolder) == "function"
+        and type(isfolder)   == "function"
+
+    local function safeMakeFolder(path)
+        if not FILE_SYNC_AVAILABLE then return false end
+        if isfolder(path) then return true end
+        return pcall(makefolder, path)
+    end
+
+    local function safeReadJson(path)
+        if not FILE_SYNC_AVAILABLE or not isfile(path) then return nil end
+        local ok, data = pcall(function() return HttpService:JSONDecode(readfile(path)) end)
+        if ok and type(data) == "table" then return data end
+        return nil
+    end
+
+    local function safeWriteJson(path, data)
+        if not FILE_SYNC_AVAILABLE then return false end
+        local ok = pcall(function() writefile(path, HttpService:JSONEncode(data)) end)
+        return ok
+    end
+
+    local function sanitize(s)
+        s = tostring(s or "x"):gsub("[^%w%-_%.]", "_")
+        return s ~= "" and s or "x"
+    end
+
+    -- FILE PATHS
+    local function groupFolder()
+        if not safeMakeFolder(FILE_ROOT) then return nil end
+        local folder = FILE_ROOT .. "/group"
+        if not safeMakeFolder(folder) then return nil end
+        return folder
+    end
+
+    local function ownReadyPath()
+        local f = groupFolder(); if not f then return nil end
+        return f .. "/ready_" .. sanitize(USERNAME) .. ".json"
+    end
+
+    local function commandPath()
+        local f = groupFolder(); if not f then return nil end
+        return f .. "/command.json"
+    end
+
+    -- STATE
+    local readySent        = false
+    local lastReadyWrite   = 0
+    local handledRoundId   = ""
+    local scheduledRoundId = ""
+    local abilityCooldown  = 0
+    local currentStatus    = "Dang khoi dong..."
+
+    local function setStatus(s) currentStatus = tostring(s or "") end
+
+    -- V4 STATUS CHECK
+    local v4Cache       = { at = 0, data = nil }
+    local V4_CACHE_TIME = 10.0
+
+    local function invalidateV4Cache()
+        v4Cache.at   = 0
+        v4Cache.data = nil
+    end
+
+    local function getV4StatusSimple()
+        if v4Cache.data and tick() - v4Cache.at < V4_CACHE_TIME then
+            return v4Cache.data
+        end
+        local s = { canTrial = true, needsTraining = false, needsPurchase = false, complete = false }
+        if not CommF_ then
+            v4Cache.at = tick(); v4Cache.data = s; return s
+        end
+        local ok, err = pcall(function()
+            local char        = LocalPlayer.Character
+            local transformed = char and char:FindFirstChild("RaceTransformed")
+            if transformed then
+                local ok2, code = pcall(function() return CommF_:InvokeServer("UpgradeRace", "Check") end)
+                if ok2 and code ~= nil then
+                    code = tonumber(code)
+                    if code == 0 then
+                        s.canTrial = true
+                    elseif code == 5 then
+                        s.complete = true; s.canTrial = true
+                    elseif code == 1 or code == 3 or code == 6 or code == 8 then
+                        s.canTrial = false; s.needsTraining = true
+                    elseif code == 2 or code == 4 or code == 7 then
+                        s.canTrial = false; s.needsPurchase = true
+                    end
+                end
             else
+                local ok2, progress = pcall(function()
+                    return CommF_:InvokeServer("RaceV4Progress", "Check")
+                end)
+                if ok2 and tonumber(progress) then
+                    progress = tonumber(progress)
+                    if progress >= 4 then
+                        s.canTrial = true
+                    else
+                        s.canTrial      = false
+                        s.needsTraining = true
+                    end
+                end
+            end
+        end)
+        if not ok then
+            s = { canTrial = true, needsTraining = false, needsPurchase = false, complete = false }
+        end
+        v4Cache.at = tick(); v4Cache.data = s; return s
+    end
+
+    local function isnight()
+        local c = Lighting.ClockTime
+        return c >= 16 or c < 5
+    end
+
+    local function isfullmoon()
+        return Lighting:GetAttribute("MoonPhase") == 5
+    end
+
+    -- DOOR CHECK
+    local function getDoor()
+        local data = LocalPlayer:FindFirstChild("Data")
+        local race = data and data:FindFirstChild("Race")
+        if not race then return nil end
+
+        local temple = workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("Temple of Time")
+        if not temple then
+            local ms = ReplicatedStorage:FindFirstChild("MapStash")
+            temple = ms and ms:FindFirstChild("Temple of Time")
+        end
+        if not temple then return nil end
+
+        local raceVal  = race.Value
+        local corridor = temple:FindFirstChild(raceVal .. "Corridor")
+        if not corridor then
+            for _, c in ipairs(temple:GetChildren()) do
+                if c.Name:lower():find(raceVal:lower(), 1, true) then corridor = c; break end
+            end
+        end
+        if not corridor then return nil end
+
+        local door = corridor:FindFirstChild("Door")
+        if not door then return nil end
+        local entrance = door:FindFirstChild("Entrance") or door
+        if entrance:IsA("BasePart") then return entrance end
+        return entrance:FindFirstChildWhichIsA("BasePart")
+    end
+
+    local function localDoorState()
+        local char     = LocalPlayer.Character
+        local hrp      = char and char:FindFirstChild("HumanoidRootPart")
+        local hum      = char and char:FindFirstChildOfClass("Humanoid")
+        local door     = getDoor()
+        local distance = math.huge
+        if door and hrp then distance = (door.Position - hrp.Position).Magnitude end
+        local timerVisible = false
+        pcall(function() timerVisible = LocalPlayer.PlayerGui.Main.Timer.Visible == true end)
+        local alive = hum ~= nil and hum.Health > 0
+        return {
+            nearDoor     = alive and door ~= nil and distance <= V3_DOOR_DIST,
+            distance     = distance,
+            timerVisible = timerVisible,
+            alive        = alive,
+        }
+    end
+
+    -- WRITE OWN READY FILE
+    local function writeOwnReadyFile(force)
+        if not FILE_SYNC_AVAILABLE then return false end
+        if not force and tick() - lastReadyWrite < V3_FILE_POLL then return readySent end
+        lastReadyWrite = tick()
+
+        local path = ownReadyPath()
+        if not path then return false end
+
+        if handledRoundId == "" then
+            local prev = safeReadJson(path)
+            if prev and tostring(prev.fired_round or "") ~= "" then
+                handledRoundId = tostring(prev.fired_round)
+            end
+        end
+
+        local st    = localDoorState()
+        local ready = tick() >= abilityCooldown
+            and st.alive
+            and st.nearDoor
+            and not st.timerVisible
+
+        if not isUper then
+            ready = ready and (not st.alive or st.nearDoor)
+        else
+            local v4 = getV4StatusSimple()
+            if v4 and (v4.needsTraining or v4.needsPurchase) then
+                ready = false
+            end
+        end
+
+        local payload = {
+            username     = USERNAME,
+            job_id       = game.JobId,
+            ready        = ready,
+            timestamp    = v3ServerNow(),
+            handled      = handledRoundId ~= "",
+            fired_round  = handledRoundId,
+            near_door    = st.nearDoor,
+            distance     = math.floor(st.distance),
+            alive        = st.alive,
+        }
+
+        readySent = safeWriteJson(path, payload) and ready
+        return readySent
+    end
+
+    -- READ ALL READY FILES (MAIN only)
+    local function readAllReadyFiles()
+        local now        = v3ServerNow()
+        local readyCount = 0
+        local allReady   = true
+
+        for _, name in ipairs(LOCAL_HELPERS) do
+            local path = groupFolder() .. "/ready_" .. sanitize(name) .. ".json"
+            local data = safeReadJson(path)
+            local isReady = false
+
+            if data and tostring(data.job_id or "") == tostring(game.JobId) then
+                local age = now - (tonumber(data.timestamp) or 0)
+                if age <= V3_READY_FRESH and data.ready == true then
+                    isReady = true
+                end
+            end
+
+            if isReady then
+                readyCount = readyCount + 1
+            else
+                allReady = false
+            end
+        end
+
+        return readyCount, allReady and (#LOCAL_HELPERS > 0)
+    end
+
+    -- MAIN CREATE ROUND
+    local function mainCreateRound()
+        if not isUper then return nil end
+
+        local v4 = getV4StatusSimple()
+        if v4 and (v4.needsTraining or v4.needsPurchase) then
+            setStatus("Main | Dang training - bo qua countdown")
+            return nil
+        end
+
+        local ffaNow = false
+        pcall(function()
+            ffaNow = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+        end)
+        if ffaNow then return nil end
+
+        if scheduledRoundId ~= "" then
+            return readV3Command()
+        end
+
+        local current = readV3Command()
+        if current then return current end
+
+        local readyCount, allReady = readAllReadyFiles()
+        if not allReady then
+            local helperTotal = 0
+            for _, n in ipairs(LOCAL_HELPERS) do
+                if Players:FindFirstChild(n) then helperTotal = helperTotal + 1 end
+            end
+            setStatus(string.format("Main | Cho helper ready %d/%d...", readyCount, helperTotal))
+            return nil
+        end
+
+        local countdownVal = tonumber(Settings and Settings["V3 Countdown"]) or tonumber(getgenv().Config and getgenv().Config["V3 Countdown"]) or 4
+        local now     = v3ServerNow()
+        local fireAt  = now + countdownVal
+        local roundId = sanitize(USERNAME) .. "_" .. tostring(math.floor(fireAt * 1000))
+
+        local members = {}
+        local seen    = {}
+        local function addMember(name)
+            name = tostring(name or "")
+            if name ~= "" and not seen[name] then seen[name] = true; table.insert(members, name) end
+        end
+        addMember(USERNAME)
+        for _, name in ipairs(LOCAL_HELPERS) do
+            addMember(name)
+        end
+
+        local command = {
+            job_id     = game.JobId,
+            round_id   = roundId,
+            main       = USERNAME,
+            members    = members,
+            created_at = now,
+            fire_at    = fireAt,
+            expires_at = fireAt + 10,
+            countdown  = countdownVal,
+        }
+
+        if safeWriteJson(commandPath(), command) then
+            setStatus(string.format("Main | Tao lenh: fire sau %.1fs", countdownVal))
+            return command
+        end
+        return nil
+    end
+
+    -- READ V3 COMMAND
+    function readV3Command()
+        local data = safeReadJson(commandPath())
+        if not data then return nil end
+        if tostring(data.job_id or "") ~= tostring(game.JobId) then return nil end
+
+        local now       = v3ServerNow()
+        local fireAt    = tonumber(data.fire_at) or 0
+        local expiresAt = tonumber(data.expires_at) or (fireAt + 10)
+
+        if now > expiresAt then return nil end
+
+        local isMember = false
+        if tostring(data.main or "") == USERNAME then
+            isMember = true
+        else
+            for _, m in ipairs(data.members or {}) do
+                if tostring(m) == USERNAME then isMember = true; break end
+            end
+        end
+        if not isMember then return nil end
+
+        return data
+    end
+
+    -- WAIT FOR SHARED FIRE TIME
+    local function waitForSharedFireTime(fireAt)
+        while true do
+            local remaining = fireAt - v3ServerNow()
+            if remaining <= 0.002 then break end
+            if remaining > 0.05 then
+                task.wait(math.min(remaining * 0.4, 0.05))
+            else
+                RunService.Heartbeat:Wait()
+            end
+        end
+    end
+
+    -- SCHEDULE WORKSPACE ROUND
+    local function scheduleWorkspaceRound(command)
+        local roundId = tostring(command.round_id or "")
+        if roundId == "" or roundId == handledRoundId or roundId == scheduledRoundId then
+            return false
+        end
+
+        scheduledRoundId = roundId
+        local fireAt     = tonumber(command.fire_at) or 0
+
+        task.spawn(function()
+            local countdown = tonumber(command.countdown) or 4
+            task.spawn(function()
+                while scheduledRoundId == roundId do
+                    local left = fireAt - v3ServerNow()
+                    if left <= 0 then break end
+                    local prefix = isUper and "Main" or "Helper"
+                    setStatus(string.format("%s | Countdown %.1fs", prefix, math.max(0, left)))
+                    task.wait(0.05)
+                end
+            end)
+
+            waitForSharedFireTime(fireAt)
+
+            local st    = localDoorState()
+            local jobOk = tostring(command.job_id or "") == tostring(game.JobId)
+
+            if jobOk and st.nearDoor and not st.timerVisible then
+                setStatus(isUper and "Main | Kich hoat V3!" or "Helper | Kich hoat V3!")
+
+                pcall(function()
+                    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        hrp.AssemblyLinearVelocity  = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                    end
+                end)
+
+                for i = 1, V3_FIRE_COUNT do
+                    pcall(function()
+                        ReplicatedStorage.Remotes.CommE:FireServer("ActivateAbility")
+                    end)
+                    if i < V3_FIRE_COUNT then task.wait(V3_FIRE_INTERVAL) end
+                end
+
+                handledRoundId  = roundId
+                abilityCooldown = tick() + 30
+                readySent       = false
+                pcall(writeOwnReadyFile, true)
+
+                task.spawn(function()
+                    local myRound = roundId
+                    for _ = 1, 15 do
+                        task.wait(1)
+                        if handledRoundId ~= myRound then return end
+                        local ffaOk = false
+                        pcall(function()
+                            ffaOk = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+                        end)
+                        if ffaOk then return end
+                        local timerOk = false
+                        pcall(function() timerOk = LocalPlayer.PlayerGui.Main.Timer.Visible end)
+                        if timerOk then return end
+                    end
+                    if handledRoundId ~= roundId then return end
+                    local st2       = localDoorState()
+                    local ffaActive = false
+                    local insideTrial = false
+                    pcall(function()
+                        ffaActive = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+                    end)
+                    pcall(function()
+                        insideTrial = LocalPlayer.PlayerGui.Main.Timer.Visible == true
+                    end)
+                    if st2.nearDoor and not ffaActive and not insideTrial then
+                        setStatus("Ghost Temple! Resetting...")
+                        handledRoundId  = ""
+                        abilityCooldown = tick() + 8
+                        pcall(function() LocalPlayer.Character.Humanoid.Health = 0 end)
+                    end
+                end)
+            else
+                handledRoundId  = roundId
+                abilityCooldown = tick() + 5
+                readySent       = false
+                pcall(writeOwnReadyFile, true)
+                setStatus(string.format("[MISS] Cach cua %.0f studs - cho 5s", st.distance))
+            end
+
+            scheduledRoundId = ""
+        end)
+        return true
+    end
+
+    -- TRY ACTIVATE ABILITY
+    local activating = false
+
+    local function tryActivateAbility()
+        if activating then return false end
+        if not (isnight() and isfullmoon()) then return false end
+
+        local ffaNow = false
+        pcall(function()
+            ffaNow = workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
+        end)
+        if ffaNow or tick() < abilityCooldown then return false end
+
+        refreshTurnV3Roles()
+
+        activating = true
+        pcall(writeOwnReadyFile, false)
+
+        local command = nil
+        if isUper then
+            command = mainCreateRound()
+        else
+            command = readV3Command()
+            if not command then
                 local st = localDoorState()
                 setStatus(st.nearDoor and "Helper | Cho Main countdown..." or "Helper | Di toi cua...")
+            else
+                setStatus(string.format("Helper | Nhan lenh %.1fs",
+                    math.max(0, (tonumber(command.fire_at) or 0) - v3ServerNow())))
             end
-        else
-            setStatus(string.format("Helper | Nhan lenh %.1fs",
-                math.max(0, (tonumber(command.fire_at) or 0) - v3ServerNow())))
         end
+
+        activating = false
+        if command then return scheduleWorkspaceRound(command) end
+        return false
     end
 
-    activating = false
-    if command then return scheduleWorkspaceRound(command) end
-    return false
-end
-
--- POLL LOOP (runs when Multi Trial + Auto Turn On V3 Near Door are enabled)
-task.spawn(function()
-    while task.wait(V3_FILE_POLL) do
-        if Settings["Multi Trial"] == true and Settings["Auto Turn On V3 Near Door"] == true then
+    -- POLL LOOP
+    task.spawn(function()
+        while task.wait(V3_FILE_POLL) do
             pcall(tryActivateAbility)
         end
+    end)
+
+    -- UI (TurnV3 Label góc phải giữa màn hình)
+    local PlayerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        or LocalPlayer:WaitForChild("PlayerGui", 10)
+
+    local StatusLabel = nil
+
+    local function createUI()
+        pcall(function()
+            local old = PlayerGui:FindFirstChild("TurnV3UI")
+            if old then old:Destroy() end
+        end)
+
+        local sg = Instance.new("ScreenGui")
+        sg.Name           = "TurnV3UI"
+        sg.ResetOnSpawn   = false
+        sg.IgnoreGuiInset = true
+        sg.Parent         = PlayerGui
+
+        StatusLabel = Instance.new("TextLabel", sg)
+        StatusLabel.Size                   = UDim2.new(0, 280, 0, 26)
+        StatusLabel.Position               = UDim2.new(1, -290, 0.5, -13)
+        StatusLabel.AnchorPoint            = Vector2.new(0, 0)
+        StatusLabel.BackgroundTransparency = 1
+        StatusLabel.Text                   = "TurnV3 | Loading..."
+        StatusLabel.TextColor3             = Color3.fromRGB(200, 200, 200)
+        StatusLabel.Font                   = Enum.Font.FredokaOne
+        StatusLabel.TextSize               = 18
+        StatusLabel.TextStrokeTransparency = 0.5
+        StatusLabel.TextXAlignment         = Enum.TextXAlignment.Right
+        StatusLabel.TextTruncate           = Enum.TextTruncate.AtEnd
+
+        task.spawn(function()
+            while sg.Parent do
+                task.wait(0.05)
+                pcall(function()
+                    local s = currentStatus:lower()
+                    local color
+                    if s:find("countdown") then
+                        color = Color3.fromRGB(255, 165, 40)
+                    elseif s:find("kich hoat") or s:find("v3!") then
+                        color = Color3.fromRGB(50, 255, 100)
+                    elseif s:find("trial") or s:find("doing") then
+                        color = Color3.fromRGB(50, 255, 100)
+                    elseif s:find("ghost") or s:find("miss") or s:find("reset") then
+                        color = Color3.fromRGB(255, 80, 80)
+                    elseif s:find("cho") or s:find("wait") or s:find("nhan") then
+                        color = Color3.fromRGB(100, 180, 255)
+                    else
+                        color = Color3.fromRGB(200, 200, 200)
+                    end
+                    StatusLabel.TextColor3 = color
+                    StatusLabel.Text       = currentStatus
+                end)
+            end
+        end)
     end
-end)
 
--- UI (TurnV3 Label góc phải giữa màn hình)
-local PlayerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
-    or localPlayer:WaitForChild("PlayerGui", 10)
+    pcall(createUI)
 
-local StatusLabel = nil
-local turnV3ScreenGui = nil
-
-local function createTurnV3UI()
-    pcall(function()
-        local old = PlayerGui:FindFirstChild("TurnV3UI")
-        if old then old:Destroy() end
-    end)
-
-    turnV3ScreenGui = Instance.new("ScreenGui")
-    turnV3ScreenGui.Name           = "TurnV3UI"
-    turnV3ScreenGui.ResetOnSpawn   = false
-    turnV3ScreenGui.IgnoreGuiInset = true
-    turnV3ScreenGui.Enabled        = (Settings["Multi Trial"] == true and Settings["Auto Turn On V3 Near Door"] == true)
-    turnV3ScreenGui.Parent         = PlayerGui
-
-    StatusLabel = Instance.new("TextLabel", turnV3ScreenGui)
-    StatusLabel.Size                   = UDim2.new(0, 280, 0, 26)
-    StatusLabel.Position               = UDim2.new(1, -290, 0.5, -13)
-    StatusLabel.AnchorPoint            = Vector2.new(0, 0)
-    StatusLabel.BackgroundTransparency = 1
-    StatusLabel.Text                   = "TurnV3 | Loading..."
-    StatusLabel.TextColor3             = Color3.fromRGB(200, 200, 200)
-    StatusLabel.Font                   = Enum.Font.FredokaOne
-    StatusLabel.TextSize               = 18
-    StatusLabel.TextStrokeTransparency = 0.5
-    StatusLabel.TextXAlignment         = Enum.TextXAlignment.Right
-    StatusLabel.TextTruncate           = Enum.TextTruncate.AtEnd
-
-    task.spawn(function()
-        while turnV3ScreenGui and turnV3ScreenGui.Parent do
-            task.wait(0.05)
-            pcall(function()
-                local isRunning = (Settings["Multi Trial"] == true and Settings["Auto Turn On V3 Near Door"] == true)
-                if turnV3ScreenGui.Enabled ~= isRunning then
-                    turnV3ScreenGui.Enabled = isRunning
-                end
-                if not isRunning then return end
-
-                local s = currentStatus:lower()
-                local color
-                if s:find("countdown") then
-                    color = Color3.fromRGB(255, 165, 40)
-                elseif s:find("kich hoat") or s:find("v3!") then
-                    color = Color3.fromRGB(50, 255, 100)
-                elseif s:find("trial") or s:find("doing") then
-                    color = Color3.fromRGB(50, 255, 100)
-                elseif s:find("ghost") or s:find("miss") or s:find("reset") then
-                    color = Color3.fromRGB(255, 80, 80)
-                elseif s:find("cho") or s:find("wait") or s:find("nhan") then
-                    color = Color3.fromRGB(100, 180, 255)
-                else
-                    color = Color3.fromRGB(200, 200, 200)
-                end
-                StatusLabel.TextColor3 = color
-                StatusLabel.Text       = currentStatus
-            end)
-        end
-    end)
+    print(string.format("[TurnV3] Loaded | User=%s | Role=%s | FileSync=%s",
+        USERNAME,
+        isUper and "MAIN" or (isAlly and "HELPER" or "OBSERVER"),
+        tostring(FILE_SYNC_AVAILABLE)
+    ))
 end
-
-pcall(createTurnV3UI)
 
 function TrialHuman()
 	if Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Strength") then
@@ -3635,27 +3525,10 @@ function AutoTrialV4()
 				trialInProgress = false
 				TweenManager.CancelCurrent()
 			elseif localPlayer4 == "Cyborg" then
-				trialInProgress = true
 				repeat
 					task.wait()
-					pcall(function()
-						local cyborgFloor = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CyborgTrial") and Workspace.Map.CyborgTrial:FindFirstChild("Floor")
-						if cyborgFloor then
-							ToTarget(cyborgFloor.CFrame * CFrame.new(0, 500, 0))
-						else
-							local part = getRaceTrialPlace("Cyborg")
-							if part then
-								ToTarget(part.CFrame * CFrame.new(0, 500, 0))
-							elseif localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
-								ToTarget(localPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0, 500, 0))
-							end
-						end
-					end)
-				until not isInsideOwnTrial()
-					or (Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Temple of Time") and Workspace.Map["Temple of Time"]:FindFirstChild("FFABorder") and Workspace.Map["Temple of Time"].FFABorder:FindFirstChild("Forcefield") and Workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0)
-				myTrialCompleted = true
-				trialInProgress = false
-				TweenManager.CancelCurrent()
+					ToTarget(CFrame.new(28282.5703125, 14896.8505859375, 105.1042709350586))
+				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
 			end
 		else
 			-- CHƯA LÀM TRIAL VÀ ĐANG Ở TEMPLE OF TIME CHUẨN BỊ KÍCH HOẠT V3 TẠI CỬA
@@ -3663,8 +3536,8 @@ function AutoTrialV4()
 				if not lookup6 then
 					return
 				end
-				local part2 = getDoor() or (lookup6:FindFirstChild(localPlayer.Data.Race.Value .. "Corridor") and lookup6[localPlayer.Data.Race.Value .. "Corridor"]:FindFirstChild("Door") and lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door:FindFirstChild("Door") and lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door:FindFirstChild("RightDoor") and lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door.RightDoor:FindFirstChild("Union"))
-				if part2 and localPlayer:DistanceFromCharacter(part2.Position) > 8 then
+				local part2 = lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door.RightDoor.Union
+				if localPlayer:DistanceFromCharacter(part2.Position) > 8 then
 					ToTarget(part2.CFrame)
 				end
 				if
