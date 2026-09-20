@@ -616,74 +616,62 @@ function BringMob(v)
     end
 end
 
--- FastAttack tu loader.lua (ho tro ca Net RegisterAttack/Hit va encrypted remote)
-function FastAttack()
+-- Fast Attack tu https://pastefy.app/X6xLHpIv/raw?part=attack.lua
+pcall(function()
+    loadstring(game:HttpGet("https://pastefy.app/X6xLHpIv/raw?part=attack.lua"))()
+end)
+
+local function GetBladeHitsFast()
+    local targets = {}
+    local char = localPlayer.Character
+    local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+    if not hrp then return targets end
+
+    for _, folder in ipairs({ Workspace:FindFirstChild("Enemies"), Workspace:FindFirstChild("Characters") }) do
+        if folder then
+            for _, v in ipairs(folder:GetChildren()) do
+                if v ~= char and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Head") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
+                    if (v.HumanoidRootPart.Position - hrp.Position).Magnitude < 65 then
+                        table.insert(targets, v)
+                    end
+                end
+            end
+        end
+    end
+    return targets
+end
+
+function FastAttack(target)
     local char = localPlayer.Character
     if not char then return end
-    local hrpPlayer = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
-    if not hrpPlayer then return end
 
-    local parts = {}
-    if Workspace:FindFirstChild("Enemies") then
-        for _, v in ipairs(Workspace.Enemies:GetChildren()) do
-            local hrp = v:FindFirstChild("HumanoidRootPart") or v.PrimaryPart
-            local hum = v:FindFirstChildOfClass("Humanoid")
-            if v ~= char and hrp and hum and hum.Health > 0 and (hrpPlayer.Position - hrp.Position).Magnitude <= 50 then
-                for _, _v in ipairs(v:GetChildren()) do
-                    if _v:IsA("BasePart") then
-                        parts[#parts + 1] = { v, _v }
-                    end
+    pcall(function()
+        local netModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+        if not netModule then return end
+        local regAttack = netModule:FindFirstChild("RE/RegisterAttack")
+        local regHit = netModule:FindFirstChild("RE/RegisterHit")
+        if not regAttack or not regHit then return end
+
+        regAttack:FireServer(-math.huge)
+
+        local enemies = {}
+        if target and target:FindFirstChild("HumanoidRootPart") and target:FindFirstChild("Head") then
+            table.insert(enemies, target)
+        else
+            enemies = GetBladeHitsFast()
+        end
+
+        if #enemies > 0 then
+            local args = { nil, {} }
+            for i, v in ipairs(enemies) do
+                if not args[1] then
+                    args[1] = v:FindFirstChild("Head") or v.HumanoidRootPart
                 end
+                args[2][i] = { v, v.HumanoidRootPart }
             end
+            regHit:FireServer(unpack(args))
         end
-    end
-    -- Quet ca player trong Trial / FFA / PvP
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= localPlayer and p.Character then
-            local hrp = p.Character:FindFirstChild("HumanoidRootPart") or p.Character.PrimaryPart
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 and (hrpPlayer.Position - hrp.Position).Magnitude <= 50 then
-                for _, _v in ipairs(p.Character:GetChildren()) do
-                    if _v:IsA("BasePart") then
-                        parts[#parts + 1] = { p.Character, _v }
-                    end
-                end
-            end
-        end
-    end
-
-    if #parts == 0 then return end
-
-    local tool = char:FindFirstChildOfClass("Tool")
-    if #parts > 0 and tool and (tool.ToolTip == "Melee" or tool.ToolTip == "Sword" or tool.ToolTip == "Blox Fruit" or tool.ToolTip == "Gun") then
-        pcall(function()
-            ReplicatedStorage.Modules.Net["RE/RegisterAttack"]:FireServer(0)
-        end)
-        local head = parts[1][1]:FindFirstChild("Head") or parts[1][1]:FindFirstChild("HumanoidRootPart") or parts[1][2]
-        pcall(function()
-            ReplicatedStorage.Modules.Net["RE/RegisterHit"]:FireServer(
-                head,
-                parts,
-                {},
-                tostring(localPlayer.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15)
-            )
-        end)
-        if r and id then
-            pcall(function()
-                local netModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-                local seedVal = (netModule and netModule:FindFirstChild("seed")) and netModule.seed:InvokeServer() or 1
-                local remoteFunc = cloneref and cloneref(r) or r
-                remoteFunc:FireServer(
-                    string.gsub("RE/RegisterHit", ".", function(c)
-                        return string.char(bit32.bxor(string.byte(c), math.floor(workspace:GetServerTimeNow() / 10 % 10) + 1))
-                    end),
-                    bit32.bxor(id + 909090, seedVal * 2),
-                    head,
-                    parts
-                )
-            end)
-        end
-    end
+    end)
 end
 
 -- Adapter cho cac phan code goi fastAttackInstance:Attack()
@@ -692,7 +680,7 @@ local fastAttackInstance = {
 }
 
 function ClickM1(target)
-    FastAttack()
+    FastAttack(target)
 end
 
 getgenv().AttackFunctionnhungSuperTrial = function()
@@ -3344,8 +3332,12 @@ function AutoTrialV4()
 		end
 		task.wait(3)
 	elseif Settings["Hop Server [Trial Or Pull Lever]"] then
-		HopServer()
-		return
+		if (myTrialCompleted or postTrialHopDone) and Settings["Hop After Trial"] == false then
+			-- Chặn hop sau khi hoàn thành trial nếu Hop After Trial = false
+		else
+			HopServer()
+			return
+		end
 	end
 
 	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
@@ -3416,6 +3408,7 @@ function AutoTrialV4()
 					if character3 then
 						repeat
 							task.wait()
+							EquipTool(NameWeapon(Settings["Select Weapon"] or "Melee"))
 							SizePart(character3)
 							if Settings["Select Weapon"] == "Blox Fruit" then
 								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
@@ -3527,6 +3520,7 @@ function AutoTrialV4()
 					if character3 then
 						repeat
 							task.wait()
+							EquipTool(NameWeapon(Settings["Select Weapon"] or "Melee"))
 							SizePart(character3)
 							if Settings["Select Weapon"] == "Blox Fruit" then
 								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
@@ -3556,7 +3550,16 @@ function AutoTrialV4()
 				trialInProgress = true
 				repeat
 					task.wait()
-					ToTarget(CFrame.new(28282.5703125, 14896.8505859375, 105.1042709350586))
+					pcall(function()
+						local cyborgMap = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CyborgTrial")
+						if cyborgMap and cyborgMap:FindFirstChild("Floor") then
+							ToTarget(cyborgMap.Floor.CFrame * CFrame.new(0, 500, 0))
+						elseif Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations") and Workspace._WorldOrigin.Locations:FindFirstChild("Trial of the Machine") then
+							ToTarget(Workspace._WorldOrigin.Locations["Trial of the Machine"].CFrame * CFrame.new(0, 500, 0))
+						elseif localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+							ToTarget(localPlayer.Character.HumanoidRootPart.CFrame * CFrame.new(0, 500, 0))
+						end
+					end)
 				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
 					or not VerifyNearbyTrial()
 				myTrialCompleted = true
@@ -4326,6 +4329,15 @@ ToggleHopServerTrial = Tabs.RaceV4:AddToggle("HopServerTrialOrPullLever", {
 })
 getgenv().TurnOffHOPSVPullAndTrial = ToggleHopServerTrial
 
+Tabs.RaceV4:AddToggle("HopAfterTrial", {
+    Title = "Hop After Trial",
+    Description = "Tự động hop server sau khi hoàn thành trial",
+    Default = (Settings["Hop After Trial"] ~= nil) and Settings["Hop After Trial"] or true,
+    Callback = function(enabled)
+        SaveSettings("Hop After Trial", enabled)
+    end
+})
+
 -- [[ TAB: KILL TRIAL ]]
 local KillTrialSection = Tabs.KillTrial:AddSection("Kill Trial")
 
@@ -4390,6 +4402,7 @@ local function ExportConfigTableString()
         { key = "V3 Countdown", default = 3 },
         { key = "Name Helper TurnV3", default = {} },
         { key = "Hop Server [Trial Or Pull Lever]", default = true },
+        { key = "Hop After Trial", default = true },
         { key = "Select Weapon Attack Trial", default = "Melee" },
         { key = "Kill players When complete Trial", default = true },
         { key = "Use Skill when Kill Player", default = true },
@@ -4990,6 +5003,11 @@ task.spawn(function()
                         task.wait(10)
                         postTrialResetScheduled = false
                         blockHopAfterTrial = false
+
+                        if Settings["Hop After Trial"] ~= false and Settings["Hop Server [Trial Or Pull Lever]"] then
+                            task.wait(2)
+                            HopServer()
+                        end
                     end)
                 end
             end
