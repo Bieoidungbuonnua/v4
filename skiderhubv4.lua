@@ -4902,6 +4902,15 @@ task.spawn(function()
 			cachedIsHelper = isAlly
 			lastRoleRefresh = tick()
 		end
+
+		-- Nếu Helper đang training -> nhường Worker 8 train xong rồi mới làm trial/reset
+		-- CheckGoTrain() + isCurrentlyTraining đảm bảo chỉ block khi đang THỰC SỰ train
+		if cachedIsHelper and isCurrentlyTraining and Settings["Auto Finish Train Quest"] and CheckGoTrain() then
+			-- Thông báo 1 lần (tránh spam)
+			-- Chờ vòng lặp tiếp theo, nhường cho Worker 8
+			continue
+		end
+
 		if Settings["Auto Trial"] or Settings["Multi Trial"] then
 			local success, result = pcall(function()
 				AutoTrialV4()
@@ -4911,7 +4920,8 @@ task.spawn(function()
 			end
 		end
 		-- Auto Reset: chỉ reset khi là Helper (từ HelpWhitelist) HOẶC bật Auto Reset Character
-		if Settings["Auto Reset Character"] or cachedIsHelper then
+		-- Không reset nếu Helper đang training (tránh đứt quá trình train)
+		if (Settings["Auto Reset Character"] or cachedIsHelper) and not (cachedIsHelper and isCurrentlyTraining and Settings["Auto Finish Train Quest"]) then
 			pcall(function()
 				local temple = GetTempleOfTime()
 				local forcefield = temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield")
