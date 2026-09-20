@@ -2528,10 +2528,12 @@ local function refreshTurnV3Roles()
 end
 
 local function isHelperAccount()
+    -- Chỉ dùng HelpWhitelist để xác định helper, KHÔNG dùng Auto Reset Character
+    -- vì Auto Reset Character là tính năng reset char trong FFA, không phải role
     refreshTurnV3Roles()
     local myName = localPlayer.Name
     local myDisplay = localPlayer.DisplayName
-    return isAlly == true or HelpWhitelist[myName] == true or HelpWhitelist[myDisplay] == true or (Settings and Settings["Auto Reset Character"] == true)
+    return isAlly == true or HelpWhitelist[myName] == true or HelpWhitelist[myDisplay] == true
 end
 
 do
@@ -4890,7 +4892,16 @@ end)
 
 -- Worker 10: Auto Trial & Auto Reset Character (from kaiv4.lua)
 task.spawn(function()
+	-- Cache role mỗi 2s để tránh gọi refreshTurnV3Roles() quá thường xuyên
+	local cachedIsHelper = isAlly
+	local lastRoleRefresh = 0
 	while task.wait(0.1) do
+		-- Refresh cache role mỗi 2 giây
+		if tick() - lastRoleRefresh > 2 then
+			refreshTurnV3Roles()
+			cachedIsHelper = isAlly
+			lastRoleRefresh = tick()
+		end
 		if Settings["Auto Trial"] or Settings["Multi Trial"] then
 			local success, result = pcall(function()
 				AutoTrialV4()
@@ -4899,7 +4910,8 @@ task.spawn(function()
 				print(success, result)
 			end
 		end
-		if Settings["Auto Reset Character"] or isHelperAccount() then
+		-- Auto Reset: chỉ reset khi là Helper (từ HelpWhitelist) HOẶC bật Auto Reset Character
+		if Settings["Auto Reset Character"] or cachedIsHelper then
 			pcall(function()
 				local temple = GetTempleOfTime()
 				local forcefield = temple and temple:FindFirstChild("FFABorder") and temple.FFABorder:FindFirstChild("Forcefield")
