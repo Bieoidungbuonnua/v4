@@ -225,7 +225,7 @@ do
         print("[Config] Applying Config 1 for Helper: " .. username)
         getgenv().Config = {
             ["Select Team"]                = "Marine",
-            ["Auto Reset Character"]       = true,
+            ["Auto Reset Character"]       = false,
             ["Auto Choose Gears"]          = true,
             ["Auto Buy Gear"]              = true,
             ["Auto Finish Train Quest"]    = true,
@@ -252,7 +252,7 @@ do
             ["Bring Mob Count"]                          = 6,
             ["Auto Click"]                               = true,
             ["Use skill fast dont hold"]                 = true,
-            ["Reset Teleport"]                           = true,
+            ["Reset Teleport"]                           = false,
         }
     end
 
