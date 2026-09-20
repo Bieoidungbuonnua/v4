@@ -324,46 +324,15 @@ end
 local items3 = {}
 
 -- Race V4 Training Island Data & Engine (From piggyv4)
+-- Chỉ train tại Haunted Castle (khoá cứng theo yêu cầu)
 local TrainingIslandData = {
     ["Haunted Castle"] = {
         Position = CFrame.new(-9530.61035, 200.860657, 5763.13477),
         Mobs = { ["Reborn Skeleton"] = true, ["Living Zombie"] = true, ["Demonic Soul"] = true, ["Possessed Mummy"] = true }
     },
-    ["Tiki Outpost"] = {
-        Position = CFrame.new(-16490.9727, 98.1144867, 1245.58984, -0.034969449, 0, 0.999388516, 0, 1, 0, -0.999388516, 0, -0.034969449),
-        Mobs = { ["Isle Outlaw"] = true, ["Island Boy"] = true, ["Sun-kissed Warrior"] = true, ["Isle Champion"] = true }
-    },
-    ["Great Tree"] = {
-        Positions = {
-            CFrame.new(2527.22119, 88.0126953, -7554.48096, -0.999390602, -0.0349089168, -1.05798244e-06, 1.05798244e-06, -6.05583191e-05, 1, -0.0349089168, 0.999390483, 6.05583191e-05),
-            CFrame.new(2923.90332, 91.6738281, -7734.71631, 0.997561574, -0, -0.0697919354, 0, 1, -0, 0.0697919354, 0, 0.997561574),
-            CFrame.new(3778.4248, 116.34375, -6938.81641, -0.667134643, -0.731317759, 0.141794443, -0.207926333, 2.65836716e-05, -0.978144467, 0.71533066, -0.682036817, -0.152077913)
-        },
-        Mobs = {
-            ["Marine Commodore"] = true,
-            ["Marine Rear Admiral"] = true
-        }
-    },
-    ["Ice Cream Island"] = {
-        Position = CFrame.new(-851.74633789062, 65.819496154785, -10932.150390625),
-        Mobs = { ["Peanut Scout"] = true, ["Peanut President"] = true, ["Ice Cream Chef"] = true, ["Ice Cream Commander"] = true }
-    },
-    ["Port Town"] = {
-        Positions = {
-            CFrame.new(-172.031281, 52.8853912, 5851.12793, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627),
-            CFrame.new(-638.581543, 50.9266357, 5627.74951, 0.258864343, 0, 0.965913713, 0, 1, 0, -0.965913713, 0, 0.258864343),
-            CFrame.new(-61.3757935, 48.8545227, 6151.30762, 0.965929627, -0, -0.258804798, 0, 1, -0, 0.258804798, 0, 0.965929627),
-            CFrame.new(-662.967041, 65.9991913, 5804.41699, 0.965938151, 0.050586991, -0.253780305, -4.01213765e-06, 0.980709016, 0.195473209, 0.258773029, -0.188813999, 0.947304487)
-        },
-        Mobs = { ["Pirate Millionaire"] = true, ["Pistol Billionaire"] = true }
-    },
-    ["Peanut Island"] = {
-        Position = CFrame.new(-2087.0561523438, 11.722011566162, -10002.080078125),
-        Mobs = { ["Peanut Scout"] = true, ["Peanut President"] = true }
-    }
 }
 local TrainingIslandOrder = {
-    "Tiki Outpost", "Ice Cream Island", "Haunted Castle", "Great Tree", "Port Town", "Peanut Island"
+    "Haunted Castle"
 }
 local MAX_ACCS_PER_ISLAND = 2
 local myAssignedIsland = nil
