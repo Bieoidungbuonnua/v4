@@ -106,7 +106,6 @@ local Window = Fluent:CreateWindow({
 
 local Tabs = {
     StatusServer = Window:AddTab({ Title = "Status & Server", Icon = "activity" }),
-    RaceDraco    = Window:AddTab({ Title = "Race Draco", Icon = "flame" }),
     RaceNormal   = Window:AddTab({ Title = "Race Normal", Icon = "user" }),
     RaceV4       = Window:AddTab({ Title = "Race V4", Icon = "sparkles" }),
     KillTrial    = Window:AddTab({ Title = "Kill Trial", Icon = "swords" }),
@@ -287,6 +286,9 @@ elseif type(getgenv().Config) == "table" then
         end
     end
 end
+
+-- Tùy chọn reset thủ công đã bị loại bỏ; reset FFA chỉ thuộc role Helper.
+Settings["Auto Reset Character"] = nil
 
 if Settings["Auto Click"] == nil then
     Settings["Auto Click"] = true
@@ -1338,14 +1340,11 @@ end
 
 function ChooseGearV4()
     local dt = ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
-    if not dt or not dt.HadPoint then return end
-    local gear = DetectGearUp and DetectGearUp(dt)
-    if not gear then return end
-    local choice = Settings["Select Gear V4"] == "Alpha" and "Alpha" or "Omega"
-    ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "SpendPoint", gear, choice)
-    local after = ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
-    if after and after.HadPoint and DetectGearUp and DetectGearUp(after) == gear then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "SpendPoint", gear, choice == "Alpha" and "Omega" or "Alpha")
+    if dt and dt.HadPoint then
+        local gearChoice = Settings["Select Gear V4"] or "Omega"
+        local lvl = (dt.RaceDetails and dt.RaceDetails.Completed) or dt.Completed or 1
+        local choosegear = (lvl == 1 or lvl == 5) and "Blank" or gearChoice
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "SpendPoint", "Gear" .. tostring(lvl), choosegear)
     end
 end
 
@@ -1456,583 +1455,6 @@ function PrepareMultiSelectList(lookup, saved)
         end
     end
     return list
-end
-
---------------------------------------------------------------------------------
--- RACE DRACO (ported from bnn.lua and adapted to Fluent/current helpers)
---------------------------------------------------------------------------------
-
-local DracoState = {
-    quest = nil,
-    hunterQuest = nil,
-    killedTerrorshark = false,
-    trialEntered = false,
-    waitingForTrial = false,
-    volcanoRockPass = false,
-    lastNotice = {},
-}
-
-local function DracoNotify(message, duration)
-    local now = tick()
-    if now - (DracoState.lastNotice[message] or 0) < (duration or 5) then return end
-    DracoState.lastNotice[message] = now
-    uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = message, ShowTime = duration or 5 })
-end
-
-local function DracoRoot()
-    local char = localPlayer.Character
-    return char and char:FindFirstChild("HumanoidRootPart")
-end
-
-local function DracoDistance(position)
-    local root = DracoRoot()
-    return root and (root.Position - position).Magnitude or math.huge
-end
-
-local function DracoNpc(name)
-    for _, folder in ipairs({ Workspace:FindFirstChild("NPCs"), ReplicatedStorage:FindFirstChild("NPCs") }) do
-        local npc = folder and folder:FindFirstChild(name)
-        if npc then return npc end
-    end
-    local ok, npc = pcall(function()
-        local manager = require(ReplicatedStorage:WaitForChild("NPCManager"))
-        local result = manager.getNPCsByName(name)
-        return result and result[1] and result[1]._modelState and result[1]._modelState._instance
-    end)
-    return ok and npc or nil
-end
-
-local function DracoRaidVisible(name)
-    local gui = localPlayer:FindFirstChild("PlayerGui")
-    local top = gui and gui:FindFirstChild("Main") and gui.Main:FindFirstChild("TopHUDList")
-    local timer = top and top:FindFirstChild(name)
-    return timer and timer.Visible == true or false
-end
-
-function CheckAcientOneDracoStatus()
-    local char = localPlayer.Character
-    if not char or not char:FindFirstChild("RaceTransformed") then
-        local island = Workspace:FindFirstChild("HydraIslandClient")
-        local remote = island and island:FindFirstChild("RemoteFunction")
-        if remote then
-            local ok, value = pcall(function() return remote:InvokeServer("Interacted") end)
-            if ok and table.find({ 1, 2, 3, 4 }, value) then return "Ready For Trial" end
-        end
-        return "You have yet to achieve greatness"
-    end
-
-    local code, progress, fragments
-    pcall(function()
-        code, progress, fragments = ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check", 2)
-    end)
-    if code == 0 then return "Ready For Trial" end
-    if code == 1 or code == 3 then return "Required Train More" end
-    if code == 2 or code == 4 or code == 7 then
-        return "Can Buy Gear With " .. tostring(fragments or 0) .. " Fragments"
-    end
-    if code == 5 then return "You Are Done Your Race" end
-    if code == 6 then return "Upgrades completed: " .. tostring(math.max(0, (progress or 2) - 2)) .. "/3, Need Trains More" end
-    if code == 8 then return "Remaining " .. tostring(math.max(0, 10 - (progress or 0))) .. " training sessions" end
-    return "You have yet to achieve greatness"
-end
-
-function DetectGearUp(data)
-    if type(data) ~= "table" or type(data.RaceDetails) ~= "table" then return nil end
-    local details = data.RaceDetails
-    local gears = details.Gears or {}
-    local spent = (details.A or 0) + (details.B or 0)
-    local raceReady = (data.RaceLevel or 0) >= 2
-    if not raceReady then return "Gear1" end
-    if not data.HadPoint then return nil end
-    if spent <= 0 then return "Gear2" end
-    if spent == 1 then return "Gear3" end
-    if spent == 2 then return "Gear4" end
-
-    local types = {
-        gears[1] == "A" and "Alpha" or gears[1] == "B" and "Omega" or "Blank",
-        gears[2] == "A" and "Alpha" or gears[2] == "B" and "Omega" or "Blank",
-        gears[3] == "A" and "Alpha" or gears[3] == "B" and "Omega" or "Blank",
-    }
-    if types[1] == types[2] and types[3] ~= types[1] then return "Gear4" end
-    if types[1] == types[3] and types[2] ~= types[1] then return "Gear3" end
-    if types[2] == types[3] and types[1] ~= types[2] then return "Gear2" end
-    return "Gear4"
-end
-
-function DetectFireFlower()
-    local folder = Workspace:FindFirstChild("FireFlowers")
-    if not folder then return nil end
-    for _, flower in ipairs(folder:GetChildren()) do
-        if flower:IsA("Model") and flower.PrimaryPart then return flower end
-    end
-end
-
-local DracoQuestStates = { V2InProgress = true, V3InProgress = true, V2TurnInReady = true, V3TurnInReady = true }
-
-function AutoUpgradeRaceDraco()
-    local data = localPlayer:FindFirstChild("Data")
-    local race = data and data:FindFirstChild("Race")
-    if not race or race.Value ~= "Draco" then
-        DracoNotify("Change Race Draco first", 5)
-        return
-    end
-    if DetectItemPlr("Primordial Reign") then
-        DracoNotify("Race Draco V3 is complete", 5)
-        return
-    end
-
-    local wizard = DracoNpc("Dragon Wizard")
-    local root = wizard and wizard:FindFirstChild("HumanoidRootPart")
-    local remote = ReplicatedStorage:FindFirstChild("Modules")
-        and ReplicatedStorage.Modules:FindFirstChild("Net")
-        and ReplicatedStorage.Modules.Net:FindFirstChild("RF/InteractDragonQuest")
-    if not root or not remote then return end
-
-    local state = type(DracoState.quest) == "table" and DracoState.quest.AvailableVQuest or nil
-    if not state or not DracoQuestStates[state] then
-        if DracoDistance(root.Position) > 8 then
-            ToTarget(root.CFrame * CFrame.new(0, 4, 4))
-            return
-        end
-        DracoState.quest = remote:InvokeServer({ NPC = "Dragon Wizard", Command = "Speak" })
-        state = type(DracoState.quest) == "table" and DracoState.quest.AvailableVQuest or nil
-        if state == "V2" or state == "V3" then
-            remote:InvokeServer({ NPC = "Dragon Wizard", Command = "Ascension", Action = "Begin" })
-            DracoState.quest = remote:InvokeServer({ NPC = "Dragon Wizard", Command = "Speak" })
-        end
-        return
-    end
-
-    if state == "V2TurnInReady" or state == "V3TurnInReady" then
-        remote:InvokeServer({ NPC = "Dragon Wizard", Command = "Ascension", Action = "Complete" })
-        DracoState.quest = nil
-        return
-    end
-
-    if state == "V2InProgress" then
-        if not CheckCountItem("Fire Flower", 5) then
-            local flower = DetectFireFlower()
-            if flower then
-                ToTarget(flower.PrimaryPart.CFrame)
-                local prompt = flower:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if prompt and DracoDistance(flower.PrimaryPart.Position) < 8 then fireproximityprompt(prompt, 1) end
-            else
-                KillMonster("Forest Pirate")
-            end
-        elseif DracoDistance(root.Position) > 8 then
-            ToTarget(root.CFrame * CFrame.new(0, 4, 4))
-        else
-            remote:InvokeServer({ NPC = "Dragon Wizard", Command = "Ascension", Action = "Complete" })
-            DracoState.quest = nil
-        end
-        return
-    end
-
-    if state == "V3InProgress" then
-        local shark = CheckNameBoss("Terrorshark") or DetectMob("Terrorshark")
-        if shark and not DracoState.killedTerrorshark then
-            KillMonster(shark.Name)
-            if not IsMobAlive(shark) then DracoState.killedTerrorshark = true end
-        elseif DracoState.killedTerrorshark then
-            if DracoDistance(root.Position) > 8 then
-                ToTarget(root.CFrame * CFrame.new(0, 4, 4))
-            else
-                remote:InvokeServer({ NPC = "Dragon Wizard", Command = "Ascension", Action = "Complete" })
-                DracoState.quest = nil
-                DracoState.killedTerrorshark = false
-            end
-        else
-            local boat = CheckBoat()
-            local seat = boat and boat:FindFirstChild("VehicleSeat", true)
-            if not seat then
-                local dock = CFrame.new(-16204.0811, 9.08636, 479.22595)
-                if DracoDistance(dock.Position) > 8 then ToTarget(dock) else ReplicatedStorage.Remotes.CommF_:InvokeServer("BuyBoat", "PirateBrigade") end
-            elseif localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid") and not localPlayer.Character.Humanoid.Sit then
-                ToTarget(seat.CFrame)
-            end
-        end
-    end
-end
-
-function CheckRelicChuaDat(models)
-    if not models then return false end
-    for _, item in ipairs(models:GetDescendants()) do
-        if item:IsA("ParticleEmitter") and item.Enabled then return true end
-    end
-    return false
-end
-
-function GetRelicChuaDat(parts)
-    for name, model in pairs(parts or {}) do
-        if string.find(name, "RelicModel", 1, true) and CheckRelicChuaDat(model) then return model, name end
-    end
-end
-
-function GetRelicChuanbiDat(parts)
-    for name, model in pairs(parts or {}) do
-        local primary = model and model.PrimaryPart
-        if string.find(name, "RelicModel", 1, true) and primary and primary:FindFirstChild("AlignPosition") and CheckRelicChuaDat(model) then
-            return model, name
-        end
-    end
-end
-
-function CheckModelTrialDraco()
-    local result = {}
-    local map = Workspace:FindFirstChild("Map")
-    local trial = map and map:FindFirstChild("DracoTrial")
-    if not trial then return result end
-    for _, name in ipairs({ "Relic1", "Relic2", "Relic3", "EndRelic1", "EndRelic2", "EndRelic3", "Door1", "Door2", "Door3", "Brazier1", "Brazier2", "Brazier3", "Center", "EndPlatform", "TeleportOut" }) do
-        result[name] = trial:FindFirstChild(name, true)
-    end
-    local origin = Workspace:FindFirstChild("_WorldOrigin")
-    for _, model in ipairs(origin and origin:GetChildren() or {}) do
-        if model:IsA("Model") and model.Name == "Relic" then
-            local mesh = model:FindFirstChildWhichIsA("MeshPart", true)
-            if mesh then
-                if mesh.Color == Color3.fromRGB(132, 203, 0) then result.RelicModel1 = model end
-                if mesh.Color == Color3.fromRGB(232, 106, 110) then result.RelicModel2 = model end
-                if mesh.Color == Color3.fromRGB(191, 153, 0) then result.RelicModel3 = model end
-            end
-        end
-    end
-    return result
-end
-
-local function RunDracoRelicTrial()
-    local location = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
-    local flame = location and location:FindFirstChild("Trial of Flames")
-    local map = Workspace:FindFirstChild("Map")
-    local trial = map and map:FindFirstChild("DracoTrial")
-    if not flame or not trial or DracoDistance(flame.Position) > 3000 then return false end
-
-    local door = trial:FindFirstChild("DoorTouch", true)
-    if door and door:FindFirstChild("TouchInterest") then
-        DracoState.trialEntered = true
-        ToTarget(door.CFrame)
-        return true
-    end
-    if not DracoRaidVisible("RaidTimer") then
-        local remote = ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("DracoTrial")
-        if remote then remote:InvokeServer() end
-        return true
-    end
-
-    local parts = CheckModelTrialDraco()
-    local carried, carriedName = GetRelicChuanbiDat(parts)
-    local loose, looseName = GetRelicChuaDat(parts)
-    local target, prompt
-    if carried and carriedName then
-        target = parts["EndRelic" .. carriedName:match("%d+")]
-    elseif loose and looseName then
-        target = parts["Relic" .. looseName:match("%d+")]
-    end
-    prompt = target and target:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if target then
-        local pivot = target:IsA("Model") and target:GetPivot() or target.CFrame
-        if DracoDistance(pivot.Position) > 8 then ToTarget(pivot) elseif prompt then fireproximityprompt(prompt, 1) end
-    end
-    return true
-end
-
-function AutoTrialDraco()
-    if RunDracoRelicTrial() then return end
-    if DracoState.trialEntered then
-        DracoState.trialEntered = false
-        DracoNotify("Draco Trial completed", 5)
-    end
-    local island = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("PrehistoricIsland")
-    if island then
-        local teleport = island:FindFirstChild("TrialTeleport", true)
-        if teleport then ToTarget(teleport.CFrame) return end
-        local fossil = DracoNpc("Fossil Expert")
-        if fossil and fossil:FindFirstChild("HumanoidRootPart") then ToTarget(fossil.HumanoidRootPart.CFrame) end
-    else
-        DracoNotify("Prehistoric Island not found", 5)
-    end
-end
-
-function DetectRockVolcano()
-    local map = Workspace:FindFirstChild("Map")
-    local island = map and map:FindFirstChild("PrehistoricIsland")
-    local rocks = island and island:FindFirstChild("Core") and island.Core:FindFirstChild("VolcanoRocks")
-    local nearest, nearestDistance
-    for _, rock in ipairs(rocks and rocks:GetChildren() or {}) do
-        local specs = rock:FindFirstChild("Specs", true)
-        if rock.Name == "Rock" and specs and specs:IsA("ParticleEmitter") and specs.Enabled then
-            local distance = DracoDistance(rock:GetPivot().Position)
-            if not nearestDistance or distance < nearestDistance then nearest, nearestDistance = rock, distance end
-        end
-    end
-    return nearest
-end
-
-function DetectLava()
-    local map = Workspace:FindFirstChild("Map")
-    local island = map and map:FindFirstChild("PrehistoricIsland")
-    for _, item in ipairs(island and island:GetDescendants() or {}) do
-        if item.Name == "TouchInterest" and item.Parent and item.Parent.Name ~= "TrialTeleport" then return true end
-    end
-    return false
-end
-
-function DetectGolem()
-    local enemies = Workspace:FindFirstChild("Enemies")
-    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
-        local root = mob:FindFirstChild("HumanoidRootPart")
-        if mob.Name == "Lava Golem" and root and IsMobAlive(mob) and DracoDistance(root.Position) <= 1500 then return mob end
-    end
-end
-
-function DeleteLava()
-    local map = Workspace:FindFirstChild("Map")
-    local island = map and map:FindFirstChild("PrehistoricIsland")
-    local lava = island and island:FindFirstChild("Core") and island.Core:FindFirstChild("InteriorLava")
-    for _, item in ipairs(lava and lava:GetChildren() or {}) do item:Destroy() end
-end
-
-function DetectPositionVolcano()
-    local result = {}
-    local map = Workspace:FindFirstChild("Map")
-    local island = map and map:FindFirstChild("PrehistoricIsland")
-    local core = island and island:FindFirstChild("Core")
-    local skull = core and core:FindFirstChild("Skull", true)
-    if skull then result[1] = skull.Position end
-    local ids = {
-        ["87519803677536:293"] = 2, ["9664674474:234"] = 3, ["14130842310:266"] = 4,
-        ["15672470777:86"] = 5, ["5159878936:261"] = 6, ["138849514693209:242"] = 7,
-        ["87519803677536:279"] = 8,
-    }
-    for _, part in ipairs(island and island:GetDescendants() or {}) do
-        if part:IsA("MeshPart") then
-            local id = tostring(part.MeshId):match("(%d+)$")
-            local slot = ids[tostring(id) .. ":" .. tostring(math.floor(part.Position.Y))]
-            if slot then result[slot] = part.Position end
-        end
-    end
-    return result
-end
-
-function CheckPosnearRock(positions, object)
-    local position = object and object.Position
-    if not position then return nil, 0 end
-    local nearest, index, distance = nil, 0, math.huge
-    for i, candidate in pairs(positions or {}) do
-        local current = (Vector3.new(position.X, 0, position.Z) - Vector3.new(candidate.X, 0, candidate.Z)).Magnitude
-        if current < distance then nearest, index, distance = candidate, i, current end
-    end
-    return nearest, index
-end
-
-function AutoUseSkillFixLava()
-    local rock = DetectRockVolcano()
-    if not rock then return end
-    getgenv().AimPos = rock:GetPivot()
-    pcall(AutoAllSkill)
-    pcall(function() FastAttack(rock) end)
-end
-
-local function DetectEmberTemplate()
-    for _, model in ipairs(Workspace:GetChildren()) do
-        local part = model:FindFirstChild("Part")
-        if model.Name == "EmberTemplate" and not model:FindFirstChild("Ignored") and part and part.Position.Y > -100 then return model end
-    end
-end
-
-local function DetectDracoTree()
-    local map = Workspace:FindFirstChild("Map")
-    local waterfall = map and map:FindFirstChild("Waterfall")
-    local island = waterfall and waterfall:FindFirstChild("IslandModel")
-    for _, model in ipairs(island and island:GetDescendants() or {}) do
-        if model:IsA("Model") and model.Name == "Tree" and not model:FindFirstChild("Ignored") and not model:GetAttribute("AlreadyDestroyedClient") then
-            return model
-        end
-    end
-end
-
-local function DracoFarmMob(name, enabledKey)
-    local mob = DetectMob(name)
-    if mob then
-        repeat
-            task.wait()
-            SizePart(mob)
-            BringMob(mob)
-            UsedualFlock()
-            ClickM1(mob)
-            local root = mob:FindFirstChild("HumanoidRootPart")
-            if root then ToTarget(root.CFrame * CFrame.new(Settings["Select Weapon"] == "Blox Fruit" and -7 or 7, 20, 0)) end
-        until not IsMobAlive(mob) or not Settings[enabledKey]
-        return true
-    end
-    local spawnPart = DetectPartSpawnMob(type(name) == "table" and DetectNameTablePart(name) or name, true)
-    if spawnPart then ToTarget(spawnPart.CFrame * CFrame.new(0, 60, 0)) end
-    return false
-end
-
-local function RunDragonHunter(enabledKey)
-    local ember = DetectEmberTemplate()
-    if ember and ember:FindFirstChild("Part") then ToTarget(ember.Part.CFrame) return true end
-    local hunter = DracoNpc("Dragon Hunter")
-    local remote = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-    remote = remote and remote:FindFirstChild("RF/DragonHunter")
-    if not hunter or not hunter:FindFirstChild("HumanoidRootPart") or not remote then return false end
-    if not DracoState.hunterQuest then
-        if DracoDistance(hunter.HumanoidRootPart.Position) > 8 then
-            ToTarget(hunter.HumanoidRootPart.CFrame * CFrame.new(0, 4, 4))
-        else
-            local response = remote:InvokeServer({ Context = "Check" })
-            if not response or not response.Text then response = remote:InvokeServer({ Context = "RequestQuest" }) end
-            DracoState.hunterQuest = response and response.Text
-        end
-        return true
-    end
-    local text = tostring(DracoState.hunterQuest)
-    if text:find("Hydra Enforcers") then return DracoFarmMob("Hydra Enforcer", enabledKey) end
-    if text:find("Venomous Assailants") then return DracoFarmMob("Venomous Assailant", enabledKey) end
-    if text:find("trees") then
-        local tree = DetectDracoTree()
-        if tree then
-            local pivot = tree:GetPivot()
-            ToTarget(pivot)
-            getgenv().AimPos = pivot
-            pcall(AutoAllSkill)
-            return true
-        end
-    end
-    DracoState.hunterQuest = nil
-    return false
-end
-
-local function CraftVolcanicMagnet(enabledKey)
-    if CheckItemInventory("Volcanic Magnet") or Settings["Ignore Craft Volcanic Magnet Draco"] then return true end
-    if not CheckCountItem("Scrap Metal", 10) then
-        DracoFarmMob({ "Jungle Pirate", "Musketeer Pirate" }, enabledKey)
-        return false
-    end
-    if not CheckCountItem("Blaze Ember", 15) then
-        RunDragonHunter(enabledKey)
-        return false
-    end
-    local net = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-    local craft = net and net:FindFirstChild("RF/Craft")
-    if craft then craft:InvokeServer("Craft", "Volcanic Magnet", 1, {}) end
-    return CheckItemInventory("Volcanic Magnet") == true
-end
-
-local function FindPrehistoricIsland()
-    local boat = CheckBoat()
-    local seat = boat and boat:FindFirstChild("VehicleSeat", true)
-    if not seat then
-        local dock = CFrame.new(-16204.0811, 9.08636, 479.22595)
-        if DracoDistance(dock.Position) > 8 then ToTarget(dock) else ReplicatedStorage.Remotes.CommF_:InvokeServer("BuyBoat", "PirateBrigade") end
-        return
-    end
-    local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.SeatPart ~= seat then ToTarget(seat.CFrame) return end
-    for _, part in ipairs(boat:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = false end end
-    local direction = Vector3.new(-118834.5, seat.Position.Y, -78.95)
-    local delta = direction - seat.Position
-    if delta.Magnitude > 5 then seat.CFrame = CFrame.lookAt(seat.Position + delta.Unit * math.min(350 * 0.2, delta.Magnitude), direction) end
-end
-
-local VolcanoOffsets = {
-    [273] = CFrame.new(40, 0, 0), [286] = CFrame.new(40, 0, 0), [246] = CFrame.new(0, -40, 0),
-    [486] = CFrame.new(40, 0, 0), [364] = CFrame.new(40, 0, 0), [682] = CFrame.new(0, 0, -40),
-    [490] = CFrame.new(0, 40, 0), [691] = CFrame.new(40, 0, 0), [502] = CFrame.new(-40, 0, 0),
-    [256] = CFrame.new(-40, 0, 0), [290] = CFrame.new(0, 40, 0), [427] = CFrame.new(0, 40, 0),
-    [692] = CFrame.new(0, 0, 40), [316] = CFrame.new(0, 40, 0), [481] = CFrame.new(0, 40, 0),
-    [594] = CFrame.new(0, 40, 0), [649] = CFrame.new(40, 0, 0), [285] = CFrame.new(0, -40, 0),
-    [250] = CFrame.new(0, 40, 0), [454] = CFrame.new(-40, 0, 0),
-}
-
-local function RunVolcano(enabledKey)
-    local map = Workspace:FindFirstChild("Map")
-    local island = map and map:FindFirstChild("PrehistoricIsland")
-    if not island then FindPrehistoricIsland() return end
-    local fossil = DracoNpc("Fossil Expert")
-    if localPlayer:GetAttribute("CurrentLocation") ~= "Prehistoric Island" and fossil and fossil:FindFirstChild("HumanoidRootPart") then
-        ToTarget(fossil.HumanoidRootPart.CFrame)
-        return
-    end
-    local trialRock = island:FindFirstChild("TrialRock", true)
-    local trialTeleport = island:FindFirstChild("TrialTeleport", true)
-    if trialRock and trialRock:IsA("BasePart") and trialRock.Transparency == 1 and trialTeleport then
-        DracoState.waitingForTrial = true
-        ToTarget(trialTeleport.CFrame)
-        return
-    end
-    if DetectLava() then
-        for _, item in ipairs(island:GetDescendants()) do
-            if item.Name == "TouchInterest" and item.Parent and item.Parent.Name ~= "TrialTeleport" then item:Destroy() end
-        end
-    end
-    DeleteLava()
-    if not DracoRaidVisible("PrehistoricRaidTimer") and not DracoRaidVisible("RaidTimer") then
-        local promptPart = island:FindFirstChild("ActivationPrompt", true)
-        local prompt = promptPart and promptPart:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if promptPart then
-            ToTarget(promptPart.CFrame)
-            if prompt and DracoDistance(promptPart.Position) < 8 then fireproximityprompt(prompt, 1) end
-        end
-        return
-    end
-    local golem = DetectGolem()
-    if golem then
-        local root = golem:FindFirstChild("HumanoidRootPart")
-        if root then ToTarget(root.CFrame * CFrame.new(0, 20, 7)) end
-        EquipTool(NameWeapon(Settings["Select Weapon Kill Golem"] or Settings["Select Weapon"] or "Melee"))
-        ClickM1(golem)
-        return
-    end
-    local rock = DetectRockVolcano()
-    if rock then
-        local pivot = rock:GetPivot()
-        local offset = VolcanoOffsets[math.floor(pivot.Position.Y)] or CFrame.new(0, 40, 0)
-        if Settings["Fix Volcano Safe"] then
-            local safePositions = DetectPositionVolcano()
-            local safe = CheckPosnearRock(safePositions, rock.PrimaryPart or rock:FindFirstChildWhichIsA("BasePart"))
-            if safe and DracoDistance(safe) >= 400 then ToTarget(CFrame.new(safe)) return end
-        end
-        ToTarget(pivot * offset)
-        if DracoDistance(pivot.Position) < 100 then AutoUseSkillFixLava() end
-    end
-end
-
-function BuyGearDracoV4()
-    if string.find(CheckAcientOneDracoStatus(), "Can Buy Gear", 1, true) then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Buy", 2)
-    end
-end
-
-local function TrainDraco(enabledKey)
-    local enemies = Workspace:FindFirstChild("Enemies")
-    local closest, closestDistance
-    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
-        local root = mob:FindFirstChild("HumanoidRootPart")
-        if root and IsMobAlive(mob) then
-            local distance = DracoDistance(root.Position)
-            if not closestDistance or distance < closestDistance then closest, closestDistance = mob, distance end
-        end
-    end
-    if closest then DracoFarmMob(closest.Name, enabledKey) end
-end
-
-function FullyDraco()
-    if not Settings["Fully Trial Draco"] then return end
-    pcall(TurnOnV4)
-    pcall(ChooseGearV4)
-    local status = CheckAcientOneDracoStatus()
-    if status == "Ready For Trial" then
-        if RunDracoRelicTrial() then return end
-        if not CraftVolcanicMagnet("Fully Trial Draco") then return end
-        RunVolcano("Fully Trial Draco")
-    elseif string.find(status, "Can Buy Gear", 1, true) then
-        BuyGearDracoV4()
-    elseif string.find(status, "Train", 1, true) or string.find(status, "training", 1, true) then
-        TrainDraco("Fully Trial Draco")
-    elseif string.find(status, "yet to achieve", 1, true) then
-        AutoUpgradeRaceDraco()
-    end
 end
 
 --------------------------------------------------------------------------------
@@ -3077,8 +2499,7 @@ local function refreshTurnV3Roles()
 end
 
 local function isHelperAccount()
-    -- Chỉ dùng HelpWhitelist để xác định helper, KHÔNG dùng Auto Reset Character
-    -- vì Auto Reset Character là tính năng reset char trong FFA, không phải role
+    -- Helper được xác định duy nhất từ danh sách TurnV3/Multi Trial.
     refreshTurnV3Roles()
     local myName = localPlayer.Name
     local myDisplay = localPlayer.DisplayName
@@ -3867,6 +3288,30 @@ function TeleportSeabeast2(seaBeast)
 	end
 end
 
+function DetectPlayerKillName()
+	local names = {}
+	local characters = Workspace:FindFirstChild("Characters")
+	for _, character in ipairs(characters and characters:GetChildren() or {}) do
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		local root = character:FindFirstChild("HumanoidRootPart")
+		if character:IsA("Model")
+			and character.Name ~= localPlayer.Name
+			and humanoid and humanoid.Health > 0
+			and root
+			and (root.Position - Vector3.new(28718.068359375, 14887.5625, -60.5482177734375)).Magnitude <= 400
+		then
+			table.insert(names, character.Name)
+		end
+	end
+	return names
+end
+
+function NameAttackTrial()
+	for index, name in pairs(getgenv().PlayerKillTrial or {}) do
+		if not table.find(getgenv().BlackListPlayerTrial or {}, name) then return name, index end
+	end
+end
+
 function CheckCDSkill(skillName)
 	if not localPlayer.PlayerGui:FindFirstChild("Main") or not localPlayer.PlayerGui.Main:FindFirstChild("Skills") or not localPlayer.PlayerGui.Main.Skills:FindFirstChild(skillName) then
 		EquipTool(skillName)
@@ -3962,7 +3407,7 @@ local function isshouldturnonability()
 	return count >= 2
 end
 
-function AutoTrialV4()
+local function AutoTrialV4Legacy()
 	if not isHelperAccount() and Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
 		return
 	end
@@ -3991,10 +3436,6 @@ function AutoTrialV4()
 	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
 		myTrialCompleted = false
 		trialInProgress = false
-		if TeleportTempleOfTime() == "locked" then
-			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Temple of Time is locked", ShowTime = 5 })
-			task.wait(5)
-		end
 		return
 	end
 
@@ -4262,6 +3703,210 @@ function AutoTrialV4()
 			Settings["Auto Trial"] = false
 			if ToggleAutoTrial then
 				ToggleAutoTrial:SetValue(false)
+			end
+		end
+		getgenv().VerifyTrial = false
+	end
+end
+
+-- Full Trial V4 flow from bnn.lua. Temple teleport is intentionally excluded:
+-- this engine only starts after the character is already in/near a trial area.
+local function TrialTimerVisible()
+	local gui = localPlayer:FindFirstChild("PlayerGui")
+	local main = gui and gui:FindFirstChild("Main")
+	local top = main and main:FindFirstChild("TopHUDList")
+	local timer = top and top:FindFirstChild("RaidTimer")
+	return timer and timer.Visible == true or false
+end
+
+local function TrialCharacterReady()
+	local character = localPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	return character, humanoid, root
+end
+
+local function TrialDistance(position)
+	local _, _, root = TrialCharacterReady()
+	return root and (root.Position - position).Magnitude or math.huge
+end
+
+local function TrialForcefield(temple)
+	local border = temple and temple:FindFirstChild("FFABorder")
+	return border and border:FindFirstChild("Forcefield")
+end
+
+local function StopTrialTween()
+	if TweenManager and TweenManager.CancelCurrent then
+		TweenManager.CancelCurrent()
+	end
+end
+
+local function PressTrialAbility()
+	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.T, false, game)
+	task.wait()
+	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.T, false, game)
+end
+
+local function TrialMobAlive(mob)
+	return mob and mob.Parent and mob:FindFirstChild("HumanoidRootPart") and IsMobAlive(mob)
+end
+
+local function AttackTrialMob(mob, trialLocation)
+	while TrialMobAlive(mob) and TrialTimerVisible() and TrialDistance(trialLocation.Position) <= 1000 do
+		task.wait()
+		EquipTool(NameWeapon(Settings["Select Weapon"] or "Melee"))
+		SizePart(mob)
+		local offset = Settings["Select Weapon"] == "Blox Fruit" and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+		ToTarget(mob.HumanoidRootPart.CFrame * offset)
+		ClickM1(mob)
+		UsedualFlock()
+	end
+end
+
+local function RunHumanTrial()
+	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
+	local trial = locations and locations:FindFirstChild("Trial of Strength")
+	if not trial then return end
+	while TrialTimerVisible() and TrialDistance(trial.Position) <= 1000 do
+		local mob = TrialHuman()
+		if mob then AttackTrialMob(mob, trial) else task.wait(0.1) end
+	end
+end
+
+local function RunGhoulTrial()
+	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
+	local trial = locations and locations:FindFirstChild("Trial of Carnage")
+	if not trial then return end
+	while TrialTimerVisible() and TrialDistance(trial.Position) <= 1000 do
+		local mob = TrialGhoul()
+		if mob then AttackTrialMob(mob, trial) else task.wait(0.1) end
+	end
+end
+
+local function RunSkypieaTrial()
+	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
+	local trial = locations and locations:FindFirstChild("Trial of the King")
+	while TrialTimerVisible() and trial and TrialDistance(trial.Position) <= 1000 do
+		task.wait()
+		local skyTrial = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("SkyTrial")
+		local model = skyTrial and skyTrial:FindFirstChild("Model")
+		local finish = model and model:FindFirstChild("FinishPart")
+		if finish then
+			ToTarget(finish.CFrame)
+		else
+			task.wait(0.2)
+		end
+	end
+end
+
+local function RunFishmanTrial()
+	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
+	local trial = locations and locations:FindFirstChild("Trial of Water")
+	if not trial or TrialDistance(trial.Position) >= 1500 then return end
+	local seaBeast = GetSeaBeastTrial()
+	while TrialTimerVisible() and TrialDistance(trial.Position) <= 1500 do
+		task.wait()
+		if not seaBeast or not seaBeast.Parent or not seaBeast:FindFirstChild("Health") or seaBeast.Health.Value <= 0 then
+			seaBeast = GetSeaBeastTrial()
+		elseif seaBeast:FindFirstChild("HumanoidRootPart") then
+			local root = seaBeast.HumanoidRootPart
+			getgenv().AimPos = CFrame.new(root.Position.X, 40, root.Position.Z)
+			TeleportSeabeast2(seaBeast)
+			ClickM1(seaBeast)
+			if TrialDistance(root.Position) < 400 then pcall(AutoAllSkill) end
+		end
+	end
+end
+
+local function RunMinkTrial()
+	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
+	local trial = locations and locations:FindFirstChild("Trial of Speed")
+	while TrialTimerVisible() and trial and TrialDistance(trial.Position) <= 1000 do
+		task.wait()
+		local startPoint = Workspace:FindFirstChild("StartPoint")
+		if startPoint then ToTarget(startPoint.CFrame * CFrame.new(0, 2, 0)) end
+	end
+end
+
+local function RunCyborgTrial()
+	-- The source's Temple jump is replaced with the machine-trial finish position.
+	while TrialTimerVisible() do
+		task.wait()
+		ToTarget(CFrame.new(28282.5703125, 14896.8505859375, 105.1042709350586))
+	end
+end
+
+function AutoTrialV4()
+	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and CheckGoTrain() then
+		return
+	end
+
+	local clockTime = Lighting.ClockTime
+	local moon = CheckMoon()
+	if (moon == "Full Moon" and not (clockTime > 5 and clockTime < 12) or moon == "Next Night")
+		and Settings["Hop Server [Trial Or Pull Lever]"]
+	then
+		if getgenv().TurnOffHOPSVPullAndTrial then
+			local toggle = getgenv().TurnOffHOPSVPullAndTrial
+			if toggle.SetValue then toggle:SetValue(false) elseif toggle.SetStage then toggle:SetStage(false) end
+		end
+		task.wait(3)
+	elseif Settings["Hop Server [Trial Or Pull Lever]"] then
+		HopServer()
+		return
+	end
+
+	-- Requested behavior: never teleport to Temple automatically.
+	if not IsInTempleOfTime() and not VerifyNearbyTrial() then return end
+
+	local temple = GetTempleOfTime()
+	local forcefield = TrialForcefield(temple)
+	if (forcefield and forcefield.Transparency == 1) or VerifyNearbyTrial() then
+		if TrialTimerVisible() then
+			if VerifyNearbyTrial() and not getgenv().VerifyTrial then getgenv().VerifyTrial = true end
+			repeat task.wait() until VerifyNearbyTrial() or not TrialTimerVisible()
+			if not TrialTimerVisible() then return end
+
+			local data = localPlayer:FindFirstChild("Data")
+			local raceValue = data and data:FindFirstChild("Race") and data.Race.Value
+			if raceValue == "Human" then
+				RunHumanTrial()
+			elseif raceValue == "Skypiea" then
+				RunSkypieaTrial()
+			elseif raceValue == "Fishman" then
+				RunFishmanTrial()
+			elseif raceValue == "Mink" then
+				RunMinkTrial()
+			elseif raceValue == "Ghoul" then
+				RunGhoulTrial()
+			elseif raceValue == "Cyborg" then
+				RunCyborgTrial()
+			end
+			StopTrialTween()
+		else
+			if not temple then return end
+			local data = localPlayer:FindFirstChild("Data")
+			local race = data and data:FindFirstChild("Race") and data.Race.Value
+			local corridor = race and temple:FindFirstChild(race .. "Corridor")
+			local door = corridor and corridor:FindFirstChild("Door")
+			local innerDoor = door and door:FindFirstChild("Door")
+			local rightDoor = innerDoor and innerDoor:FindFirstChild("RightDoor")
+			local union = rightDoor and rightDoor:FindFirstChild("Union")
+			if not union then return end
+
+			if TrialDistance(union.Position) > 8 then ToTarget(union.CFrame) end
+			if Settings["Multi Trial"] and CheckMultiTeleDoor() and TrialDistance(union.Position) <= 8 then
+				PressTrialAbility()
+				return
+			end
+			if Settings["Auto Turn On V3 Near Door"] and CheckMultiPlayerNearDoor() then PressTrialAbility() end
+		end
+	elseif getgenv().VerifyTrial then
+		if not Settings["Multi Trial"] then
+			Settings["Auto Trial"] = false
+			if ToggleAutoTrial then
+				if ToggleAutoTrial.SetValue then ToggleAutoTrial:SetValue(false) elseif ToggleAutoTrial.SetStage then ToggleAutoTrial:SetStage(false) end
 			end
 		end
 		getgenv().VerifyTrial = false
@@ -4715,90 +4360,6 @@ task.spawn(function()
     end
 end)
 
--- [[ TAB: RACE DRACO ]]
-local RaceDracoSection = Tabs.RaceDraco:AddSection("Race Draco")
-
-local DracoStatusParagraph = Tabs.RaceDraco:AddParagraph({
-    Title = "Ancient One Draco Status",
-    Content = "Checking..."
-})
-
-Tabs.RaceDraco:AddToggle("AutoUpgradeRaceDraco", {
-    Title = "Auto Upgrade Race V2-V3 Draco",
-    Default = Settings["Auto Upgrade Race V2-V3 Draco"] or false,
-    Callback = function(enabled)
-        SaveSettings("Auto Upgrade Race V2-V3 Draco", enabled)
-    end
-})
-
-Tabs.RaceDraco:AddToggle("AutoTrialDraco", {
-    Title = "Auto Trial Draco",
-    Default = Settings["Auto Trial Draco"] or false,
-    Callback = function(enabled)
-        SaveSettings("Auto Trial Draco", enabled)
-    end
-})
-
-Tabs.RaceDraco:AddToggle("FullyTrialDraco", {
-    Title = "Fully Trial Draco",
-    Description = "Auto craft/find Prehistoric Island, clear volcano, trial, train, buy and choose gear",
-    Default = Settings["Fully Trial Draco"] or false,
-    Callback = function(enabled)
-        SaveSettings("Fully Trial Draco", enabled)
-    end
-})
-
-Tabs.RaceDraco:AddToggle("IgnoreCraftVolcanicMagnetDraco", {
-    Title = "Ignore Craft Volcanic Magnet [Fully Draco]",
-    Default = Settings["Ignore Craft Volcanic Magnet Draco"] or false,
-    Callback = function(enabled)
-        SaveSettings("Ignore Craft Volcanic Magnet Draco", enabled)
-    end
-})
-
-Tabs.RaceDraco:AddToggle("AutoBuyGearDraco", {
-    Title = "Auto Buy Gear Draco",
-    Default = Settings["Auto Buy Gear Draco"] or false,
-    Callback = function(enabled)
-        SaveSettings("Auto Buy Gear Draco", enabled)
-    end
-})
-
-Tabs.RaceDraco:AddToggle("AutoFinishTrainDracoQuest", {
-    Title = "Auto Finish Train Draco Quest",
-    Default = Settings["Auto Finish Train Draco Quest"] or false,
-    Callback = function(enabled)
-        SaveSettings("Auto Finish Train Draco Quest", enabled)
-    end
-})
-
-local DracoVolcanoSection = Tabs.RaceDraco:AddSection("Draco Volcano Settings")
-
-Tabs.RaceDraco:AddToggle("FixVolcanoSafe", {
-    Title = "Fix Volcano Safe",
-    Default = Settings["Fix Volcano Safe"] or false,
-    Callback = function(enabled)
-        SaveSettings("Fix Volcano Safe", enabled)
-    end
-})
-
-Tabs.RaceDraco:AddDropdown("SelectWeaponKillGolem", {
-    Title = "Select Weapon Kill Golem",
-    Values = { "Melee", "Sword", "Blox Fruit", "Gun" },
-    Default = Settings["Select Weapon Kill Golem"] or Settings["Select Weapon"] or "Melee",
-    Callback = function(value)
-        SaveSettings("Select Weapon Kill Golem", value)
-    end
-})
-
-task.spawn(function()
-    while task.wait(1) do
-        pcall(function()
-            DracoStatusParagraph:SetDesc(CheckAcientOneDracoStatus())
-        end)
-    end
-end)
-
 -- [[ TAB: RACE NORMAL ]]
 local RaceNormalSection = Tabs.RaceNormal:AddSection("Race Normal")
 
@@ -4863,14 +4424,6 @@ Tabs.RaceNormal:AddToggle("HopServerGetGhoul", {
 
 -- [[ TAB: RACE V4 ]]
 local RaceV4Section = Tabs.RaceV4:AddSection("Race V4")
-
-Tabs.RaceV4:AddToggle("AutoTurnOnV4", {
-    Title = "Auto Turn On V4",
-    Default = Settings["Auto Turn On V4"] or false,
-    Callback = function(enabled)
-        SaveSettings("Auto Turn On V4", enabled)
-    end
-})
 
 Tabs.RaceV4:AddToggle("NoFrog", {
     Title = "No Fog",
@@ -5040,14 +4593,6 @@ Tabs.RaceV4:AddToggle("MultiTrial", {
     end
 })
 
-Tabs.RaceV4:AddToggle("AutoResetCharacter", {
-    Title = "Auto Reset Character",
-    Default = Settings["Auto Reset Character"] or false,
-    Callback = function(enabled)
-        SaveSettings("Auto Reset Character", enabled)
-    end
-})
-
 ToggleAutoTrial = Tabs.RaceV4:AddToggle("AutoTrial", {
     Title = "Auto Trial",
     Default = Settings["Auto Trial"] or false,
@@ -5135,14 +4680,6 @@ local function ExportConfigTableString()
         { key = "Select Team", default = (localPlayer.Team and localPlayer.Team.Name) or "Marines" },
         { key = "No Frog", default = false },
         { key = "Select Weapon", default = "Melee" },
-        { key = "Auto Upgrade Race V2-V3 Draco", default = false },
-        { key = "Auto Trial Draco", default = false },
-        { key = "Fully Trial Draco", default = false },
-        { key = "Ignore Craft Volcanic Magnet Draco", default = false },
-        { key = "Auto Buy Gear Draco", default = false },
-        { key = "Auto Finish Train Draco Quest", default = false },
-        { key = "Fix Volcano Safe", default = false },
-        { key = "Select Weapon Kill Golem", default = "Melee" },
         { key = "Auto Upgrade Race V2-V3", default = false },
         { key = "Auto Get Cyborg", default = false },
         { key = "Auto Get Fully Cyborg", default = false },
@@ -5157,8 +4694,6 @@ local function ExportConfigTableString()
         { key = "Auto Finish Train Quest", default = true },
         { key = "Stack Train With Trial Race", default = true },
         { key = "Multi Trial", default = false },
-        { key = "Auto Reset Character", default = false },
-        { key = "Auto Turn On V4", default = false },
         { key = "Select Players Multi", default = {} },
         { key = "Auto Trial", default = true },
         { key = "Auto Turn On V3 Near Door", default = true },
@@ -5312,56 +4847,6 @@ task.spawn(function()
                 end
             end
         end
-    end
-end)
-
--- Draco workers (full Race Draco block from bnn.lua)
-task.spawn(function()
-    while task.wait(0.2) do
-        if Settings["Auto Upgrade Race V2-V3 Draco"] and not Settings["Fully Trial Draco"] then
-            pcall(AutoUpgradeRaceDraco)
-        end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.2) do
-        if Settings["Auto Trial Draco"] and not Settings["Fully Trial Draco"] then
-            pcall(AutoTrialDraco)
-        end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.2) do
-        if Settings["Fully Trial Draco"] then pcall(FullyDraco) end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.3) do
-        if Settings["Auto Buy Gear Draco"] then pcall(BuyGearDracoV4) end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.2) do
-        if Settings["Auto Finish Train Draco Quest"] and not Settings["Fully Trial Draco"] then
-            pcall(function()
-                local status = CheckAcientOneDracoStatus()
-                if string.find(status, "Can Buy Gear", 1, true) then
-                    BuyGearDracoV4()
-                else
-                    TrainDraco("Auto Finish Train Draco Quest")
-                end
-            end)
-        end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(0.25) do
-        if Settings["Auto Turn On V4"] then pcall(TurnOnV4) end
     end
 end)
 
@@ -5738,8 +5223,8 @@ task.spawn(function()
 end)
 
 
--- Worker 10: Auto Trial & Auto Reset Character
--- Helper bắt buộc reset khi FFA active (nguyên si logic kaiv4.lua gốc)
+-- Worker 10: Auto Trial & automatic helper reset
+-- Helper bắt buộc reset khi FFA active, không cần toggle riêng.
 -- Out Temple (ChooseGear/BuyGear) chỉ dành cho Main
 task.spawn(function()
 	-- Cache role mỗi 2s để tránh rebuild HelpWhitelist quá thường xuyên
@@ -5758,7 +5243,7 @@ task.spawn(function()
 			continue
 		end
 
-		if Settings["Auto Trial"] or Settings["Multi Trial"] then
+		if Settings["Auto Trial"] then
 			local success, result = pcall(function()
 				AutoTrialV4()
 			end)
@@ -5767,14 +5252,14 @@ task.spawn(function()
 			end
 		end
 
-		-- Auto Reset (nguyên si logic kaiv4.lua gốc):
-		-- Helper BẮT BUỘC reset khi FFA active (không cần bật toggle)
+		-- Helper bắt buộc reset khi FFA active (logic từ bnn.lua).
 		pcall(function()
 			local temple = GetTempleOfTime()
-			if temple and temple.FFABorder.Forcefield.Transparency ~= 1 then
-				if cachedIsHelper or Settings["Auto Reset Character"] then
-					-- Helper: bắt buộc reset; main reset khi người dùng bật toggle
-					localPlayer.Character.Humanoid.Health = 0
+			local forcefield = TrialForcefield(temple)
+			if forcefield and forcefield.Transparency ~= 1 then
+				if cachedIsHelper then
+					local character, humanoid = TrialCharacterReady()
+					if character and humanoid and humanoid.Health > 0 then humanoid.Health = 0 end
 				end
 			end
 		end)
@@ -5843,4 +5328,3 @@ end)
 
 
 uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Script loaded successfully", ShowTime = 5 })
- 
