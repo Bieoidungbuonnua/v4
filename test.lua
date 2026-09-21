@@ -287,9 +287,6 @@ elseif type(getgenv().Config) == "table" then
     end
 end
 
--- Tùy chọn reset thủ công đã bị loại bỏ; reset FFA chỉ thuộc role Helper.
-Settings["Auto Reset Character"] = nil
-
 if Settings["Auto Click"] == nil then
     Settings["Auto Click"] = true
 end
@@ -3436,6 +3433,10 @@ local function AutoTrialV4Legacy()
 	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
 		myTrialCompleted = false
 		trialInProgress = false
+		if TeleportTempleOfTime() == "locked" then
+			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Temple of Time is locked", ShowTime = 5 })
+			task.wait(5)
+		end
 		return
 	end
 
@@ -3709,8 +3710,8 @@ local function AutoTrialV4Legacy()
 	end
 end
 
--- Full Trial V4 flow from bnn.lua. Temple teleport is intentionally excluded:
--- this engine only starts after the character is already in/near a trial area.
+-- Trial V4 engine upgraded from bnn.lua.
+-- IMPORTANT: the original Fluent Temple teleport function and its flow are retained.
 local function TrialTimerVisible()
 	local gui = localPlayer:FindFirstChild("PlayerGui")
 	local main = gui and gui:FindFirstChild("Main")
@@ -3737,9 +3738,7 @@ local function TrialForcefield(temple)
 end
 
 local function StopTrialTween()
-	if TweenManager and TweenManager.CancelCurrent then
-		TweenManager.CancelCurrent()
-	end
+	if TweenManager and TweenManager.CancelCurrent then TweenManager.CancelCurrent() end
 end
 
 local function PressTrialAbility()
@@ -3792,11 +3791,7 @@ local function RunSkypieaTrial()
 		local skyTrial = Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("SkyTrial")
 		local model = skyTrial and skyTrial:FindFirstChild("Model")
 		local finish = model and model:FindFirstChild("FinishPart")
-		if finish then
-			ToTarget(finish.CFrame)
-		else
-			task.wait(0.2)
-		end
+		if finish then ToTarget(finish.CFrame) else task.wait(0.2) end
 	end
 end
 
@@ -3830,7 +3825,7 @@ local function RunMinkTrial()
 end
 
 local function RunCyborgTrial()
-	-- The source's Temple jump is replaced with the machine-trial finish position.
+	-- Keep the original Fluent Cyborg trial destination; do not import bnn's Temple jump.
 	while TrialTimerVisible() do
 		task.wait()
 		ToTarget(CFrame.new(28282.5703125, 14896.8505859375, 105.1042709350586))
@@ -3838,7 +3833,7 @@ local function RunCyborgTrial()
 end
 
 function AutoTrialV4()
-	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and CheckGoTrain() then
+	if not isHelperAccount() and Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and CheckGoTrain() then
 		return
 	end
 
@@ -3853,15 +3848,40 @@ function AutoTrialV4()
 		end
 		task.wait(3)
 	elseif Settings["Hop Server [Trial Or Pull Lever]"] then
-		HopServer()
+		if not ((myTrialCompleted or postTrialHopDone) and Settings["Hop After Trial"] == false) then
+			HopServer()
+			return
+		end
+	end
+
+	-- Preserve the original kaiv4_fluent Temple entry process exactly.
+	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
+		myTrialCompleted = false
+		trialInProgress = false
+		if TeleportTempleOfTime() == "locked" then
+			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Temple of Time is locked", ShowTime = 5 })
+			task.wait(5)
+		end
 		return
 	end
 
-	-- Requested behavior: never teleport to Temple automatically.
-	if not IsInTempleOfTime() and not VerifyNearbyTrial() then return end
-
 	local temple = GetTempleOfTime()
 	local forcefield = TrialForcefield(temple)
+	local ffaActive = forcefield and forcefield.Transparency == 0 and not isInsideOwnTrial()
+	if ffaActive then
+		StopTrialTween()
+		if isHelperAccount() then
+			pcall(function()
+				local character, humanoid = TrialCharacterReady()
+				if character and humanoid and humanoid.Health > 0 then
+					humanoid.Health = 0
+					pcall(function() character:BreakJoints() end)
+				end
+			end)
+		end
+		return
+	end
+
 	if (forcefield and forcefield.Transparency == 1) or VerifyNearbyTrial() then
 		if TrialTimerVisible() then
 			if VerifyNearbyTrial() and not getgenv().VerifyTrial then getgenv().VerifyTrial = true end
@@ -3869,18 +3889,18 @@ function AutoTrialV4()
 			if not TrialTimerVisible() then return end
 
 			local data = localPlayer:FindFirstChild("Data")
-			local raceValue = data and data:FindFirstChild("Race") and data.Race.Value
-			if raceValue == "Human" then
+			local race = data and data:FindFirstChild("Race") and data.Race.Value
+			if race == "Human" then
 				RunHumanTrial()
-			elseif raceValue == "Skypiea" then
+			elseif race == "Skypiea" then
 				RunSkypieaTrial()
-			elseif raceValue == "Fishman" then
+			elseif race == "Fishman" then
 				RunFishmanTrial()
-			elseif raceValue == "Mink" then
+			elseif race == "Mink" then
 				RunMinkTrial()
-			elseif raceValue == "Ghoul" then
+			elseif race == "Ghoul" then
 				RunGhoulTrial()
-			elseif raceValue == "Cyborg" then
+			elseif race == "Cyborg" then
 				RunCyborgTrial()
 			end
 			StopTrialTween()
@@ -3903,7 +3923,7 @@ function AutoTrialV4()
 			if Settings["Auto Turn On V3 Near Door"] and CheckMultiPlayerNearDoor() then PressTrialAbility() end
 		end
 	elseif getgenv().VerifyTrial then
-		if not Settings["Multi Trial"] then
+		if not Settings["Multi Trial"] and not isHelperAccount() then
 			Settings["Auto Trial"] = false
 			if ToggleAutoTrial then
 				if ToggleAutoTrial.SetValue then ToggleAutoTrial:SetValue(false) elseif ToggleAutoTrial.SetStage then ToggleAutoTrial:SetStage(false) end
@@ -5223,8 +5243,8 @@ task.spawn(function()
 end)
 
 
--- Worker 10: Auto Trial & automatic helper reset
--- Helper bắt buộc reset khi FFA active, không cần toggle riêng.
+-- Worker 10: Auto Trial & Auto Reset Character
+-- Helper bắt buộc reset khi FFA active (nguyên si logic kaiv4.lua gốc)
 -- Out Temple (ChooseGear/BuyGear) chỉ dành cho Main
 task.spawn(function()
 	-- Cache role mỗi 2s để tránh rebuild HelpWhitelist quá thường xuyên
@@ -5243,7 +5263,7 @@ task.spawn(function()
 			continue
 		end
 
-		if Settings["Auto Trial"] then
+		if Settings["Auto Trial"] or Settings["Multi Trial"] then
 			local success, result = pcall(function()
 				AutoTrialV4()
 			end)
@@ -5252,14 +5272,14 @@ task.spawn(function()
 			end
 		end
 
-		-- Helper bắt buộc reset khi FFA active (logic từ bnn.lua).
+		-- Auto Reset (nguyên si logic kaiv4.lua gốc):
+		-- Helper BẮT BUỘC reset khi FFA active (không cần bật toggle)
 		pcall(function()
 			local temple = GetTempleOfTime()
-			local forcefield = TrialForcefield(temple)
-			if forcefield and forcefield.Transparency ~= 1 then
+			if temple and temple.FFABorder.Forcefield.Transparency ~= 1 then
 				if cachedIsHelper then
-					local character, humanoid = TrialCharacterReady()
-					if character and humanoid and humanoid.Health > 0 then humanoid.Health = 0 end
+					-- Helper: bắt buộc reset khi FFA (dù không bật toggle)
+					localPlayer.Character.Humanoid.Health = 0
 				end
 			end
 		end)
