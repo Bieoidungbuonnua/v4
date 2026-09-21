@@ -508,30 +508,11 @@ function ToTarget(targetCFrame, skipTween)
     return CurrentTween
 end
 
--- [COMBAT & FAST ATTACK MODULE] Stable Engine from skider hub god max/loader.lua
-local r, id
-for _, v in {
-    ReplicatedStorage:FindFirstChild("Util"),
-    ReplicatedStorage:FindFirstChild("Common"),
-    ReplicatedStorage:FindFirstChild("Remotes"),
-    ReplicatedStorage:FindFirstChild("Assets"),
-    ReplicatedStorage:FindFirstChild("FX"),
-} do
-    if v then
-        for _, n in ipairs(v:GetChildren()) do
-            if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
-                r, id = n, n:GetAttribute("Id")
-            end
-        end
-        v.ChildAdded:Connect(function(n)
-            if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
-                r, id = n, n:GetAttribute("Id")
-            end
-        end)
-    end
-end
+-- [COMBAT, FAST ATTACK & BRING MOB] Ported from bnn.lua
+if Settings["Bring Mob"] == nil then Settings["Bring Mob"] = true end
+if Settings["Bring Mob Count"] == nil then Settings["Bring Mob Count"] = 2 end
+if Settings["Attack No Animation "] == nil then Settings["Attack No Animation "] = true end
 
--- equipWeapon tu loader.lua
 function equipWeapon(weapon_type)
     if not weapon_type then
         weapon_type = Settings["Select Weapon"] or "Melee"
@@ -559,102 +540,330 @@ function EquipTool(name)
     equipWeapon(name)
 end
 
--- bringMob on dinh tu loader.lua
-function BringMob(v)
-    local char = localPlayer.Character
-    if not char or not char.PrimaryPart then return end
-    local targets = {}
-    local mobName = typeof(v) == "Instance" and v.Name or v
-    if Workspace:FindFirstChild("Enemies") then
-        for _, x in ipairs(Workspace.Enemies:GetChildren()) do
-            local h = x:FindFirstChildOfClass("Humanoid")
-            local hrp = x.PrimaryPart or x:FindFirstChild("HumanoidRootPart")
-            if hrp and h and h.Health > 0 and (not mobName or x.Name == mobName or x.Name:find(mobName)) and (char.PrimaryPart.Position - hrp.Position).Magnitude <= 180 then
-                targets[#targets + 1] = x
-                if #targets == 4 then break end
-            end
+local function BnnOtherPlayerNear(part)
+    local characters = Workspace:FindFirstChild("Characters")
+    for _, character in ipairs(characters and characters:GetChildren() or {}) do
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if character.Name ~= localPlayer.Name and root and (root.Position - part.Position).Magnitude <= 300 then
+            return true
         end
     end
-    if #targets == 0 then return end
-    local targetPos = (typeof(v) == "Instance" and (v.PrimaryPart or v:FindFirstChild("HumanoidRootPart"))) and (v.PrimaryPart or v.HumanoidRootPart).CFrame or targets[1].PrimaryPart.CFrame
-    for _, x in ipairs(targets) do
-        local part = x.PrimaryPart or x:FindFirstChild("HumanoidRootPart")
-        if part and isnetworkowner and isnetworkowner(part) then
-            part.CFrame = targetPos
-        end
+    return false
+end
+
+function isnetworkowner2(part)
+    return part ~= nil and not BnnOtherPlayerNear(part)
+end
+
+local function BnnCleanIgnoredMob()
+    local enemies = Workspace:FindFirstChild("Enemies")
+    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
+        local ignored = mob:FindFirstChild("Ignored")
+        if ignored then ignored:Destroy() end
     end
 end
 
--- Fast Attack tu https://pastefy.app/X6xLHpIv/raw?part=attack.lua
+local function BnnMobSpawnPart(mob)
+    local origin = Workspace:FindFirstChild("_WorldOrigin")
+    local spawns = origin and origin:FindFirstChild("EnemySpawns")
+    local root = mob and mob:FindFirstChild("HumanoidRootPart")
+    if not spawns or not root then return nil end
+    local cleanName = mob.Name:gsub(" %pLv%.? %d+%p", "")
+    local nearest, distance
+    for _, spawnPart in ipairs(spawns:GetChildren()) do
+        local spawnName = spawnPart.Name:gsub(" %pLv%.? %d+%p", "")
+        if spawnPart:IsA("BasePart") and (spawnPart.Name == mob.Name or spawnName == cleanName) then
+            local current = (root.Position - spawnPart.Position).Magnitude
+            if not distance or current < distance then nearest, distance = spawnPart, current end
+        end
+    end
+    return nearest
+end
+
+local function BnnMobSpawnCenter(mob)
+    local origin = Workspace:FindFirstChild("_WorldOrigin")
+    local spawns = origin and origin:FindFirstChild("EnemySpawns")
+    if not spawns or not mob then return nil end
+    local cleanName = mob.Name:gsub(" %pLv%.? %d+%p", "")
+    local sum, count = Vector3.zero, 0
+    for _, spawnPart in ipairs(spawns:GetChildren()) do
+        local spawnName = spawnPart.Name:gsub(" %pLv%.? %d+%p", "")
+        if spawnPart:IsA("BasePart") and (spawnPart.Name == mob.Name or spawnName == cleanName) then
+            sum += spawnPart.Position
+            count += 1
+        end
+    end
+    return count > 0 and CFrame.new(sum / count) or nil
+end
+
+local bnnBringTarget, bnnBringAnchor, bnnBringBusy = nil, nil, false
+
+function BringMob(target)
+    if not Settings["Bring Mob"] or typeof(target) ~= "Instance" or not IsMobAlive(target) then return end
+    local character = localPlayer.Character
+    local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target:FindFirstChild("HumanoidRootPart")
+    if not playerRoot or not targetRoot then return end
+
+    if bnnBringTarget ~= target then
+        bnnBringTarget = target
+        local spawnPart = BnnMobSpawnPart(target)
+        bnnBringAnchor = spawnPart and spawnPart.CFrame or targetRoot.CFrame
+        local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
+        local transformed = character:FindFirstChild("RaceTransformed")
+        if race and race.Value == "Cyborg" and transformed and transformed.Value then
+            bnnBringAnchor = BnnMobSpawnCenter(target) or targetRoot.CFrame
+        end
+        BnnCleanIgnoredMob()
+    end
+    if bnnBringBusy then return end
+
+    local selected = {}
+    if not target:FindFirstChild("Ignored") then table.insert(selected, target) end
+    local requestedCount = tonumber(Settings["Bring Mob Count"]) or 2
+    local radius = requestedCount > 2 and 350 or 200
+    local maximum = requestedCount
+    local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
+    local transformed = character:FindFirstChild("RaceTransformed")
+    if race and race.Value == "Cyborg" and transformed and transformed.Value then
+        radius, maximum = 300, 6
+    end
+
+    local enemies = Workspace:FindFirstChild("Enemies")
+    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
+        local root = mob:FindFirstChild("HumanoidRootPart")
+        if mob ~= target and mob.Name == target.Name and root and not mob:FindFirstChild("Ignored")
+            and IsMobAlive(mob) and isnetworkowner2(root)
+            and (root.Position - bnnBringAnchor.Position).Magnitude <= radius and #selected < maximum
+        then
+            table.insert(selected, mob)
+        end
+    end
+
+    if (playerRoot.Position - targetRoot.Position).Magnitude > 50 or BnnOtherPlayerNear(playerRoot) or #selected < 2 then return end
+    bnnBringBusy = true
+    for _, mob in ipairs(selected) do
+        local root = mob:FindFirstChild("HumanoidRootPart")
+        local humanoid = mob:FindFirstChildOfClass("Humanoid")
+        if root and humanoid then
+            SizePart(mob)
+            if not isnetworkowner2(root) then
+                root.CFrame = mob:GetPivot()
+                if not mob:FindFirstChild("Ignored") then Instance.new("IntValue", mob).Name = "Ignored" end
+            else
+                root.CFrame = bnnBringAnchor * CFrame.new(0, math.random(0, 2), math.random(0, 2))
+                local oldHealth = humanoid.Health
+                task.delay(2.2, function()
+                    if mob.Parent and humanoid.Health == oldHealth and not mob:FindFirstChild("Ignored") then
+                        root.CFrame = mob:GetPivot()
+                        Instance.new("IntValue", mob).Name = "Ignored"
+                    end
+                end)
+            end
+        end
+    end
+    task.delay(0.1, function() bnnBringBusy = false end)
+end
+
+local BnnMouse, BnnCombatUtil, BnnRegisterAttack, BnnRegisterHit
 pcall(function()
-    loadstring(game:HttpGet("https://pastefy.app/X6xLHpIv/raw?part=attack.lua"))()
+    BnnMouse = require(ReplicatedStorage.Mouse)
+    BnnCombatUtil = require(ReplicatedStorage.Modules.CombatUtil)
+    local net = require(ReplicatedStorage.Modules.Net)
+    BnnRegisterAttack = ReplicatedStorage.Modules.Net:WaitForChild("RE/RegisterAttack")
+    BnnRegisterHit = net:RemoteEvent("RegisterHit", true)
 end)
 
-local function GetBladeHitsFast()
-    local targets = {}
-    local char = localPlayer.Character
-    local hrp = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
-    if not hrp then return targets end
+local BnnBodyParts = {
+    RightUpperArm = true, RightLowerArm = true, RightHand = true,
+    RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
+    LeftUpperArm = true, LeftLowerArm = true, LeftHand = true,
+    LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true,
+    UpperTorso = true, LowerTorso = true, Head = true,
+}
 
-    for _, folder in ipairs({ Workspace:FindFirstChild("Enemies"), Workspace:FindFirstChild("Characters") }) do
-        if folder then
-            for _, v in ipairs(folder:GetChildren()) do
-                if v ~= char and v:FindFirstChild("HumanoidRootPart") and v:FindFirstChild("Head") and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 then
-                    if (v.HumanoidRootPart.Position - hrp.Position).Magnitude < 65 then
-                        table.insert(targets, v)
-                    end
+local function BnnGetBladeHits(radius, includePlayers)
+    local hits, rigs = {}, {}
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not character or not root then return hits end
+    local folders = { Workspace:FindFirstChild("Enemies") }
+    if includePlayers then table.insert(folders, Workspace:FindFirstChild("Characters")) end
+    for _, folder in ipairs(folders) do
+        for _, rig in ipairs(folder and folder:GetChildren() or {}) do
+            local rigRoot = rig:FindFirstChild("HumanoidRootPart")
+            local humanoid = rig:FindFirstChildOfClass("Humanoid")
+            if rig ~= character and rigRoot and humanoid and humanoid.Health > 0 and (rigRoot.Position - root.Position).Magnitude <= (radius or 80) then
+                local hitPart = rig:FindFirstChild("Head") or rigRoot
+                if BnnCombatUtil then
+                    pcall(function()
+                        local resolved = BnnCombatUtil:GetRigOfHitPart(hitPart)
+                        if resolved and BnnCombatUtil:IsVulnerable(resolved) then rig = resolved end
+                    end)
+                end
+                if not rigs[rig] and (BnnBodyParts[hitPart.Name] or hitPart == rigRoot) then
+                    rigs[rig] = true
+                    table.insert(hits, { rig, hitPart })
                 end
             end
         end
     end
-    return targets
+    return hits
 end
+
+function AttackAOE(radius, includePlayers)
+    return BnnGetBladeHits(radius or 80, includePlayers)
+end
+
+local bnnAttackIndex = 0
+local function BnnFireHits(hits, attackDelay)
+    if #hits == 0 or not BnnRegisterAttack or not BnnRegisterHit then return false end
+    BnnRegisterAttack:FireServer(attackDelay or 0)
+    local first = table.remove(hits, 1)
+    BnnRegisterHit:FireServer(first[2], hits)
+    table.clear(hits)
+    return true
+end
+
+local function BnnAnimatedAttack(radius)
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local tool = character and character:FindFirstChildOfClass("Tool")
+    local hits = BnnGetBladeHits(radius or 80, false)
+    if not humanoid or not tool or #hits == 0 or not BnnCombatUtil then return BnnFireHits(hits, 0) end
+    local success = pcall(function()
+        local cache = BnnCombatUtil:GetMovesetAnimCache(humanoid)
+        local weaponName = BnnCombatUtil:GetWeaponName(tool)
+        local weaponData = BnnCombatUtil:GetWeaponData(weaponName)
+        local moveset = weaponData and weaponData.Moveset
+        local rig = humanoid.RootPart and humanoid.RootPart.Parent
+        if weaponData and not BnnCombatUtil:CanAttack(rig, weaponData.WeaponType) then return end
+        if not cache or not moveset or not moveset.Basic or #moveset.Basic == 0 then error("No moveset") end
+        bnnAttackIndex = bnnAttackIndex % #moveset.Basic + 1
+        local animation = cache[BnnCombatUtil:GetPureWeaponName(weaponName) .. "-basic" .. bnnAttackIndex]
+        if not animation then error("No animation") end
+        local speed = animation:GetAttribute("SpeedMult") or 1
+        BnnFireHits(hits, animation.Length / speed)
+        animation:Play(0.1, 1, speed)
+    end)
+    if not success and #hits > 0 then return BnnFireHits(hits, 0) end
+    return success
+end
+
+function AttackFunction(radius)
+    local character = localPlayer.Character
+    local stun = character and character:FindFirstChild("Stun")
+    if not character or (stun and stun.Value ~= 0) then return end
+    if Settings["Attack No Animation "] then
+        BnnFireHits(BnnGetBladeHits(radius or 80, false), 0)
+    else
+        BnnAnimatedAttack(radius or 80)
+    end
+end
+
+local bnnFruitClickIndex = 1
+local function BnnUseFruitM1(target, secondaryDirection, boatMode)
+    local character = localPlayer.Character
+    local root = character and (character.PrimaryPart or character:FindFirstChild("HumanoidRootPart"))
+    local targetPosition = boatMode and target and target.Position or target and target.PrimaryPart and target.PrimaryPart.Position
+    if not root or not targetPosition then return false end
+    local fruitName = NameWeapon("Blox Fruit")
+    local fruit = fruitName and character:FindFirstChild(fruitName)
+    if not fruit then return false end
+    local leftClick = fruit:FindFirstChild("LeftClickRemote")
+    local remoteFunction = fruit:FindFirstChild("RemoteFunction")
+    local remoteEvent = fruit:FindFirstChild("RemoteEvent")
+    if not leftClick and remoteFunction then
+        if remoteEvent then remoteEvent:FireServer(targetPosition) end
+        remoteFunction:InvokeServer("TAP")
+        return true
+    end
+    if leftClick then
+        if fruitName == "Mammoth-Mammoth" then
+            leftClick:FireServer(targetPosition)
+            return true
+        end
+        bnnFruitClickIndex = bnnFruitClickIndex % 5 + 1
+        local direction = (targetPosition - root.Position).Unit
+        leftClick:FireServer(direction, bnnFruitClickIndex)
+        if secondaryDirection and BnnMouse and BnnMouse.Hit then
+            local mouseDirection = ((BnnMouse.Hit.Position - root.Position) * Vector3.new(1, 0, 1)).Unit
+            leftClick:FireServer(mouseDirection, bnnFruitClickIndex)
+        end
+        return true
+    end
+    return false
+end
+
+getgenv().UseFruitM1 = function(target, secondaryDirection)
+    return BnnUseFruitM1(target, secondaryDirection, false)
+end
+getgenv().UseFruitM1Boat = function(target, secondaryDirection)
+    return BnnUseFruitM1(target, secondaryDirection, true)
+end
+
+getgenv().PathClickM1 = {}
+local function BnnTrackClickRemotes(character)
+    local function track(tool)
+        if not tool:IsA("Tool") then return end
+        task.delay(0.5, function()
+            if tool.Parent then
+                local remote = tool:FindFirstChild("RemoteFunction")
+                if remote then getgenv().PathClickM1[tool.Name] = remote end
+            end
+        end)
+    end
+    for _, child in ipairs(character:GetChildren()) do track(child) end
+    character.ChildAdded:Connect(track)
+end
+if localPlayer.Character then BnnTrackClickRemotes(localPlayer.Character) end
+localPlayer.CharacterAdded:Connect(BnnTrackClickRemotes)
 
 function FastAttack(target)
-    local char = localPlayer.Character
-    if not char then return end
-
-    pcall(function()
-        local netModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-        if not netModule then return end
-        local regAttack = netModule:FindFirstChild("RE/RegisterAttack")
-        local regHit = netModule:FindFirstChild("RE/RegisterHit")
-        if not regAttack or not regHit then return end
-
-        regAttack:FireServer(-math.huge)
-
-        local enemies = {}
-        if target and target:FindFirstChild("HumanoidRootPart") and target:FindFirstChild("Head") then
-            table.insert(enemies, target)
-        else
-            enemies = GetBladeHitsFast()
-        end
-
-        if #enemies > 0 then
-            local args = { nil, {} }
-            for i, v in ipairs(enemies) do
-                if not args[1] then
-                    args[1] = v:FindFirstChild("Head") or v.HumanoidRootPart
-                end
-                args[2][i] = { v, v.HumanoidRootPart }
-            end
-            regHit:FireServer(unpack(args))
-        end
-    end)
+    if target and Settings["Select Weapon"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
+    AttackFunction(target and 30 or 80)
 end
 
--- Adapter cho cac phan code goi fastAttackInstance:Attack()
-local fastAttackInstance = {
-    Attack = FastAttack
-}
+local fastAttackInstance = { Attack = function() FastAttack() end }
 
-function ClickM1(target)
-    FastAttack(target)
+function ClickM1(target, wideRange)
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
+    local humanoid = target and target:FindFirstChildOfClass("Humanoid")
+    if not root or not targetRoot or not humanoid or humanoid.Health <= 0 or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
+    if Settings["Select Weapon"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
+    AttackFunction(wideRange and 80 or 30)
+end
+getgenv().ClickM1 = ClickM1
+
+getgenv().ClickM1Dungeon = function(target, wideRange)
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
+    local humanoid = target and target:FindFirstChildOfClass("Humanoid")
+    if not root or not targetRoot or not humanoid or humanoid.Health <= 0 or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
+    if Settings["Select Weapon Dungeon"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
+    AttackFunction(wideRange and 80 or 30)
+end
+
+getgenv().ClickM1Volcano = function(target, wideRange)
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
+    local humanoid = target and target:FindFirstChildOfClass("Humanoid")
+    if not root or not targetRoot or not humanoid or humanoid.Health <= 0 or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
+    if Settings["Select Weapon Kill Golem"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
+    AttackFunction(wideRange and 80 or 30)
 end
 
 getgenv().AttackFunctionnhungSuperTrial = function()
-    FastAttack()
+    local character = localPlayer.Character
+    local stun = character and character:FindFirstChild("Stun")
+    if not character or (stun and stun.Value ~= 0) then return end
+    BnnFireHits(BnnGetBladeHits(80, true), 0)
 end
+getgenv().AttackFunctionnhungSuper = getgenv().AttackFunctionnhungSuperTrial
 
 -- KillMonster tu loader.lua: ham tieu diet quai/boss chuan muc, on dinh
 function KillMonster(_v, fallbackCFrame)
@@ -683,7 +892,7 @@ function KillMonster(_v, fallbackCFrame)
                         ToTarget(CFrame.new(targetPos))
 
                         if dist <= 50 then
-                            BringMob(v.Name)
+                            BringMob(v)
                             equipWeapon(Settings["Select Weapon"])
                             FastAttack()
                         end
@@ -1335,13 +1544,95 @@ function CheckGoTrain()
     return string.find(st, "Train") ~= nil
 end
 
+function DetectGearUp(data)
+    local ok, buttons = pcall(function()
+        return require(localPlayer.PlayerGui.TempleGui.LocalScriptTemple.Buttons)
+    end)
+    if not ok or type(buttons) ~= "table" then return nil end
+
+    data = data or ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
+    if type(data) ~= "table" or type(data.RaceDetails) ~= "table" then return nil end
+
+    local details = data.RaceDetails
+    local gears = details.Gears or {}
+    local totalAB = (details.A or 0) + (details.B or 0)
+    local hasPoint = data.HadPoint == true
+    local raceLevelReady = (data.RaceLevel or 0) >= 2
+
+    buttons.Gear1.GearType = "Default"
+    buttons.Gear4.GearType = "Default"
+    buttons.Gear5.GearType = "Default"
+    buttons.Gear2.GearType = gears[1] == "A" and "Alpha" or gears[1] == "B" and "Omega" or "Blank"
+    buttons.Gear3.GearType = gears[2] == "A" and "Alpha" or gears[2] == "B" and "Omega" or "Blank"
+    buttons.Gear4.GearType = gears[3] == "A" and "Alpha" or gears[3] == "B" and "Omega" or "Blank"
+    buttons.Gear2.CanSelect = false
+    buttons.Gear3.CanSelect = false
+    buttons.Gear2.Unlocked = totalAB >= 0 and raceLevelReady or false
+    buttons.Gear3.Unlocked = totalAB >= 1 and raceLevelReady or false
+    buttons.Gear4.Unlocked = totalAB >= 2 and raceLevelReady or false
+    buttons.Gear5.CanSelect = false
+    buttons.Gear5.Unlocked = (details.C or 0) >= 1
+    buttons.Gear1.Unlocked = true
+
+    if not raceLevelReady then
+        buttons.Gear1.CanSelect = true
+        buttons.Gear1.GearType = "Blank"
+        hasPoint = true
+    else
+        buttons.Gear1.CanSelect = false
+        buttons.Gear1.GearType = "Default"
+    end
+
+    if not hasPoint then
+        buttons.Gear2.CanSelect = false
+        buttons.Gear3.CanSelect = false
+        buttons.Gear4.CanSelect = false
+    else
+        buttons.Gear2.CanSelect = totalAB == 0 and raceLevelReady or false
+        buttons.Gear3.CanSelect = totalAB == 1 and raceLevelReady or false
+        buttons.Gear4.CanSelect = totalAB >= 2 and raceLevelReady or false
+        if totalAB >= 3 then
+            buttons.Gear2.CanSelect = true
+            buttons.Gear3.CanSelect = true
+            buttons.Gear4.CanSelect = true
+            local g2, g3, g4 = buttons.Gear2.GearType, buttons.Gear3.GearType, buttons.Gear4.GearType
+            if (g2 == "Alpha" and g3 == "Alpha" and g4 == "Omega")
+                or (g2 == "Omega" and g3 == "Omega" and g4 == "Alpha") then
+                buttons.Gear4.CanSelect = false
+            elseif (g2 == "Alpha" and g3 == "Omega" and g4 == "Omega")
+                or (g2 == "Omega" and g3 == "Alpha" and g4 == "Alpha") then
+                buttons.Gear4.CanSelect = false
+                buttons.Gear2.CanSelect = false
+            elseif (g2 == "Omega" and g3 == "Alpha" and g4 == "Omega")
+                or (g2 == "Alpha" and g3 == "Omega" and g4 == "Alpha") then
+                buttons.Gear4.CanSelect = false
+                buttons.Gear3.CanSelect = false
+            end
+        end
+    end
+
+    for index = 1, 5 do
+        local gear = buttons["Gear" .. index]
+        if gear and gear.CanSelect then return "Gear" .. index end
+    end
+    return nil
+end
+
 function ChooseGearV4()
-    local dt = ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
-    if dt and dt.HadPoint then
-        local gearChoice = Settings["Select Gear V4"] or "Omega"
-        local lvl = (dt.RaceDetails and dt.RaceDetails.Completed) or dt.Completed or 1
-        local choosegear = (lvl == 1 or lvl == 5) and "Blank" or gearChoice
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "SpendPoint", "Gear" .. tostring(lvl), choosegear)
+    local data = ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
+    if type(data) ~= "table" or not data.HadPoint then return end
+    local gear = DetectGearUp(data)
+    if not gear then return end
+    local gearType = Settings["Select Gear V4"] == "Alpha" and "Alpha" or "Omega"
+    ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "SpendPoint", gear, gearType)
+    local refreshed = ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
+    if refreshed and refreshed.HadPoint and DetectGearUp(refreshed) == gear then
+        ReplicatedStorage.Remotes.CommF_:InvokeServer(
+            "TempleClock",
+            "SpendPoint",
+            gear,
+            gearType == "Alpha" and "Omega" or "Alpha"
+        )
     end
 end
 
@@ -4950,7 +5241,7 @@ task.spawn(function()
 end)
 
 -- Race V4 Training Execution Engine (From piggyv4)
-local function runRaceTrainingWork()
+local function runRaceTrainingWorkLegacy()
     local char = localPlayer.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") or not char:FindFirstChild("Humanoid") then
         currentTrainingStatus = "Waiting for character"
@@ -5100,7 +5391,7 @@ local function runRaceTrainingWork()
                 ToTarget(CFrame.new(targetPos))
 
                 if dist <= 50 then
-                    BringMob(mob.Name)
+                    BringMob(mob)
                     equipWeapon(Settings["Select Weapon"])
                     FastAttack()
                 end
@@ -5135,6 +5426,95 @@ local function runRaceTrainingWork()
         return true
     end
 
+    return false
+end
+
+-- Auto Finish Train Quest: luong cua bnn.lua, giu nguyen engine teleport Fluent.
+local BnnRaceTrainingMobs = {
+    "Reborn Skeleton",
+    "Demonic Soul",
+    "Living Zombie",
+    "Posessed Mummy",
+    "Possessed Mummy",
+}
+local bnnVisitedRaceSpawns = {}
+
+local function BnnNextRaceSpawnName()
+    for _, name in ipairs(BnnRaceTrainingMobs) do
+        if not table.find(bnnVisitedRaceSpawns, name) then return name end
+    end
+    table.clear(bnnVisitedRaceSpawns)
+    return BnnRaceTrainingMobs[1]
+end
+
+local function runRaceTrainingWork()
+    if Settings["Stack Train With Trial Race"] and not CheckGoTrain() then
+        isCurrentlyTraining = false
+        blockHopAfterTrial = false
+        currentTrainingStatus = "Training complete - Ready for trial"
+        return true
+    end
+
+    isCurrentlyTraining = true
+    blockHopAfterTrial = true
+    currentTrainingStatus = "Auto Finish Train Quest (bnn.lua)"
+    TurnOnV4()
+    BuyGearV4()
+
+    local mob = DetectMob(BnnRaceTrainingMobs)
+    if mob then
+        repeat
+            task.wait()
+            SizePart(mob)
+            BringMob(mob)
+            UsedualFlock()
+            equipWeapon(Settings["Select Weapon"])
+            ClickM1(mob)
+
+            local root = mob:FindFirstChild("HumanoidRootPart")
+            if root then
+                if Settings["Select Weapon"] == "Blox Fruit" then
+                    ToTarget(root.CFrame * CFrame.new(-7, 20, 0))
+                else
+                    ToTarget(root.CFrame * CFrame.new(7, 20, 0))
+                end
+            end
+            currentTrainingStatus = "Haunted Castle: farming " .. tostring(mob.Name)
+        until not IsMobAlive(mob)
+            or not Settings["Auto Finish Train Quest"]
+            or not CheckGoTrain()
+    else
+        local spawnName = BnnNextRaceSpawnName()
+        local spawnPart = DetectPartSpawnMob(spawnName)
+        if spawnPart then
+            if not table.find(bnnVisitedRaceSpawns, spawnName) then
+                table.insert(bnnVisitedRaceSpawns, spawnName)
+            end
+            currentTrainingStatus = "Haunted Castle: waiting for " .. tostring(spawnName)
+            repeat
+                task.wait()
+                local character = localPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                if not root then break end
+                ToTarget(spawnPart.CFrame * CFrame.new(0, 60, 0))
+            until (spawnPart.Position - root.Position).Magnitude <= 100
+                or DetectMob(BnnRaceTrainingMobs)
+                or not Settings["Auto Finish Train Quest"]
+                or not CheckGoTrain()
+            task.wait(1)
+        else
+            table.clear(bnnVisitedRaceSpawns)
+            DeleteIgnoredMobSpawn()
+        end
+    end
+
+    if not CheckGoTrain() then
+        BuyGearV4()
+        isCurrentlyTraining = false
+        blockHopAfterTrial = false
+        currentTrainingStatus = "Training complete - Ready for trial"
+        return true
+    end
     return false
 end
 
@@ -5243,8 +5623,8 @@ task.spawn(function()
 end)
 
 
--- Worker 10: Auto Trial & Auto Reset Character
--- Helper bắt buộc reset khi FFA active (nguyên si logic kaiv4.lua gốc)
+-- Worker 10: Auto Trial + helper reset noi bo (khong co toggle Auto Reset Character)
+-- Helper bat buoc reset khi FFA active de van hanh Multi Trial/Turn V3 Near Door.
 -- Out Temple (ChooseGear/BuyGear) chỉ dành cho Main
 task.spawn(function()
 	-- Cache role mỗi 2s để tránh rebuild HelpWhitelist quá thường xuyên
