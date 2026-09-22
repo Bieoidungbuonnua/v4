@@ -20,6 +20,12 @@ local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
+getgenv().Mode = getgenv().Mode or "Main"
+
+-- OneClickV4 starts only after player data is ready, matching its loader contract.
+if getgenv().Mode == "OneClickV4" and not localPlayer:FindFirstChild("DataLoaded") then
+    localPlayer:WaitForChild("DataLoaded")
+end
 
 -- Shared JoinV4 configuration (kept compatible with the original BNN bundle)
 local _DEFAULT_JOINV4_CFG = {
@@ -30,6 +36,11 @@ local _DEFAULT_JOINV4_CFG = {
     ["Note"] = {"trietautov4"},
     ["LimitMainPerGroup"] = 10,
 }
+
+-- Backward-compatible alias for early OneClickV4 config drafts.
+if type(getgenv().JoinV4Config) ~= "table" and type(getgenv().Skiderhubv4Config) == "table" then
+    getgenv().JoinV4Config = getgenv().Skiderhubv4Config
+end
 
 if type(getgenv().JoinV4Config) ~= "table" then
     getgenv().JoinV4Config = _DEFAULT_JOINV4_CFG
@@ -81,6 +92,9 @@ local function autoJoinTeam()
             end
         end
     end)
+    if getgenv().Mode == "OneClickV4" then
+        targetTeam = "Marines"
+    end
     if targetTeam == "Marine" then targetTeam = "Marines" end
     if targetTeam == "Pirate" then targetTeam = "Pirates" end
 
@@ -327,6 +341,44 @@ elseif type(getgenv().Config) == "table" then
             Settings[k] = v
         end
     end
+end
+
+-- OneClickV4 owns these values: saved settings and getgenv().Config cannot disable them.
+-- JoinV4Config.Helper stays nested: one row is one group and slot [1] is Helper (FM).
+if getgenv().Mode == "OneClickV4" then
+    local oneClickSettings = {
+        ["Auto Trial"] = true,
+        ["Auto Turn On V3 Near Door"] = true,
+        ["V3 Countdown"] = 3,
+        ["Auto Buy Gear"] = true,
+        ["Select Gear V4"] = "Omega",
+        ["Auto Choose Gears"] = true,
+        ["Auto Finish Train Quest"] = true,
+        ["Stack Train With Trial Race"] = true,
+        ["Multi Trial"] = true,
+        ["Select Team"] = "Marines",
+        ["No Frog"] = true,
+    }
+    for key, value in pairs(oneClickSettings) do
+        Settings[key] = value
+    end
+
+    local helperNames, helperSelection, seenHelpers = {}, {}, {}
+    for _, group in ipairs(getgenv().JoinV4Config["Helper"] or {}) do
+        if type(group) == "table" then
+            for _, rawName in ipairs(group) do
+                local name = tostring(rawName):gsub("^%s+", ""):gsub("%s+$", "")
+                if name ~= "" and not seenHelpers[name] then
+                    seenHelpers[name] = true
+                    table.insert(helperNames, name)
+                    helperSelection[name] = true
+                end
+            end
+        end
+    end
+    Settings["Name Helper TurnV3"] = helperNames
+    Settings["Select Players Multi"] = helperSelection
+    getgenv().HelperList = helperNames
 end
 
 if Settings["Auto Click"] == nil then
@@ -2995,7 +3047,7 @@ local function isHelperAccount()
 end
 
 do
-    local V3_COUNTDOWN      = 4
+    local V3_COUNTDOWN      = math.max(1, tonumber(Settings["V3 Countdown"]) or 3)
     local V3_FILE_POLL      = 0.05
     local V3_READY_FRESH    = 5.0
     local V3_FIRE_COUNT     = 3
@@ -5200,7 +5252,13 @@ local function ExportConfigTableString()
         { key = "Auto Click", default = true },
     }
 
-    local lines = { "getgenv().Config = {" }
+    local lines = {
+        'repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer',
+        "",
+        'getgenv().Mode = "Main"',
+        "",
+        "getgenv().Config = {",
+    }
     for _, item in ipairs(configKeysOrder) do
         local k = item.key
         local val = Settings[k]
@@ -5242,13 +5300,52 @@ local function ExportConfigTableString()
     return table.concat(lines, "\n")
 end
 
+local function ExportOneClickV4ConfigString()
+    local cfg = getgenv().JoinV4Config or {}
+    local lines = {
+        'repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("DataLoaded")',
+        "",
+        'getgenv().Mode = "OneClickV4"',
+        "",
+        "getgenv().JoinV4Config = {",
+        '    ["Helper"] = {',
+    }
+
+    for _, group in ipairs(cfg["Helper"] or {}) do
+        if type(group) == "table" then
+            local names = {}
+            for _, name in ipairs(group) do
+                table.insert(names, string.format("%q", tostring(name)))
+            end
+            table.insert(lines, "        {" .. table.concat(names, ", ") .. "},")
+        end
+    end
+    table.insert(lines, "    },")
+
+    local notes = {}
+    for _, note in ipairs(cfg["Note"] or {}) do
+        table.insert(notes, string.format("%q", tostring(note)))
+    end
+    table.insert(lines, '    ["Note"] = {' .. table.concat(notes, ", ") .. "},")
+    table.insert(lines, '    ["LimitMainPerGroup"] = ' .. tostring(tonumber(cfg["LimitMainPerGroup"]) or 10) .. ",")
+    table.insert(lines, "}")
+    return table.concat(lines, "\n")
+end
+
+local function ExportActiveConfigString()
+    if getgenv().Mode == "OneClickV4" then
+        return ExportOneClickV4ConfigString()
+    end
+    return ExportConfigTableString()
+end
+
 local ConfigSection = Tabs.Settings:AddSection("Configuration")
 
 Tabs.Settings:AddButton({
     Title = "Copy Setting",
-    Description = "Copy entire active config to clipboard (getgenv().Config format)",
+    Description = "Copy the active Main or OneClickV4 config",
     Callback = function()
-        local configStr = ExportConfigTableString()
+        local configStr = ExportActiveConfigString()
         local copyFn = setclipboard or toclipboard or (Clipboard and Clipboard.set) or (syn and syn.write_clipboard)
         if copyFn then
             copyFn(configStr)
@@ -5281,7 +5378,7 @@ Tabs.Settings:AddButton({
     Title = "Copy Full Script",
     Description = "Copy Config + Loader script to clipboard",
     Callback = function()
-        local fullScript = ExportConfigTableString() .. '\n\nloadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/skiderhubv4.lua"))()'
+        local fullScript = ExportActiveConfigString() .. '\n\nloadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/skiderhubv4.lua"))()'
         local copyFn = setclipboard or toclipboard or (Clipboard and Clipboard.set) or (syn and syn.write_clipboard)
         if copyFn then
             copyFn(fullScript)
