@@ -21,6 +21,48 @@ local RunService = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
 
+-- Shared JoinV4 configuration (kept compatible with the original BNN bundle)
+local _DEFAULT_JOINV4_CFG = {
+    ["Key-Banana"] = "31d4bebb966b95e8bd94d7a6",
+    ["Helper"] = {
+        {"Cart3rRid3rDrag0n", "penel0peScott1"},
+    },
+    ["Note"] = {"trietautov4"},
+    ["LimitMainPerGroup"] = 10,
+}
+
+if type(getgenv().JoinV4Config) ~= "table" then
+    getgenv().JoinV4Config = _DEFAULT_JOINV4_CFG
+else
+    for key, value in pairs(_DEFAULT_JOINV4_CFG) do
+        if getgenv().JoinV4Config[key] == nil then
+            getgenv().JoinV4Config[key] = value
+        end
+    end
+end
+
+do
+    local seen, helperList = {}, {}
+    for _, group in ipairs(getgenv().JoinV4Config["Helper"] or {}) do
+        if type(group) == "table" then
+            for _, name in ipairs(group) do
+                local clean = tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
+                if clean ~= "" and not seen[clean] then
+                    seen[clean] = true
+                    table.insert(helperList, clean)
+                end
+            end
+        elseif type(group) == "string" then
+            local clean = group:gsub("^%s+", ""):gsub("%s+$", "")
+            if clean ~= "" and not seen[clean] then
+                seen[clean] = true
+                table.insert(helperList, clean)
+            end
+        end
+    end
+    getgenv().HelperList = helperList
+end
+
 -- Auto Join Team (Marines hoặc Pirates, mặc định Marines)
 local function autoJoinTeam()
     local targetTeam = "Marines"
@@ -289,6 +331,9 @@ end
 
 if Settings["Auto Click"] == nil then
     Settings["Auto Click"] = true
+end
+if Settings["Auto Turn On Buso"] == nil then
+    Settings["Auto Turn On Buso"] = true
 end
 
 local function WriteConfigFile()
@@ -1405,6 +1450,17 @@ function UsedualFlock()
     if tool and humanoid and not humanoid.Sit then
         humanoid:EquipTool(tool)
     end
+end
+
+-- Exact BNN-style Buso detection; kept separate from UsedualFlock.
+function FFCMatch(model, pattern)
+    if not model then return nil end
+    for _, child in pairs(model:GetChildren()) do
+        if string.match(child.Name, pattern) then
+            return child
+        end
+    end
+    return nil
 end
 
 function AutoAllSkill(pvp)
@@ -5248,6 +5304,15 @@ Tabs.Settings:AddButton({
 
 local CombatSection = Tabs.Settings:AddSection("Combat Settings")
 
+Tabs.Settings:AddToggle("AutoTurnOnBuso", {
+    Title = "Auto Turn On Buso",
+    Description = "Automatically enables Buso Haki after joining or respawning",
+    Default = Settings["Auto Turn On Buso"] ~= false,
+    Callback = function(enabled)
+        SaveSettings("Auto Turn On Buso", enabled)
+    end
+})
+
 Tabs.Settings:AddToggle("AutoClickToggle", {
     Title = "Auto Click",
     Description = "Fast Attack continuously when holding Melee or Sword",
@@ -5307,6 +5372,21 @@ task.spawn(function()
                     end
                 else
                     getgenv().AttackFunctionnhungSuperTrial()
+                end
+            end)
+        end
+    end
+end)
+
+-- Worker: Auto Turn On Buso (same condition and timing as bnn.lua)
+task.spawn(function()
+    while task.wait(1) do
+        if Settings["Auto Turn On Buso"] then
+            pcall(function()
+                local character = localPlayer.Character
+                if character and not FFCMatch(character, "_BusoLayer1") and not character:FindFirstChild("HasBuso") then
+                    ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
+                    task.wait(2)
                 end
             end)
         end
@@ -5800,4 +5880,1523 @@ task.spawn(function()
 	end
 end)
 
+
+--------------------------------------------------------------------------------
+-- INTEGRATED MOONCHECK UI (kept unchanged from mooncheck.lua)
+--------------------------------------------------------------------------------
+repeat task.wait(0.5) until game:IsLoaded()
+local P = game:GetService("Players")
+local L = P.LocalPlayer
+repeat task.wait(0.25) until L
+local RS = game:GetService("RunService")
+function CheckSea(v)
+    return v == tonumber(workspace:GetAttribute("MAP"):match("%d+"))
+end
+CheckMoon = newcclosure(function()
+    local t = (CheckSea(1) or CheckSea(3))
+        and ((game.Lighting:FindFirstChild("Sky") and game.Lighting.Sky.MoonTextureId)
+        or (game.Lighting:FindFirstChild("Space_Skybox") and game.Lighting.Space_Skybox.MoonTextureId))
+        or (CheckSea(2) and game.Lighting:FindFirstChild("FantasySky") and game.Lighting.FantasySky.MoonTextureId)
+        or ""
+    t = t:gsub("rbxassetid://","http://www.roblox.com/asset/?id=")
+    return ({
+        ["http://www.roblox.com/asset/?id=15493317929"]="Blue Moon";
+        ["http://www.roblox.com/asset/?id=9709149431"]="8/8";
+        ["http://www.roblox.com/asset/?id=9709149052"]="7/8";
+        ["http://www.roblox.com/asset/?id=9709143733"]="6/8";
+        ["http://www.roblox.com/asset/?id=9709150401"]="5/8";
+        ["http://www.roblox.com/asset/?id=9709135895"]="4/8";
+        ["http://www.roblox.com/asset/?id=9709150086"]="2/8";
+        ["http://www.roblox.com/asset/?id=9709139597"]="1/8";
+        ["http://www.roblox.com/asset/?id=9709149680"]="0/8";
+    })[t] or "nil"
+end)
+CheckMoonPhase = newcclosure(function()
+    local m = game.Lighting:GetAttribute("MoonPhase")
+    if not m then return "Unknown","Unknown Phase",nil end
+    if m > 5 then return "Fake Moon","Fake Moon",m
+    elseif m < 5 then return "Bad Moon","Bad Moon",m
+    elseif m == 5 and not getgenv().isfmended then return "Full Moon","Full Moon Up",m
+    elseif m == 5 and getgenv().isfmended then return "Ended","Full Moon End",m end
+end)
+local function S2T(s)
+    if s < 0 then s = 0 end
+    return string.format("%dm %ds",math.floor(s/60),s%60)
+end
+local C, D, NS, NE = 24, 1200, 18, 6
+local function IsNight(c) return (c >= NS) or (c < NE) end
+local function ToStart()
+    local n = game.Lighting.ClockTime
+    if IsNight(n) then return 0 end
+    local d = n < NS and (NS-n) or 0
+    return math.floor((d/C)*D)
+end
+local function ToEnd()
+    local n = game.Lighting.ClockTime
+    if not IsNight(n) then return 0 end
+    local d = n >= NS and ((C-n)+NE) or (NE-n)
+    return math.floor((d/C)*D)
+end
+local function HMS(c)
+    local h = math.floor(c)
+    local m = math.floor((c-h)*60)
+    local s = math.floor(((c-h)*60-m)*60)
+    return string.format("%02d:%02d:%02d",h,m,s)
+end
+local function CreateGUI()
+    local g = L.PlayerGui:FindFirstChild("MoonStatusGUI")
+    if g then g:Destroy() end
+    g = Instance.new("ScreenGui")
+    g.Name = "MoonStatusGUI"
+    g.ResetOnSpawn = false
+    g.IgnoreGuiInset = true
+    g.DisplayOrder = 999999999
+    g.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    g.Enabled = false                   -- hide
+    g.Parent = L.PlayerGui
+    local l = Instance.new("TextLabel")
+    l.Name = "MainLabel"
+    l.Size = UDim2.new(0,600,0,130)
+    l.Position = UDim2.new(0.5,-300,0.5,-65)
+    l.BackgroundTransparency = 1
+    l.Font = Enum.Font.GothamBold
+    l.TextSize = 20
+    l.TextColor3 = Color3.fromRGB(255,255,255)
+    l.TextWrapped = true
+    l.TextStrokeTransparency = 0.3
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextYAlignment = Enum.TextYAlignment.Top
+    l.ZIndex = 2147483647
+    l.RichText = true
+    l.Parent = g
+    return g,l
+end
+local G,Lb = CreateGUI()
+local function Upd()
+    local ms = CheckMoon()
+    local ps,_,pv = CheckMoonPhase()
+    local ct = game.Lighting.ClockTime
+    local ts = ToStart()
+    local te = ToEnd()
+    local tsStr, teStr = S2T(ts), S2T(te)
+    local pc = #P:GetPlayers()
+    local isFull = (ms == "8/8" and ps == "Full Moon")
+    local show = isFull and (ts > 0 or te > 0)
+    G.Enabled = show
+    if not show then return end
+    local function T(t,r)
+        return string.format('<font color="rgb(%d,%d,%d)">%s</font>',r.R*255,r.G*255,r.B*255,t)
+    end
+    local tc = isFull and Color3.fromRGB(255,215,0) or Color3.fromRGB(255,100,100)
+    local kc = Color3.fromRGB(100,200,255)
+    local vc = Color3.fromRGB(255,255,255)
+    local sc = Color3.fromRGB(0,255,150)
+    local pc2 = ps=="Full Moon" and Color3.fromRGB(0,255,150) or Color3.fromRGB(255,100,100)
+    Lb.Text = string.format(
+        "%s\n%s %s\n%s %s\n%s %s\n%s %s [Time: %s]\n%s %s",
+        T("Full Moon Status",tc),
+        T("Time To Start (Night/Full Moon):",kc),T(tsStr,vc),
+        T("Players In Server:",kc),T(tostring(pc),vc),
+        T("Time To End (Night/Full Moon):",kc),T(teStr,vc),
+        T("Moon Status:",kc),T(ms,sc),HMS(ct),
+        T("Phase:",kc),T(tostring(ps).." ("..tostring(pv or "N/A")..")",pc2)
+    )
+end
+RS.Heartbeat:Connect(function()
+    pcall(Upd)
+end)
+
+--------------------------------------------------------------------------------
+-- INTEGRATED JOINV4 ENGINE + DYNAMIC ISLAND STATUS UI
+--------------------------------------------------------------------------------
+-- [3/3] JOINV4 (Kaiv4-BNN/joinv4.lua) - API Moon Hop & Group Management
+-- ══════════════════════════════════════════════════════════════════
+;(function()
+    local CFG = getgenv().JoinV4Config
+
+    -- API / TIMING CONSTANTS
+    local FM_API_URL      = "http://163.61.183.126:3000/fullmoon"
+    local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
+    local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
+    local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
+    local API_BASE        = "http://mbasic7.pikamc.vn:25082"
+    local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
+    local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
+    local HOP_STARTUP_DELAY = 3    -- giây trước khi bắt đầu hop
+
+    -- SERVICES
+    local HttpService       = game:GetService("HttpService")
+    local Players           = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local CoreGui           = game:GetService("CoreGui")
+    local Lighting          = game:GetService("Lighting")
+
+    local Player   = Players.LocalPlayer
+    local USERNAME = Player.Name
+
+    -- PARSE CONFIG -> MULTI-GROUP ROLE DETECTION
+    local function trim(s)
+        return tostring(s):gsub("^%s+", ""):gsub("%s+$", "")
+    end
+
+    local helperGroups = CFG["Helper"] or {}  -- array of arrays
+    local noteList     = CFG["Note"]   or {}  -- array of strings
+
+    -- Sets toàn cục
+    local AllHelperSet = {}  -- username -> true  (tất cả helpers mọi group)
+    local AllHopFMSet  = {}  -- username -> groupIdx  (slot[1] của mỗi group)
+
+    -- Thông tin của USERNAME
+    local MY_GROUP_IDX     = nil   -- chỉ số group (1-based) USERNAME thuộc
+    local MY_GROUP_NOTE    = nil   -- groupId string gửi API
+    local MY_GROUP_HELPERS = {}    -- danh sách helpers của group mình (raw)
+    local MY_HOPFM_NAME    = nil   -- tên HopFM helper của group mình
+
+    for i, helperList in ipairs(helperGroups) do
+        if type(helperList) == "table" then
+            local note = trim(noteList[i] or ("group" .. i))
+
+            -- slot[1] = HopFM của group này
+            local hopFMName = nil
+            if helperList[1] then
+                hopFMName = trim(helperList[1])
+                if hopFMName ~= "" then
+                    AllHopFMSet[hopFMName] = i
+                end
+            end
+
+            for _, h in ipairs(helperList) do
+                h = trim(h)
+                if h ~= "" then
+                    AllHelperSet[h] = true
+                    if h == USERNAME then
+                        MY_GROUP_IDX     = i
+                        MY_GROUP_NOTE    = note
+                        MY_GROUP_HELPERS = helperList
+                        MY_HOPFM_NAME    = hopFMName
+                    end
+                end
+            end
+        end
+    end
+
+    local isHelper = AllHelperSet[USERNAME] == true
+    local isHopFM  = AllHopFMSet[USERNAME]  ~= nil   -- là slot[1] của group nào đó
+    local isMain   = not isHelper
+
+    -- GROUP_ID
+    local GROUP_ID = isHelper and (MY_GROUP_NOTE or trim(noteList[1] or "joinv4")) or ""
+    local myAssignedGroupId = ""  -- main: được cập nhật từ resp.group.id sau sync đầu tiên
+    local myDefaultGroup = trim(noteList[1] or "group1")  -- fallback khi chua duoc gan group
+
+    -- Build HelperSet riêng cho group của mình
+    local MY_HelperSet  = {}
+    local MY_HopFMSet   = {}
+    for _, h in ipairs(MY_GROUP_HELPERS) do
+        h = trim(h)
+        if h ~= "" then
+            MY_HelperSet[h] = true
+            if AllHopFMSet[h] ~= nil then
+                MY_HopFMSet[h] = true
+            end
+        end
+    end
+
+    -- STATE
+    local currentStatus   = "Starting..."
+    local lastFmApiAt     = 0
+    local lastFmApiResult = nil
+    local fmJoinedCache   = {}
+    local FM_CACHE_EXPIRE = 180
+    local HOP_STARTUP     = tick()
+    local fmHopPending    = false
+    local fmPendingCheckAt = 0
+    local _failedHopJobId = ""
+
+    -- HTTP
+    local function httpReq()
+        return http_request or (http and http.request) or request or (syn and syn.request)
+    end
+
+    local function httpGet(url)
+        local r = httpReq()
+        if not r then return nil end
+        local ok, res = pcall(r, { Url = url, Method = "GET" })
+        if ok and res then
+            local body = res.Body or res.body
+            local code = tonumber(res.StatusCode or res.status or 200) or 200
+            if body and code == 200 then return body end
+        end
+        return nil
+    end
+
+    local function httpPost(url, body)
+        local r = httpReq()
+        if not r then return nil end
+        local ok, res = pcall(r, {
+            Url     = url,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = HttpService:JSONEncode(body)
+        })
+        if ok and res then
+            local b = res.Body or res.body
+            local code = tonumber(res.StatusCode or res.status or 200) or 200
+            if b and code == 200 then
+                local ok2, data = pcall(function() return HttpService:JSONDecode(b) end)
+                if ok2 then return data end
+            end
+        end
+        return nil
+    end
+
+    -- MOON CHECK
+    local function isNight()
+        local c = Lighting.ClockTime
+        return c >= 16 or c < 5
+    end
+
+    local function isFullMoon()
+        return Lighting:GetAttribute("MoonPhase") == 5
+    end
+
+    local function isPreFMReady()
+        local ok, result = pcall(function()
+            local function checkSea(v)
+                local attr = workspace:GetAttribute("MAP")
+                if not attr then return false end
+                return v == tonumber(tostring(attr):match("%d+"))
+            end
+            local t = (checkSea(1) or checkSea(3))
+                and ((Lighting:FindFirstChild("Sky") and Lighting.Sky.MoonTextureId)
+                or   (Lighting:FindFirstChild("Space_Skybox") and Lighting.Space_Skybox.MoonTextureId))
+                or   (checkSea(2) and Lighting:FindFirstChild("FantasySky") and Lighting.FantasySky.MoonTextureId)
+                or ""
+            t = t:gsub("rbxassetid://", "http://www.roblox.com/asset/?id=")
+            local moonTex = ({
+                ["http://www.roblox.com/asset/?id=9709149431"]  = "8/8",
+                ["http://www.roblox.com/asset/?id=15493317929"] = "Blue Moon",
+            })[t] or "nil"
+            if moonTex ~= "8/8" and moonTex ~= "Blue Moon" then return false end
+            local m = Lighting:GetAttribute("MoonPhase")
+            if not m or m ~= 5 then return false end
+            if getgenv().isfmended then return false end
+            local NS, NE = 18, 6
+            local ct = Lighting.ClockTime
+            local isNightNow = ct >= NS or ct < NE
+            if not isNightNow then
+                local d = ct < NS and (NS - ct) or 0
+                local toStart = math.floor((d / 24) * 1200)
+                if toStart > 360 then return false end
+            end
+            return true
+        end)
+        return ok and result == true
+    end
+
+    -- FIND FM SERVER (Multi-fallback HTTP)
+    local function findFMServer()
+        if not FM_API_URL or FM_API_URL == "" then return nil end
+
+        local function getField(tbl, ...)
+            if type(tbl) ~= "table" then return nil end
+            local low = {}
+            for k, v in pairs(tbl) do if type(k) == "string" then low[k:lower()] = v end end
+            for i = 1, select("#", ...) do
+                local n = select(i, ...)
+                if n then local val = low[n:lower()]; if val ~= nil then return val end end
+            end
+            return nil
+        end
+
+        local function parsePlayers(f)
+            if not f then return nil end
+            if type(f) == "number" then return f end
+            if type(f) == "string" then
+                local cur = f:match("(%d+)%s*/%s*%d+")
+                if cur then return tonumber(cur) end
+                return tonumber(f)
+            end
+            return nil
+        end
+
+        local function parseTimeToNight(entry)
+            for _, n in ipairs({"timetonight","timeToNight","time_to_night","timeToNightSeconds","time"}) do
+                local v = getField(entry, n); if v ~= nil then return tonumber(v) end
+            end
+            return nil
+        end
+
+        local resp = nil
+        local httpMethods = {
+            function(u) if type(syn) == "table" and type(syn.request) == "function" then return syn.request({Url=u,Method="GET"}) end end,
+            function(u) if type(http_request) == "function" then return http_request({Url=u,Method="GET"}) end end,
+            function(u) if type(request) == "function" then return request({Url=u,Method="GET"}) end end,
+            function(u) if type(http) == "table" and type(http.request) == "function" then return http.request({Url=u,Method="GET"}) end end,
+        }
+        for _, fn in ipairs(httpMethods) do
+            local ok, res = pcall(fn, FM_API_URL)
+            if ok and res and type(res) == "table" and (res.Body or res.body) then
+                local body = res.Body or res.body
+                local code = tonumber(res.StatusCode or res.status or res.Status or 200) or 200
+                resp = {Body = body, StatusCode = code}
+                break
+            end
+        end
+        if not resp or resp.StatusCode ~= 200 then return nil end
+
+        local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
+        if not ok2 or type(parsed) ~= "table" then return nil end
+
+        local entries
+        if type(parsed.data) == "table" and #parsed.data > 0 then
+            entries = parsed.data
+        elseif type(parsed) == "table" and #parsed > 0 then
+            entries = parsed
+        else return nil end
+
+        local candidates = {}
+        for _, v in ipairs(entries) do
+            if type(v) ~= "table" then continue end
+            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
+            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
+            local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
+            if not jobId or jobId == "" then continue end
+            if tostring(jobId) == tostring(game.JobId) then continue end
+            local cached = fmJoinedCache[tostring(jobId)]
+            if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
+            if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
+            if players and tonumber(players) >= 2 and tonumber(players) <= 5 then
+                table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
+            end
+        end
+        if #candidates == 0 then return nil end
+        -- Chon server it player nhat de tranh race condition
+        table.sort(candidates, function(a, b) return a.players < b.players end)
+        return candidates[1].jobId
+    end
+
+    -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
+    local function findNearMoonServer()
+        if not NEAR_MOON_ENABLED or not NEAR_MOON_API_URL or NEAR_MOON_API_URL == "" then return nil end
+
+        local function getField(tbl, ...)
+            if type(tbl) ~= "table" then return nil end
+            local low = {}
+            for k, v in pairs(tbl) do if type(k) == "string" then low[k:lower()] = v end end
+            for i = 1, select("#", ...) do
+                local n = select(i, ...)
+                if n then local val = low[n:lower()]; if val ~= nil then return val end end
+            end
+            return nil
+        end
+
+        local function parsePlayers(f)
+            if not f then return nil end
+            if type(f) == "number" then return f end
+            if type(f) == "string" then
+                local cur = f:match("(%d+)%s*/%s*%d+")
+                if cur then return tonumber(cur) end
+                return tonumber(f)
+            end
+            return nil
+        end
+
+        local resp = nil
+        local httpMethods = {
+            function(u) if type(syn) == "table" and type(syn.request) == "function" then return syn.request({Url=u,Method="GET"}) end end,
+            function(u) if type(http_request) == "function" then return http_request({Url=u,Method="GET"}) end end,
+            function(u) if type(request) == "function" then return request({Url=u,Method="GET"}) end end,
+            function(u) if type(http) == "table" and type(http.request) == "function" then return http.request({Url=u,Method="GET"}) end end,
+        }
+        for _, fn in ipairs(httpMethods) do
+            local ok, res = pcall(fn, NEAR_MOON_API_URL)
+            if ok and res and type(res) == "table" and (res.Body or res.body) then
+                local body = res.Body or res.body
+                local code = tonumber(res.StatusCode or res.status or res.Status or 200) or 200
+                resp = {Body = body, StatusCode = code}
+                break
+            end
+        end
+        if not resp or resp.StatusCode ~= 200 then return nil end
+
+        local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
+        if not ok2 or type(parsed) ~= "table" then return nil end
+
+        local entries
+        if type(parsed.data) == "table" and #parsed.data > 0 then
+            entries = parsed.data
+        elseif type(parsed) == "table" and #parsed > 0 then
+            entries = parsed
+        else return nil end
+
+        local candidates = {}
+        for _, v in ipairs(entries) do
+            if type(v) ~= "table" then continue end
+            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
+            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
+            local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
+            if not jobId or jobId == "" then continue end
+            if tostring(jobId) == tostring(game.JobId) then continue end
+            local cached = fmJoinedCache[tostring(jobId)]
+            if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
+            if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
+            -- Loc: players 2..6
+            if players and tonumber(players) >= 2 and tonumber(players) <= 5 then
+                table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
+            end
+        end
+        if #candidates == 0 then return nil end
+        -- Chon server it player nhat de tranh race condition
+        table.sort(candidates, function(a, b) return a.players < b.players end)
+        return candidates[1].jobId
+    end
+
+    -- Tinh timetonight (seconds) tu ClockTime hien tai trong server
+    local function getServerTimeToNight()
+        local ok, val = pcall(function()
+            local NS = 18
+            local ct = Lighting.ClockTime
+            if ct >= NS or ct < 6 then return 0 end
+            local d = ct < NS and (NS - ct) or 0
+            return math.floor((d / 24) * 1200)
+        end)
+        return ok and (val or 9999) or 9999
+    end
+
+    -- TELEPORT
+    local TeleportService = game:GetService("TeleportService")
+    TeleportService.TeleportInitFailed:Connect(function(_player, result, _msg)
+        local dead = result == Enum.TeleportResult.Failure
+            or result == Enum.TeleportResult.GameEnded
+            or result == Enum.TeleportResult.Unauthorized
+        if dead and lastFmApiResult and lastFmApiResult ~= "" then
+            warn("[JoinV4] TeleportInitFailed (" .. tostring(result) .. ") -> blacklist " .. lastFmApiResult:sub(1,8))
+            _failedHopJobId = lastFmApiResult
+            fmJoinedCache[lastFmApiResult] = os.time()
+            lastFmApiResult = nil
+            lastFmApiAt     = 0
+        end
+    end)
+
+    local function hopTo(jobId)
+        pcall(function()
+            local sb = ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+            if sb then
+                sb:InvokeServer("teleport", jobId)
+            end
+        end)
+    end
+
+    -- NATIVE V4 STATUS CHECK
+    local _CommF_ = nil
+    pcall(function()
+        _CommF_ = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("CommF_", 5)
+    end)
+
+    local function getLocalV4Status()
+        local v4s = nil
+        pcall(function()
+            if type(getV4Status) == "function" then
+                v4s = getV4Status(false)
+            end
+        end)
+        if v4s then return v4s end
+
+        if not _CommF_ then
+            pcall(function()
+                _CommF_ = ReplicatedStorage:FindFirstChild("Remotes")
+                    and ReplicatedStorage.Remotes:FindFirstChild("CommF_")
+            end)
+        end
+        if not _CommF_ then return nil end
+
+        local char = Player.Character
+        if not char then return nil end
+
+        local raceTransformed = char:FindFirstChild("RaceTransformed")
+
+        if not raceTransformed then
+            local ok, progress = pcall(function()
+                return _CommF_:InvokeServer("RaceV4Progress", "Check")
+            end)
+            if not ok then return nil end
+            progress = tonumber(progress)
+            if progress == nil then
+                return { key = "check_failed", needsTraining = false, needsPurchase = false, canTrial = false, complete = false }
+            end
+            if progress < 4 then
+                return { key = "pre_v4_progress_" .. tostring(progress), needsTraining = true, needsPurchase = false, canTrial = false, complete = false }
+            else
+                return { key = "first_trial_ready", needsTraining = false, needsPurchase = false, canTrial = true, complete = false }
+            end
+        else
+            local ok, code, prog = pcall(function()
+                return _CommF_:InvokeServer("UpgradeRace", "Check")
+            end)
+            if not ok then return nil end
+            code = tonumber(code)
+            if code == nil then return nil end
+
+            if     code == 0 then return { key = "trial_ready",          needsTraining = false, needsPurchase = false, canTrial = true,  complete = false }
+            elseif code == 1 then return { key = "training_stage_1",     needsTraining = true,  needsPurchase = false, canTrial = false, complete = false }
+            elseif code == 2 then return { key = "buy_gear_1",           needsTraining = false, needsPurchase = true,  canTrial = false, complete = false }
+            elseif code == 3 then return { key = "training_stage_2",     needsTraining = true,  needsPurchase = false, canTrial = false, complete = false }
+            elseif code == 4 then return { key = "buy_duration",         needsTraining = false, needsPurchase = true,  canTrial = false, complete = false }
+            elseif code == 5 then return { key = "completed",            needsTraining = false, needsPurchase = false, canTrial = false, complete = true  }
+            elseif code == 6 then
+                local completed = math.clamp((tonumber(prog) or 2) - 2, 0, 3)
+                local remaining = math.max(0, 3 - completed)
+                return { key = "three_session_training", needsTraining = remaining > 0, needsPurchase = false, canTrial = false, complete = false }
+            elseif code == 7 then return { key = "buy_next_upgrade",     needsTraining = false, needsPurchase = true,  canTrial = false, complete = false }
+            elseif code == 8 then
+                local remaining = math.max(0, 10 - (tonumber(prog) or 0))
+                return { key = "mastery_training", needsTraining = remaining > 0, needsPurchase = false, canTrial = false, complete = remaining <= 0 }
+            else
+                return { key = "not_ready_" .. tostring(code), needsTraining = false, needsPurchase = false, canTrial = false, complete = false }
+            end
+        end
+    end
+
+    local _v4Cache   = { needsTraining=nil, needsPurchase=nil, canTrial=false, complete=false, key=nil }
+    local _v4CacheAt = 0
+    local V4_CACHE_TTL = 4
+
+    local function updateV4Cache()
+        if not isMain then return end
+        if tick() - _v4CacheAt < V4_CACHE_TTL then return end
+        local v4s = getLocalV4Status()
+        if v4s then
+            _v4Cache   = v4s
+            _v4CacheAt = tick()
+        end
+    end
+
+    -- BUILD PAYLOAD
+    local function buildPayload(hasFM)
+        local gid = isHelper and GROUP_ID or myAssignedGroupId
+
+        local groupsArr = {}
+        for i, helperList in ipairs(helperGroups) do
+            if type(helperList) == "table" then
+                local note = trim(noteList[i] or ("group" .. i))
+                local cleanHelpers = {}
+                for _, h in ipairs(helperList) do
+                    h = trim(h)
+                    if h ~= "" then table.insert(cleanHelpers, h) end
+                end
+                table.insert(groupsArr, {
+                    id      = note,
+                    name    = note,
+                    helpers = cleanHelpers,
+                })
+            end
+        end
+
+        local isTrain = _v4Cache.needsTraining == true
+        local isBuy   = _v4Cache.needsPurchase == true
+        local isTrial = _v4Cache.canTrial      == true
+        local isDone  = _v4Cache.complete      == true
+        local syncStatus = currentStatus
+        if isTrain then syncStatus = "training"
+        elseif isBuy  then syncStatus = "buy gear"
+        elseif isTrial then syncStatus = "trial"
+        elseif isDone  then syncStatus = "complete"
+        end
+
+        local limitMain = math.max(1, math.min(50, tonumber(CFG["LimitMainPerGroup"]) or 10))
+        local numGroups = #helperGroups
+
+        return {
+            username      = USERNAME,
+            role          = isHelper and "helper" or "main",
+            groupId       = gid,
+            jobId         = tostring(game.JobId),
+            placeId       = tostring(game.PlaceId),
+            fullMoon      = hasFM,
+            nearFM        = isPreFMReady(),
+            fullmoon      = hasFM,
+            nearfm        = isPreFMReady(),
+            jobid         = tostring(game.JobId),
+            status        = syncStatus,
+            ready         = hasFM,
+            alive         = true,
+            needsTraining = isTrain,
+            needsPurchase = isBuy,
+            canTrial      = isTrial,
+            complete      = isDone,
+            groups        = groupsArr,
+            limitMainUp   = limitMain,
+            soluonggroup  = numGroups,
+        }
+    end
+
+    local function syncToAPI()
+        local hasFM = isNight() and isFullMoon()
+        return httpPost(API_BASE .. "/data", buildPayload(hasFM))
+    end
+
+    -- STATUS TEXT
+    local function setStatus(txt)
+        currentStatus = tostring(txt or "")
+    end
+
+    -- ══════════════════════════════════════════════════════════════════
+    -- JOINV4 DYNAMIC ISLAND UI (adapted from dynamic.lua)
+    -- Keeps the Dynamic Island expand/collapse, rubber-band and live animations.
+    -- ══════════════════════════════════════════════════════════════════
+    local UserInputService = game:GetService("UserInputService")
+    local RunService = game:GetService("RunService")
+    local FONT_SF_BOLD = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.Bold)
+    local FONT_SF_SEMI = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.SemiBold)
+    local FONT_SF_MED  = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.Medium)
+    local FONT_SF_REG  = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.Regular)
+
+    local C_ORANGE = Color3.fromRGB(255, 159, 10)
+    local C_GREEN  = Color3.fromRGB(48, 209, 88)
+    local C_RED    = Color3.fromRGB(255, 59, 48)
+    local C_BLUE   = Color3.fromRGB(10, 132, 255)
+    local C_PURPLE = Color3.fromRGB(191, 90, 242)
+    local C_MUTED  = Color3.fromRGB(142, 142, 147)
+    local C_WHITE  = Color3.fromRGB(245, 245, 247)
+    local C_BG     = Color3.fromRGB(0, 0, 0)
+
+    local HOME_POSITION = UDim2.new(0.5, 0, 0, 11)
+    local COMPACT_SIZE  = UDim2.new(0, 286, 0, 40)
+    local EXPANDED_SIZE = UDim2.new(0, 390, 0, 210)
+
+    local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel
+    local CompactRole, CompactStatus, StatusDot, IslandStroke, IslandCorner
+    local CompactContent, ExpandedContent
+    local isExpanded, isAnimating = false, false
+    local statusColor = C_ORANGE
+
+    local function applyFont(label, face, size)
+        label.FontFace = face
+        label.TextSize = size
+    end
+
+    local function round(instance, radius)
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = radius and UDim.new(0, radius) or UDim.new(1, 0)
+        corner.Parent = instance
+        return corner
+    end
+
+    local function newLabel(parent, name, value, face, size)
+        local label = Instance.new("TextLabel")
+        label.Name = name
+        label.BackgroundTransparency = 1
+        label.Text = value
+        label.TextColor3 = C_WHITE
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Center
+        label.TextTruncate = Enum.TextTruncate.AtEnd
+        applyFont(label, face, size)
+        label.Parent = parent
+        return label
+    end
+
+    local function colorForStatus(value)
+        local s = tostring(value or ""):lower()
+        if s:find("timeout") or s:find("fail") or s:find("error") or s:find("conflict") then
+            return C_RED
+        elseif s:find("trial") or s:find("done") or s:find("complete") or s:find("full moon") or s:find("fm active") then
+            return C_GREEN
+        elseif s:find("hop") or s:find("teleport") or s:find("join") then
+            return C_BLUE
+        elseif s:find("train") or s:find("buy") then
+            return C_ORANGE
+        elseif s:find("wait") or s:find("sett") or s:find("connect") or s:find("check") then
+            return Color3.fromRGB(100, 210, 255)
+        end
+        return C_PURPLE
+    end
+
+    local function paintStatus(value)
+        statusColor = colorForStatus(value)
+        if StatusDot then StatusDot.BackgroundColor3 = statusColor end
+        if IslandStroke then
+            TweenService:Create(IslandStroke, TweenInfo.new(0.25), {
+                Color = statusColor,
+                Transparency = 0.18,
+            }):Play()
+        end
+        if CompactStatus then
+            CompactStatus.Text = tostring(value or "")
+            CompactStatus.TextColor3 = statusColor
+        end
+        if StatusLabel then
+            StatusLabel.Text = tostring(value or "")
+            StatusLabel.TextColor3 = statusColor
+        end
+    end
+
+    local function setStatus(txt)
+        currentStatus = tostring(txt or "")
+        paintStatus(currentStatus)
+    end
+
+    local function expandIsland()
+        if isAnimating or isExpanded or not MainCard then return end
+        isAnimating = true
+        isExpanded = true
+        local squeeze = TweenService:Create(MainCard, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(0, COMPACT_SIZE.X.Offset - 10, 0, COMPACT_SIZE.Y.Offset - 4),
+        })
+        squeeze:Play()
+        squeeze.Completed:Connect(function()
+            if not MainCard or not MainCard.Parent then return end
+            CompactContent.Visible = false
+            ExpandedContent.Visible = true
+            ExpandedContent.GroupTransparency = 1
+            TweenService:Create(MainCard, TweenInfo.new(0.48, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { Size = EXPANDED_SIZE }):Play()
+            TweenService:Create(IslandCorner, TweenInfo.new(0.48, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { CornerRadius = UDim.new(0, 42) }):Play()
+            TweenService:Create(ExpandedContent, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
+            task.delay(0.48, function() isAnimating = false end)
+        end)
+    end
+
+    local function collapseIsland()
+        if isAnimating or not isExpanded or not MainCard then return end
+        isAnimating = true
+        TweenService:Create(ExpandedContent, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 1 }):Play()
+        task.delay(0.08, function()
+            if not MainCard or not MainCard.Parent then return end
+            ExpandedContent.Visible = false
+            CompactContent.Visible = true
+            CompactContent.GroupTransparency = 1
+            TweenService:Create(MainCard, TweenInfo.new(0.38, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { Size = COMPACT_SIZE }):Play()
+            TweenService:Create(IslandCorner, TweenInfo.new(0.38, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { CornerRadius = UDim.new(1, 0) }):Play()
+            TweenService:Create(CompactContent, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
+            task.delay(0.38, function()
+                isExpanded = false
+                isAnimating = false
+            end)
+        end)
+    end
+
+    local function createUI()
+        pcall(function()
+            local parent = (gethui and gethui()) or CoreGui
+            local old = parent:FindFirstChild("JoinV4UI")
+            if old then old:Destroy() end
+        end)
+
+        local guiParent = (gethui and gethui()) or CoreGui
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "JoinV4UI"
+        sg.ResetOnSpawn = false
+        sg.IgnoreGuiInset = true
+        sg.DisplayOrder = 999999
+        sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
+        sg.Parent = guiParent
+        ScreenGui = sg
+
+        local island = Instance.new("Frame")
+        island.Name = "IslandRoot"
+        island.AnchorPoint = Vector2.new(0.5, 0)
+        island.Position = HOME_POSITION
+        island.Size = COMPACT_SIZE
+        island.BackgroundColor3 = C_BG
+        island.BorderSizePixel = 0
+        island.ClipsDescendants = true
+        island.Active = true
+        island.ZIndex = 50
+        island.Parent = sg
+        MainCard = island
+        IslandCorner = round(island)
+
+        local gradient = Instance.new("UIGradient")
+        gradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 20, 22)),
+            ColorSequenceKeypoint.new(1, C_BG),
+        })
+        gradient.Rotation = 120
+        gradient.Parent = island
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = statusColor
+        stroke.Thickness = 1.25
+        stroke.Transparency = 0.18
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = island
+        IslandStroke = stroke
+
+        local compact = Instance.new("CanvasGroup")
+        compact.Name = "Compact"
+        compact.Size = UDim2.fromScale(1, 1)
+        compact.BackgroundTransparency = 1
+        compact.ZIndex = 51
+        compact.Parent = island
+        CompactContent = compact
+
+        local dot = Instance.new("Frame")
+        dot.Name = "LiveDot"
+        dot.Size = UDim2.fromOffset(10, 10)
+        dot.Position = UDim2.new(0, 15, 0.5, -5)
+        dot.BackgroundColor3 = statusColor
+        dot.BorderSizePixel = 0
+        dot.ZIndex = 52
+        dot.Parent = compact
+        round(dot)
+        StatusDot = dot
+
+        CompactRole = newLabel(compact, "Role", "JOIN V4", FONT_SF_BOLD, 12)
+        CompactRole.Size = UDim2.new(0, 105, 1, 0)
+        CompactRole.Position = UDim2.new(0, 34, 0, 0)
+        CompactRole.ZIndex = 52
+
+        CompactStatus = newLabel(compact, "Status", "Starting...", FONT_SF_SEMI, 12)
+        CompactStatus.Size = UDim2.new(1, -142, 1, 0)
+        CompactStatus.Position = UDim2.new(0, 132, 0, 0)
+        CompactStatus.TextXAlignment = Enum.TextXAlignment.Right
+        CompactStatus.ZIndex = 52
+
+        local expanded = Instance.new("CanvasGroup")
+        expanded.Name = "Expanded"
+        expanded.Size = UDim2.fromScale(1, 1)
+        expanded.BackgroundTransparency = 1
+        expanded.Visible = false
+        expanded.GroupTransparency = 1
+        expanded.ZIndex = 51
+        expanded.Parent = island
+        ExpandedContent = expanded
+
+        local title = newLabel(expanded, "Title", "JOIN V4", FONT_SF_BOLD, 18)
+        title.Size = UDim2.new(0, 130, 0, 26)
+        title.Position = UDim2.new(0, 22, 0, 15)
+        title.ZIndex = 52
+
+        local user = newLabel(expanded, "User", USERNAME, FONT_SF_MED, 12)
+        user.Size = UDim2.new(1, -175, 0, 26)
+        user.Position = UDim2.new(0, 153, 0, 15)
+        user.TextXAlignment = Enum.TextXAlignment.Right
+        user.TextColor3 = C_MUTED
+        user.ZIndex = 52
+
+        local divider = Instance.new("Frame")
+        divider.Size = UDim2.new(1, -44, 0, 1)
+        divider.Position = UDim2.new(0, 22, 0, 48)
+        divider.BackgroundColor3 = Color3.fromRGB(45, 45, 48)
+        divider.BorderSizePixel = 0
+        divider.ZIndex = 52
+        divider.Parent = expanded
+
+        local function makeInfoRow(y, caption)
+            local cap = newLabel(expanded, caption .. "Caption", caption, FONT_SF_REG, 12)
+            cap.Size = UDim2.new(0, 74, 0, 25)
+            cap.Position = UDim2.new(0, 22, 0, y)
+            cap.TextColor3 = C_MUTED
+            cap.ZIndex = 52
+            local val = newLabel(expanded, caption, "...", FONT_SF_SEMI, 13)
+            val.Size = UDim2.new(1, -118, 0, 25)
+            val.Position = UDim2.new(0, 96, 0, y)
+            val.TextXAlignment = Enum.TextXAlignment.Right
+            val.ZIndex = 52
+            return val
+        end
+
+        RolePill = makeInfoRow(55, "Role")
+        GroupPill = makeInfoRow(84, "Group")
+        MoonLabel = makeInfoRow(113, "Moon")
+
+        local statusBox = Instance.new("Frame")
+        statusBox.Name = "JoinStatus"
+        statusBox.Size = UDim2.new(1, -44, 0, 42)
+        statusBox.Position = UDim2.new(0, 22, 1, -54)
+        statusBox.BackgroundColor3 = Color3.fromRGB(24, 24, 27)
+        statusBox.BorderSizePixel = 0
+        statusBox.ZIndex = 52
+        statusBox.Parent = expanded
+        round(statusBox, 14)
+
+        local statusAccent = Instance.new("Frame")
+        statusAccent.Name = "Accent"
+        statusAccent.Size = UDim2.new(0, 4, 0, 22)
+        statusAccent.Position = UDim2.new(0, 10, 0.5, -11)
+        statusAccent.BackgroundColor3 = statusColor
+        statusAccent.BorderSizePixel = 0
+        statusAccent.ZIndex = 53
+        statusAccent.Parent = statusBox
+        round(statusAccent)
+
+        StatusLabel = newLabel(statusBox, "Status", currentStatus, FONT_SF_MED, 13)
+        StatusLabel.Size = UDim2.new(1, -28, 1, 0)
+        StatusLabel.Position = UDim2.new(0, 22, 0, 0)
+        StatusLabel.TextWrapped = true
+        StatusLabel.TextTruncate = Enum.TextTruncate.None
+        StatusLabel.ZIndex = 53
+
+        local isDragging = false
+        local dragStart = Vector2.zero
+        local dragDistance = 0
+        local dragConnection
+        local MAX_PULL_X, MAX_PULL_Y, RESISTANCE = 45, 35, 0.28
+
+        local function rubber(delta, maxLimit)
+            local sign = math.sign(delta)
+            local amount = math.abs(delta)
+            return sign * (1 - (1 / ((amount * RESISTANCE / maxLimit) + 1))) * maxLimit
+        end
+
+        island.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+            isDragging = true
+            dragDistance = 0
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            local base = isExpanded and EXPANDED_SIZE or COMPACT_SIZE
+            TweenService:Create(island, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
+                Size = UDim2.new(0, base.X.Offset * 0.97, 0, base.Y.Offset * 0.97),
+            }):Play()
+            if dragConnection then dragConnection:Disconnect() end
+            dragConnection = UserInputService.InputChanged:Connect(function(changed)
+                if not isDragging then return end
+                if changed.UserInputType ~= Enum.UserInputType.MouseMovement and changed.UserInputType ~= Enum.UserInputType.Touch then return end
+                local delta = Vector2.new(changed.Position.X, changed.Position.Y) - dragStart
+                dragDistance = delta.Magnitude
+                local rx, ry = rubber(delta.X, MAX_PULL_X), rubber(delta.Y, MAX_PULL_Y)
+                island.Position = UDim2.new(HOME_POSITION.X.Scale, HOME_POSITION.X.Offset + rx, HOME_POSITION.Y.Scale, HOME_POSITION.Y.Offset + ry)
+                island.Size = UDim2.new(0, base.X.Offset + math.abs(rx) * 0.12, 0, base.Y.Offset + math.abs(ry) * 0.10)
+            end)
+        end)
+
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+            if not isDragging then return end
+            isDragging = false
+            if dragConnection then dragConnection:Disconnect(); dragConnection = nil end
+            local targetSize = isExpanded and EXPANDED_SIZE or COMPACT_SIZE
+            TweenService:Create(island, TweenInfo.new(0.48, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                Position = HOME_POSITION,
+                Size = targetSize,
+            }):Play()
+            if dragDistance < 8 then
+                if isExpanded then collapseIsland() else expandIsland() end
+            end
+        end)
+
+        local phase = 0
+        RunService.Heartbeat:Connect(function(dt)
+            if not island.Parent then return end
+            phase = (phase + dt * 3.2) % (math.pi * 2)
+            local pulse = (math.sin(phase) + 1) * 0.5
+            dot.Size = UDim2.fromOffset(9 + pulse * 3, 9 + pulse * 3)
+            dot.Position = UDim2.new(0, 15 - pulse * 1.5, 0.5, -(9 + pulse * 3) / 2)
+            dot.BackgroundTransparency = 0.05 + (1 - pulse) * 0.3
+            statusAccent.BackgroundColor3 = statusColor
+            gradient.Rotation = (gradient.Rotation + dt * 4) % 360
+        end)
+
+        paintStatus(currentStatus)
+    end
+
+    local function updateUI()
+        if not ScreenGui or not ScreenGui.Parent or not MainCard or not MainCard.Parent then
+            pcall(createUI)
+            return
+        end
+
+        local roleText, roleColor
+        if isMain then
+            roleText, roleColor = "MAIN", C_PURPLE
+        elseif isHopFM then
+            roleText, roleColor = "HELPER (FM)", C_BLUE
+        else
+            roleText = "HELPER GR " .. tostring(MY_GROUP_IDX or "?")
+            roleColor = Color3.fromRGB(100, 180, 255)
+        end
+        RolePill.Text = roleText
+        RolePill.TextColor3 = roleColor
+        CompactRole.Text = roleText
+        CompactRole.TextColor3 = roleColor
+
+        if isHelper then
+            GroupPill.Text = tostring(MY_GROUP_NOTE or "?")
+            GroupPill.TextColor3 = C_ORANGE
+        elseif myAssignedGroupId and myAssignedGroupId ~= "" then
+            GroupPill.Text = tostring(myAssignedGroupId)
+            GroupPill.TextColor3 = C_GREEN
+        else
+            GroupPill.Text = "Assigning..."
+            GroupPill.TextColor3 = C_MUTED
+        end
+
+        local hasFM = isNight() and isFullMoon()
+        if hasFM then
+            MoonLabel.Text = "FULL MOON · ACTIVE"
+            MoonLabel.TextColor3 = C_GREEN
+        else
+            local moonText = ""
+            pcall(function()
+                if type(CheckMoon) == "function" then moonText = tostring(CheckMoon()) end
+            end)
+            if moonText == "" or moonText == "nil" then moonText = "No Full Moon" end
+            MoonLabel.Text = moonText .. " · " .. string.format("%02d:%02d", math.floor(Lighting.ClockTime), math.floor((Lighting.ClockTime % 1) * 60))
+            MoonLabel.TextColor3 = C_MUTED
+        end
+
+        paintStatus(currentStatus)
+    end
+
+    -- BOOT
+    task.spawn(createUI)
+    pcall(function()
+        if not Player:FindFirstChild("DataLoaded") then
+            Player:WaitForChild("DataLoaded", 5)
+        end
+    end)
+    setStatus("Loaded & Running")
+    task.wait(0.5)
+
+    task.spawn(function()
+        while task.wait(0.4) do pcall(updateUI) end
+    end)
+
+    if not isHelper and not isMain then
+        setStatus("Not in config - idle")
+        return
+    end
+
+    -- HELPER: HOP FM LOOP
+    if isHelper and isHopFM then
+        task.spawn(function()
+            task.wait(HOP_STARTUP_DELAY)
+            local lastHopT   = ""
+            local lastHopAt_ = 0
+            local isFetching = false
+            local takenJobIds        = {}
+            local isHopping  = false   -- guard: khong retry khi dang teleport
+            local lastConflictCheckAt = 0
+
+            while task.wait(0.25) do
+                local nowTick = tick()
+
+                if isNight() and isFullMoon() then
+                    local myGroupIdx = AllHopFMSet[USERNAME] or 999
+                    local conflictWith = nil
+
+                    if nowTick - lastConflictCheckAt >= SYNC_INTERVAL then
+                        lastConflictCheckAt = nowTick
+                        pcall(function()
+                            local resp = syncToAPI()
+                            takenJobIds = {}
+                            if resp and resp.accounts then
+                                for name, data in pairs(resp.accounts) do
+                                    if AllHopFMSet[name] and name ~= USERNAME
+                                        and AllHopFMSet[name] ~= myGroupIdx then
+                                        local jid = tostring(data.jobid or data.jobId or "")
+                                        if jid ~= "" then
+                                            if jid == game.JobId then
+                                                if AllHopFMSet[name] < myGroupIdx then
+                                                    conflictWith = name
+                                                end
+                                            elseif jid ~= game.JobId then
+                                                takenJobIds[jid] = name
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                    end
+
+                    if conflictWith then
+                        warn("[JoinV4][HopFM] Conflict sau hop: " .. conflictWith
+                            .. " (G" .. tostring(AllHopFMSet[conflictWith] or "?") .. ") cung o day"
+                            .. " -> G" .. tostring(myGroupIdx) .. " roi di tim server khac")
+                        fmJoinedCache[game.JobId] = os.time()
+                        lastFmApiResult = nil
+                        lastFmApiAt     = 0
+                        lastHopT        = ""
+                        setStatus("Conflict FM - tim server khac...")
+                    else
+                        setStatus("Full Moon - broadcasting...")
+                        lastHopT = ""
+                    end
+                    task.wait(3); continue
+                end
+                if isPreFMReady() then
+                    -- Kiem tra timetonight: neu > NEAR_MOON_MAX_TTN (300s) thi la fake moon -> hop di
+                    if NEAR_MOON_ENABLED then
+                        local ttn = getServerTimeToNight()
+                        if ttn > NEAR_MOON_MAX_TTN then
+                            warn("[JoinV4][HopFM] Near Moon fake: timetonight=" .. ttn .. "s > " .. NEAR_MOON_MAX_TTN .. "s -> hop away")
+                            fmJoinedCache[game.JobId] = os.time()
+                            lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
+                            setStatus("Near Moon fake (" .. ttn .. "s) - tim server khac...")
+                            task.wait(2); continue
+                        end
+                    end
+                    setStatus("Pre-FM ready - waiting night (" .. getServerTimeToNight() .. "s)...")
+                    task.wait(2); continue
+                end
+
+                if nowTick - lastConflictCheckAt >= SYNC_INTERVAL then
+                    lastConflictCheckAt = nowTick
+                    pcall(function()
+                        local resp = syncToAPI()
+                        takenJobIds = {}
+                        if resp and resp.accounts then
+                            for name, data in pairs(resp.accounts) do
+                                if AllHopFMSet[name] and name ~= USERNAME
+                                    and AllHopFMSet[name] ~= AllHopFMSet[USERNAME] then
+                                    local jid = tostring(data.jobid or data.jobId or "")
+                                    if jid ~= "" and jid ~= game.JobId then
+                                        takenJobIds[jid] = name
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                end
+
+                if not isFetching and nowTick - lastFmApiAt >= FM_API_INTERVAL then
+                    lastFmApiAt = nowTick; isFetching = true
+                    task.spawn(function()
+                        local found = findFMServer()
+                        -- Fallback: neu FM API khong co server, thu Near Moon API
+                        if not found and NEAR_MOON_ENABLED then
+                            found = findNearMoonServer()
+                            if found then
+                                warn("[JoinV4][HopFM] Dung Near Moon server: " .. found:sub(1,8) .. "...")
+                            end
+                        end
+                        if found and takenJobIds[found] then
+                            warn("[JoinV4][HopFM] Server " .. found:sub(1,8) .. "... da bi " .. takenJobIds[found] .. " claim - tim server khac")
+                            fmJoinedCache[found] = os.time()
+                            lastFmApiResult = nil
+                        else
+                            lastFmApiResult = (found and found ~= game.JobId) and found or nil
+                            if not lastFmApiResult then setStatus("No FM server, retrying...") end
+                        end
+                        isFetching = false
+                    end)
+                end
+
+                if lastFmApiResult and lastFmApiResult ~= game.JobId then
+                    local hopT = lastFmApiResult
+                    if takenJobIds[hopT] then
+                        warn("[JoinV4][HopFM] Truoc hop phat hien " .. takenJobIds[hopT] .. " dang o server nay - bo qua")
+                        fmJoinedCache[hopT] = os.time()
+                        lastFmApiResult = nil; lastHopT = ""
+                    elseif hopT ~= lastHopT then
+                        lastHopAt_ = nowTick; lastHopT = hopT
+                        isHopping = true
+                        setStatus("Hop FM: " .. hopT:sub(1,8) .. "...")
+                        pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
+                        task.spawn(function()
+                            hopTo(hopT)
+                            task.wait(12)   -- cho teleport hoan tat (toi da 12s)
+                            isHopping = false
+                        end)
+                    else
+                        if _failedHopJobId == hopT then
+                            _failedHopJobId = ""
+                            isHopping = false
+                            lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
+                        elseif isHopping then
+                            setStatus("Teleporting to " .. hopT:sub(1,8) .. "...")
+                        else
+                            local el = nowTick - lastHopAt_
+                            if el >= 10 then
+                                setStatus("Hop timeout - try next server")
+                                fmJoinedCache[hopT] = os.time() - (FM_CACHE_EXPIRE - 60)
+                                lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
+                            else
+                                setStatus("Waiting teleport " .. hopT:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- HELPER: SYNC STATUS + JOIN FM
+    if isHelper then
+        task.spawn(function()
+            task.wait(HOP_STARTUP_DELAY + 1)
+            pcall(function()
+                if isfile("jv4_fmhop_pending.txt") and readfile("jv4_fmhop_pending.txt") == "true" then
+                    fmHopPending = true
+                    writefile("jv4_fmhop_pending.txt", "false")
+                    fmPendingCheckAt = tick() + 20
+                    setStatus("FM server settling...")
+                end
+            end)
+
+            local lastHopTHelper  = ""
+            local lastHopAtHelper = 0
+
+            while task.wait(SYNC_INTERVAL) do
+                pcall(function()
+                    if fmHopPending and tick() < fmPendingCheckAt then
+                        setStatus(string.format("Settling... %ds", math.ceil(fmPendingCheckAt - tick())))
+                        return
+                    end
+                    fmHopPending = false
+                    local hasFM = isNight() and isFullMoon()
+
+                    local resp = syncToAPI()
+
+                    if isHopFM then
+                        setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
+                        return
+                    end
+
+                    if not resp or not resp.accounts then
+                        setStatus("Connecting...")
+                        return
+                    end
+
+                    local fmJobId = nil
+                    local fmWho   = nil
+                    local hopFMFound = false   -- debug: co tim thay HopFM trong accounts khong
+                    local hopFMFMState = "?"  -- debug: fullMoon cua HopFM la gi
+                    local accCount = 0
+
+                    for name, data in pairs(resp.accounts) do
+                        accCount = accCount + 1
+                        if MY_HopFMSet[name] and name ~= USERNAME then
+                            hopFMFound = true
+                            local helperHasFM  = (data.fullMoon  == true) or (data.fullmoon  == true)
+                            local helperNearFM = (data.nearFM    == true) or (data.nearfm    == true)
+                            hopFMFMState = tostring(data.fullMoon or data.fullmoon or "nil")
+                            if helperHasFM then
+                                local jid = tostring(data.jobid or data.jobId or "")
+                                if jid ~= "" then
+                                    fmJobId = jid; fmWho = name; break
+                                end
+                            elseif helperNearFM then
+                                -- HopFM dang o near-moon server, follow vao de chuan bi
+                                local jid = tostring(data.jobid or data.jobId or "")
+                                if jid ~= "" and jid ~= game.JobId then
+                                    fmJobId = jid; fmWho = name .. "[NearFM]"; break
+                                end
+                            end
+                        end
+                    end
+
+                    if not fmJobId then
+                        if hopFMFound then
+                            setStatus("Waiting HopFM FM: " .. hopFMFMState .. " | acc=" .. accCount)
+                        else
+                            setStatus("HopFM not in group | acc=" .. accCount .. (hasFM and " [FM here]" or ""))
+                        end
+                        lastHopTHelper = ""; return
+                    end
+
+                    if fmJobId == game.JobId then
+                        setStatus("In FM server with " .. (fmWho or "HopFM"))
+                        lastHopTHelper = ""; return
+                    end
+
+                    local nowTick = tick()
+                    if fmJobId ~= lastHopTHelper then
+                        lastHopAtHelper = nowTick; lastHopTHelper = fmJobId
+                        setStatus("Join " .. (fmWho or "HopFM") .. " -> " .. fmJobId:sub(1,8) .. "...")
+                        hopTo(fmJobId); task.wait(0.5)
+                    else
+                        local el = nowTick - lastHopAtHelper
+                        if el >= 8 then
+                            warn("[JoinV4][Helper] hopTo timeout (8s) -> reset | target=" .. tostring(lastHopTHelper):sub(1,8))
+                            setStatus("Hop timeout - retry")
+                            lastHopTHelper = ""; lastHopAtHelper = 0
+                        else
+                            setStatus("Hopping -> " .. fmJobId:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
+                            hopTo(fmJobId); task.wait(0.5)
+                        end
+                    end
+                end)
+            end
+        end)
+    end
+
+    -- MAIN: JOIN FM SERVER
+    if isMain then
+        task.spawn(function()
+            task.wait(HOP_STARTUP_DELAY + 2)
+            local lastHopTMain  = ""
+            local lastHopAtMain = 0
+
+            while task.wait(1.5) do
+                pcall(function()
+                    local resp = syncToAPI()
+                    if resp and resp.group and type(resp.group.id) == "string" and resp.group.id ~= "" then
+                        local assignedId = trim(resp.group.id)
+                        for _, note in ipairs(noteList) do
+                            if trim(note):lower() == assignedId:lower() then
+                                myAssignedGroupId = trim(note)
+                                break
+                            end
+                        end
+                    end
+                    if myAssignedGroupId == nil or myAssignedGroupId == "" then
+                        myAssignedGroupId = myDefaultGroup or trim(noteList[1] or "group1")
+                    end
+
+                    if not resp or not resp.accounts then
+                        setStatus("Connecting...")
+                        return
+                    end
+
+                    updateV4Cache()
+                    local v4s = _v4Cache
+
+                    if v4s and v4s.needsTraining == false and v4s.needsPurchase == false then
+                        rawset(getgenv(), "isCurrentlyTraining", nil)
+                    end
+
+                    local skipHop    = false
+                    local skipReason = ""
+
+                    if _v4CacheAt == 0 then
+                        setStatus("Checking V4 status...")
+                        lastHopTMain = ""; return
+                    end
+
+                    if v4s and v4s.needsTraining == true then
+                        skipHop = true
+                        skipReason = "Training (" .. tostring(v4s.key or "?") .. ") - skip join"
+
+                    elseif v4s and v4s.needsPurchase == true then
+                        skipHop = true
+                        skipReason = "Buy Gear (" .. tostring(v4s.key or "?") .. ") - skip join"
+
+                    elseif v4s and not v4s.complete and v4s.canTrial == false
+                        and v4s.needsTraining == false and v4s.key ~= nil then
+                        skipHop = true
+                        skipReason = "V4 busy (" .. tostring(v4s.key) .. ") - skip join"
+
+                    else
+                        local me = resp.accounts[USERNAME]
+                        if me then
+                            local mySt = tostring(me.status or ""):lower()
+                            if mySt == "training" or mySt == "buy gear" then
+                                skipHop = true; skipReason = "Training (API: " .. mySt .. ") - skip join"
+                            elseif me.needsTraining == true then
+                                skipHop = true; skipReason = "Training (API flag) - skip join"
+                            elseif me.needsPurchase == true then
+                                skipHop = true; skipReason = "Buy Gear (API flag) - skip join"
+                            end
+                        else
+                            -- Không có trong accounts → group đã full / chưa gán
+                            -- Reset để sync tiếp theo tự assign group mới
+                            myAssignedGroupId = ""
+                            setStatus("Group full - reassigning...")
+                            lastHopTMain = ""; return
+                        end
+                    end
+
+                    if getgenv().JoinV4_skipHop == true then
+                        skipHop = true; skipReason = "JoinV4_skipHop=true - paused"
+                    end
+
+                    if skipHop then
+                        setStatus(skipReason)
+                        lastHopTMain = ""; return
+                    end
+
+                    local myGroupHelpers = {}
+                    local myGroupHopFMs  = {}
+
+                    -- Ưu tiên lấy helpers của myAssignedGroupId từ local config
+                    for i, helperList in ipairs(helperGroups) do
+                        if type(helperList) == "table" then
+                            local note = trim(noteList[i] or ("group" .. i))
+                            if (myAssignedGroupId or ""):lower() == note:lower() then
+                                for _, h in ipairs(helperList) do
+                                    h = trim(tostring(h))
+                                    if h ~= "" then
+                                        myGroupHelpers[h] = true
+                                        if AllHopFMSet[h] ~= nil then
+                                            myGroupHopFMs[h] = true
+                                        end
+                                    end
+                                end
+                                break
+                            end
+                        end
+                    end
+
+                    -- Fallback nếu local config không tìm thấy
+                    if next(myGroupHelpers) == nil and resp.group and resp.group.helpers then
+                        for _, h in ipairs(resp.group.helpers) do
+                            h = trim(tostring(h))
+                            if h ~= "" then
+                                myGroupHelpers[h] = true
+                                if AllHopFMSet[h] ~= nil then
+                                    myGroupHopFMs[h] = true
+                                end
+                            end
+                        end
+                    end
+
+                    local fmJobId    = nil
+                    local notReady   = {}
+                    local helperTotal = 0
+
+                    for name, _ in pairs(myGroupHelpers) do
+                        helperTotal = helperTotal + 1
+                        local data  = resp.accounts[name]
+                        if not data then
+                            table.insert(notReady, name .. "(no data)")
+                        else
+                            local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true)
+                            local jid = tostring(data.jobid or data.jobId or "")
+                            if not helperHasFM or jid == "" then
+                                table.insert(notReady, name .. "(no FM)")
+                            elseif fmJobId == nil then
+                                fmJobId = jid
+                            elseif fmJobId ~= jid then
+                                table.insert(notReady, name .. "(diff server)")
+                            end
+                        end
+                    end
+
+                    if not fmJobId then
+                        setStatus("Waiting helpers FM...")
+                        lastHopTMain = ""; return
+                    end
+
+                    if #notReady > 0 then
+                        setStatus("Waiting " .. #notReady .. "/" .. helperTotal .. " helpers: " .. table.concat(notReady, ", "):sub(1, 40))
+                        lastHopTMain = ""; return
+                    end
+
+                    if fmJobId == game.JobId then
+                        setStatus("In FM server with all helpers")
+                        lastHopTMain = ""; return
+                    end
+
+                    local nowTick = tick()
+                    if fmJobId ~= lastHopTMain then
+                        lastHopAtMain = nowTick; lastHopTMain = fmJobId
+                        setStatus("Join FM (all helpers ready)...")
+                        hopTo(fmJobId); task.wait(0.5)
+                    else
+                        local el = nowTick - lastHopAtMain
+                        if el >= 8 then
+                            setStatus("Join timeout - retry")
+                            lastHopTMain = ""; lastHopAtMain = 0
+                        else
+                            setStatus("Retry join: " .. fmJobId:sub(1,8) .. "...")
+                            hopTo(fmJobId); task.wait(0.5)
+                        end
+                    end
+
+                end)
+            end
+        end)
+    end
+
+    local roleLog = "Main"
+    if isHelper then
+        roleLog = isHopFM
+            and ("Helper+HopFM [G" .. (MY_GROUP_IDX or "?") .. "] grp=" .. (MY_GROUP_NOTE or "?"))
+            or  ("Helper [G"       .. (MY_GROUP_IDX or "?") .. "] grp=" .. (MY_GROUP_NOTE or "?"))
+    end
+    print("[JoinV4] Loaded | " .. USERNAME .. " | " .. roleLog)
+end)()
 uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Script loaded successfully", ShowTime = 5 })
