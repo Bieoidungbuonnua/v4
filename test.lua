@@ -540,66 +540,102 @@ function EquipTool(name)
     equipWeapon(name)
 end
 
-local function BnnOtherPlayerNear(part)
-    local characters = Workspace:FindFirstChild("Characters")
-    for _, character in ipairs(characters and characters:GetChildren() or {}) do
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if character.Name ~= localPlayer.Name and root and (root.Position - part.Position).Magnitude <= 300 then
-            return true
+getgenv().TableMobSpawn = getgenv().TableMobSpawn or {}
+local TableMobSpawn = getgenv().TableMobSpawn
+
+local function BnnAddMobSpawn(part)
+    if part and part:IsA("BasePart") and not table.find(TableMobSpawn, part) then
+        table.insert(TableMobSpawn, part)
+    end
+end
+
+local function BnnRefreshMobSpawns()
+    local origin = Workspace:FindFirstChild("_WorldOrigin")
+    local enemySpawns = origin and origin:FindFirstChild("EnemySpawns")
+    for _, part in ipairs(enemySpawns and enemySpawns:GetChildren() or {}) do BnnAddMobSpawn(part) end
+    if getnilinstances then
+        pcall(function()
+            for _, part in ipairs(getnilinstances()) do
+                local displayName = part:GetAttribute("DisplayName")
+                if displayName and string.find(displayName, "Lv.") then BnnAddMobSpawn(part) end
+            end
+        end)
+    end
+end
+BnnRefreshMobSpawns()
+
+local function BnnCleanMobName(name)
+    return string.find(name, "Lv.") and name:gsub(" %pLv. %d+%p", "") or name
+end
+
+function DetectPartMobBring(name, mob, nearest, centerPart)
+    BnnRefreshMobSpawns()
+    local matches = {}
+    local cleanName = BnnCleanMobName(name)
+    for _, part in ipairs(TableMobSpawn) do
+        if part and part:IsA("BasePart") then
+            local cleanPartName = BnnCleanMobName(part.Name)
+            if cleanPartName == name or part.Name == name or part.Name == cleanName then
+                table.insert(matches, part)
+            end
         end
     end
-    return false
-end
-
-function isnetworkowner2(part)
-    return part ~= nil and not BnnOtherPlayerNear(part)
-end
-
-local function BnnCleanIgnoredMob()
-    local enemies = Workspace:FindFirstChild("Enemies")
-    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
-        local ignored = mob:FindFirstChild("Ignored")
-        if ignored then ignored:Destroy() end
-    end
-end
-
-local function BnnMobSpawnPart(mob)
-    local origin = Workspace:FindFirstChild("_WorldOrigin")
-    local spawns = origin and origin:FindFirstChild("EnemySpawns")
-    local root = mob and mob:FindFirstChild("HumanoidRootPart")
-    if not spawns or not root then return nil end
-    local cleanName = mob.Name:gsub(" %pLv%.? %d+%p", "")
-    local nearest, distance
-    for _, spawnPart in ipairs(spawns:GetChildren()) do
-        local spawnName = spawnPart.Name:gsub(" %pLv%.? %d+%p", "")
-        if spawnPart:IsA("BasePart") and (spawnPart.Name == mob.Name or spawnName == cleanName) then
-            local current = (root.Position - spawnPart.Position).Magnitude
-            if not distance or current < distance then nearest, distance = spawnPart, current end
+    if nearest then
+        local bestDistance, bestPart = math.huge, nil
+        local root = mob and mob:FindFirstChild("HumanoidRootPart")
+        if not root then return nil end
+        for _, part in ipairs(matches) do
+            local distance = (root.Position - part.Position).Magnitude
+            if distance < bestDistance then bestDistance, bestPart = distance, part end
         end
+        return bestPart
     end
-    return nearest
+    local nearby = 0
+    for _, part in ipairs(matches) do
+        if centerPart and (centerPart.Position - part.Position).Magnitude <= 200 then nearby += 1 end
+    end
+    return nearby < #matches
 end
 
-local function BnnMobSpawnCenter(mob)
-    local origin = Workspace:FindFirstChild("_WorldOrigin")
-    local spawns = origin and origin:FindFirstChild("EnemySpawns")
-    if not spawns or not mob then return nil end
-    local cleanName = mob.Name:gsub(" %pLv%.? %d+%p", "")
+function getcenter(name)
+    BnnRefreshMobSpawns()
+    local cleanName = BnnCleanMobName(name)
     local sum, count = Vector3.zero, 0
-    for _, spawnPart in ipairs(spawns:GetChildren()) do
-        local spawnName = spawnPart.Name:gsub(" %pLv%.? %d+%p", "")
-        if spawnPart:IsA("BasePart") and (spawnPart.Name == mob.Name or spawnName == cleanName) then
-            sum += spawnPart.Position
-            count += 1
+    for _, part in ipairs(TableMobSpawn) do
+        if part and part:IsA("BasePart") then
+            local cleanPartName = BnnCleanMobName(part.Name)
+            if cleanPartName == name or part.Name == name or part.Name == cleanName then
+                sum += part.Position
+                count += 1
+            end
         end
     end
     return count > 0 and CFrame.new(sum / count) or nil
 end
 
-local bnnBringTarget, bnnBringAnchor, bnnBringBusy = nil, nil, false
+function isnetworkowner2(part)
+    if not part then return false end
+    local characters = Workspace:FindFirstChild("Characters")
+    for _, character in ipairs(characters and characters:GetChildren() or {}) do
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if character.Name ~= localPlayer.Name and root and (root.Position - part.Position).Magnitude <= 300 then
+            return false
+        end
+    end
+    return true
+end
 
+function DeleteIgnoredMob()
+    local enemies = Workspace:FindFirstChild("Enemies")
+    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
+        local ignored = mob:IsA("Model") and mob:FindFirstChild("Ignored")
+        if ignored then ignored:Destroy() end
+    end
+end
+
+local bnnBringTarget, bnnBringAnchor
 function BringMob(target)
-    if not Settings["Bring Mob"] or typeof(target) ~= "Instance" or not IsMobAlive(target) then return end
+    if not Settings["Bring Mob"] or not IsMobAlive(target) then return end
     local character = localPlayer.Character
     local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
     local targetRoot = target:FindFirstChild("HumanoidRootPart")
@@ -607,32 +643,33 @@ function BringMob(target)
 
     if bnnBringTarget ~= target then
         bnnBringTarget = target
-        local spawnPart = BnnMobSpawnPart(target)
+        local spawnPart = DetectPartMobBring(target.Name, target, true)
         bnnBringAnchor = spawnPart and spawnPart.CFrame or targetRoot.CFrame
         local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
         local transformed = character:FindFirstChild("RaceTransformed")
         if race and race.Value == "Cyborg" and transformed and transformed.Value then
-            bnnBringAnchor = BnnMobSpawnCenter(target) or targetRoot.CFrame
+            bnnBringAnchor = getcenter(target.Name) or bnnBringAnchor
         end
-        BnnCleanIgnoredMob()
+        DeleteIgnoredMob()
     end
-    if bnnBringBusy then return end
+
+    if getgenv().DaBringMob then
+        task.delay(0.1, function() getgenv().DaBringMob = false end)
+        return
+    end
 
     local selected = {}
     if not target:FindFirstChild("Ignored") then table.insert(selected, target) end
     local requestedCount = tonumber(Settings["Bring Mob Count"]) or 2
-    local radius = requestedCount > 2 and 350 or 200
-    local maximum = requestedCount
+    local radius, maximum = requestedCount > 2 and 350 or 200, requestedCount
     local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
     local transformed = character:FindFirstChild("RaceTransformed")
-    if race and race.Value == "Cyborg" and transformed and transformed.Value then
-        radius, maximum = 300, 6
-    end
+    if race and race.Value == "Cyborg" and transformed and transformed.Value then radius, maximum = 300, 6 end
 
     local enemies = Workspace:FindFirstChild("Enemies")
     for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
         local root = mob:FindFirstChild("HumanoidRootPart")
-        if mob ~= target and mob.Name == target.Name and root and not mob:FindFirstChild("Ignored")
+        if mob ~= target and mob.Name == target.Name and not mob:FindFirstChild("Ignored")
             and IsMobAlive(mob) and isnetworkowner2(root)
             and (root.Position - bnnBringAnchor.Position).Magnitude <= radius and #selected < maximum
         then
@@ -640,29 +677,34 @@ function BringMob(target)
         end
     end
 
-    if (playerRoot.Position - targetRoot.Position).Magnitude > 50 or BnnOtherPlayerNear(playerRoot) or #selected < 2 then return end
-    bnnBringBusy = true
+    if not bnnBringAnchor or (playerRoot.Position - targetRoot.Position).Magnitude > 50
+        or not isnetworkowner2(playerRoot) or #selected < 2 then return end
+
     for _, mob in ipairs(selected) do
-        local root = mob:FindFirstChild("HumanoidRootPart")
-        local humanoid = mob:FindFirstChildOfClass("Humanoid")
+        local broughtMob = mob
+        local root = broughtMob:FindFirstChild("HumanoidRootPart")
+        local humanoid = broughtMob:FindFirstChildOfClass("Humanoid")
         if root and humanoid then
-            SizePart(mob)
+            SizePart(broughtMob)
             if not isnetworkowner2(root) then
-                root.CFrame = mob:GetPivot()
-                if not mob:FindFirstChild("Ignored") then Instance.new("IntValue", mob).Name = "Ignored" end
+                root.CFrame = broughtMob.WorldPivot
+                if not broughtMob:FindFirstChild("Ignored") then Instance.new("IntValue", broughtMob).Name = "Ignored" end
+                task.wait(0.3)
             else
                 root.CFrame = bnnBringAnchor * CFrame.new(0, math.random(0, 2), math.random(0, 2))
-                local oldHealth = humanoid.Health
-                task.delay(2.2, function()
-                    if mob.Parent and humanoid.Health == oldHealth and not mob:FindFirstChild("Ignored") then
-                        root.CFrame = mob:GetPivot()
-                        Instance.new("IntValue", mob).Name = "Ignored"
+                task.spawn(function()
+                    local oldHealth = humanoid.Health
+                    task.wait(2.2)
+                    if broughtMob.Parent and humanoid.Health == oldHealth and not broughtMob:FindFirstChild("Ignored") then
+                        root.CFrame = broughtMob.WorldPivot
+                        Instance.new("IntValue", broughtMob).Name = "Ignored"
+                        task.wait(0.3)
                     end
                 end)
             end
+            getgenv().DaBringMob = true
         end
     end
-    task.delay(0.1, function() bnnBringBusy = false end)
 end
 
 local BnnMouse, BnnCombatUtil, BnnRegisterAttack, BnnRegisterHit
@@ -682,29 +724,66 @@ local BnnBodyParts = {
     UpperTorso = true, LowerTorso = true, Head = true,
 }
 
+local function BnnPartsInRadius(model, position, radius)
+    local parts = {}
+    for _, part in ipairs(model:GetChildren()) do
+        if part:IsA("BasePart") and (part.Position - position).Magnitude <= radius then
+            table.insert(parts, part)
+        end
+    end
+    return parts
+end
+
+local function BnnRawBladeHits(character, sourceParts, radius, includePlayers)
+    local result = {}
+    if not character or not sourceParts[1] then return result end
+    local candidates = {}
+    local enemies = Workspace:FindFirstChild("Enemies")
+    for _, model in ipairs(enemies and enemies:GetChildren() or {}) do table.insert(candidates, model) end
+    if includePlayers then
+        local characters = Workspace:FindFirstChild("Characters")
+        for _, model in ipairs(characters and characters:GetChildren() or {}) do table.insert(candidates, model) end
+    end
+
+    for _, model in ipairs(candidates) do
+        local root = model:FindFirstChild("HumanoidRootPart")
+        if model:IsDescendantOf(Workspace) and model ~= character and root then
+            local playerRadius = Players:GetPlayerFromCharacter(model) and radius / 1.5 or radius
+            local positions = { root.Position }
+            if root.Size.Y > 5 then table.insert(positions, (root.CFrame * CFrame.new(0, -root.Size.Y * 1.5 + 3, 0)).Position) end
+            for _, position in ipairs(positions) do
+                if (position - sourceParts[1].Position).Magnitude < 10 + playerRadius + root.Size.X / 2 then
+                    for _, part in ipairs(BnnPartsInRadius(model, sourceParts[1].Position, playerRadius + root.Size.X / 2)) do
+                        table.insert(result, part)
+                    end
+                    break
+                end
+            end
+        end
+    end
+    return result
+end
+
+getgenv().getBladeHits = function(character, sourceParts, radius, includePlayers)
+    return BnnRawBladeHits(character, sourceParts, radius, includePlayers)
+end
+
 local function BnnGetBladeHits(radius, includePlayers)
-    local hits, rigs = {}, {}
     local character = localPlayer.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not character or not root then return hits end
-    local folders = { Workspace:FindFirstChild("Enemies") }
-    if includePlayers then table.insert(folders, Workspace:FindFirstChild("Characters")) end
-    for _, folder in ipairs(folders) do
-        for _, rig in ipairs(folder and folder:GetChildren() or {}) do
-            local rigRoot = rig:FindFirstChild("HumanoidRootPart")
-            local humanoid = rig:FindFirstChildOfClass("Humanoid")
-            if rig ~= character and rigRoot and humanoid and humanoid.Health > 0 and (rigRoot.Position - root.Position).Magnitude <= (radius or 80) then
-                local hitPart = rig:FindFirstChild("Head") or rigRoot
-                if BnnCombatUtil then
-                    pcall(function()
-                        local resolved = BnnCombatUtil:GetRigOfHitPart(hitPart)
-                        if resolved and BnnCombatUtil:IsVulnerable(resolved) then rig = resolved end
-                    end)
-                end
-                if not rigs[rig] and (BnnBodyParts[hitPart.Name] or hitPart == rigRoot) then
-                    rigs[rig] = true
-                    table.insert(hits, { rig, hitPart })
-                end
+    local hits, seen = {}, {}
+    if not character or not root or not BnnCombatUtil then return hits end
+    for _, hitPart in ipairs(BnnRawBladeHits(character, { root }, radius or 80, includePlayers)) do
+        local rig = BnnCombatUtil:GetRigOfHitPart(hitPart)
+        if rig and not seen[rig] and BnnBodyParts[hitPart.Name] and BnnCombatUtil:IsVulnerable(rig) then
+            local targetSummoner = rig:FindFirstChild("Summoner")
+            local ownSummoner = character:FindFirstChild("Summoner")
+            if rig ~= character
+                and (not ownSummoner or not ownSummoner.Value or rig ~= ownSummoner.Value.Character)
+                and (not Players:GetPlayerFromCharacter(character) or not targetSummoner or targetSummoner.Value ~= Players:GetPlayerFromCharacter(character))
+            then
+                table.insert(hits, { rig, hitPart })
+                seen[rig] = true
             end
         end
     end
@@ -712,12 +791,13 @@ local function BnnGetBladeHits(radius, includePlayers)
 end
 
 function AttackAOE(radius, includePlayers)
-    return BnnGetBladeHits(radius or 80, includePlayers)
+    local hits = BnnGetBladeHits(radius or 80, includePlayers)
+    return #hits > 0 and hits or nil
 end
 
 local bnnAttackIndex = 0
 local function BnnFireHits(hits, attackDelay)
-    if #hits == 0 or not BnnRegisterAttack or not BnnRegisterHit then return false end
+    if not hits or #hits == 0 or not BnnRegisterAttack or not BnnRegisterHit then return false end
     BnnRegisterAttack:FireServer(attackDelay or 0)
     local first = table.remove(hits, 1)
     BnnRegisterHit:FireServer(first[2], hits)
@@ -1216,16 +1296,17 @@ function CheckNameBoss(name)
     return nil
 end
 
-function DetectPartSpawnMob(name, bool)
-    if not Workspace:FindFirstChild("_WorldOrigin") or not Workspace._WorldOrigin:FindFirstChild("EnemySpawns") then
-        return nil
+function DetectPartSpawnMob(name, skipIgnored)
+    local function clean(value)
+        return value:gsub(" %p?Lv%.? %d+%p?", "")
     end
-    for _, v in ipairs(Workspace._WorldOrigin.EnemySpawns:GetChildren()) do
-        if string.find(v.Name, name) or v.Name == name then
-            if bool and v:FindFirstChild("Ignored") then
-                -- skip
-            else
-                return v
+    local cleanName = string.find(name, "Lv.") and clean(name) or name
+    BnnRefreshMobSpawns()
+    for _, part in ipairs(TableMobSpawn) do
+        if part:IsA("Part") then
+            local partName = string.find(part.Name, "Lv.") and clean(part.Name) or part.Name
+            if (partName == name or partName == cleanName) and (not skipIgnored or not part:FindFirstChild("Ignored")) then
+                return part
             end
         end
     end
@@ -1243,11 +1324,9 @@ function DetectNameTablePart(tbl)
 end
 
 function DeleteIgnoredMobSpawn()
-    if Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("EnemySpawns") then
-        for _, v in ipairs(Workspace._WorldOrigin.EnemySpawns:GetChildren()) do
-            local ign = v:FindFirstChild("Ignored")
-            if ign then ign:Destroy() end
-        end
+    for _, part in ipairs(TableMobSpawn) do
+        local ignored = part:FindFirstChild("Ignored")
+        if ignored then ignored:Destroy() end
     end
 end
 
@@ -1256,12 +1335,12 @@ function IsMobAlive(mob)
 end
 
 function SizePart(mob)
-    if mob and mob:FindFirstChild("HumanoidRootPart") then
-        mob.HumanoidRootPart.Size = Vector3.new(60, 60, 60)
-        mob.HumanoidRootPart.CanCollide = false
-        if mob:FindFirstChild("Humanoid") then
-            mob.Humanoid.WalkSpeed = 0
-            mob.Humanoid.JumpPower = 0
+    getgenv().AttackingMob = mob
+    local root = mob and mob.Parent and mob:FindFirstChild("HumanoidRootPart")
+    if not root or localPlayer:DistanceFromCharacter(root.Position) > 50 then return end
+    for _, part in ipairs(mob:GetDescendants()) do
+        if (part:IsA("Part") or part:IsA("MeshPart")) and part.CanCollide then
+            part.CanCollide = false
         end
     end
 end
@@ -3696,7 +3775,7 @@ local function isshouldturnonability()
 end
 
 local function AutoTrialV4Legacy()
-	if not isHelperAccount() and Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
+	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
 		return
 	end
 	local lookup6 = game.Lighting.ClockTime
@@ -4124,7 +4203,7 @@ local function RunCyborgTrial()
 end
 
 function AutoTrialV4()
-	if not isHelperAccount() and Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and CheckGoTrain() then
+	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and CheckGoTrain() then
 		return
 	end
 
@@ -5435,7 +5514,6 @@ local BnnRaceTrainingMobs = {
     "Demonic Soul",
     "Living Zombie",
     "Posessed Mummy",
-    "Possessed Mummy",
 }
 local bnnVisitedRaceSpawns = {}
 
@@ -5468,7 +5546,6 @@ local function runRaceTrainingWork()
             SizePart(mob)
             BringMob(mob)
             UsedualFlock()
-            equipWeapon(Settings["Select Weapon"])
             ClickM1(mob)
 
             local root = mob:FindFirstChild("HumanoidRootPart")
