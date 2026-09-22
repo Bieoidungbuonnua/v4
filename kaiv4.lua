@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Dex-Bear/VxezeHubLoader/refs/heads/main/MainHub.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Dex-Bear/VxezeHubLoader/refs/heads/main/LotusHub.lua"))()
     end)
 end
 
@@ -2020,20 +2020,38 @@ end
 
                     local fmJobId = nil
                     local fmWho   = nil
+                    local hopFMFound = false   -- debug: co tim thay HopFM trong accounts khong
+                    local hopFMFMState = "?"  -- debug: fullMoon cua HopFM la gi
+                    local accCount = 0
+
                     for name, data in pairs(resp.accounts) do
+                        accCount = accCount + 1
                         if MY_HopFMSet[name] and name ~= USERNAME then
-                            local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true)
+                            hopFMFound = true
+                            local helperHasFM  = (data.fullMoon  == true) or (data.fullmoon  == true)
+                            local helperNearFM = (data.nearFM    == true) or (data.nearfm    == true)
+                            hopFMFMState = tostring(data.fullMoon or data.fullmoon or "nil")
                             if helperHasFM then
                                 local jid = tostring(data.jobid or data.jobId or "")
                                 if jid ~= "" then
                                     fmJobId = jid; fmWho = name; break
+                                end
+                            elseif helperNearFM then
+                                -- HopFM dang o near-moon server, follow vao de chuan bi
+                                local jid = tostring(data.jobid or data.jobId or "")
+                                if jid ~= "" and jid ~= game.JobId then
+                                    fmJobId = jid; fmWho = name .. "[NearFM]"; break
                                 end
                             end
                         end
                     end
 
                     if not fmJobId then
-                        setStatus(hasFM and "FM here - waiting HopFM confirm..." or "Waiting HopFM helper...")
+                        if hopFMFound then
+                            setStatus("Waiting HopFM FM: " .. hopFMFMState .. " | acc=" .. accCount)
+                        else
+                            setStatus("HopFM not in group | acc=" .. accCount .. (hasFM and " [FM here]" or ""))
+                        end
                         lastHopTHelper = ""; return
                     end
 
@@ -2045,15 +2063,16 @@ end
                     local nowTick = tick()
                     if fmJobId ~= lastHopTHelper then
                         lastHopAtHelper = nowTick; lastHopTHelper = fmJobId
-                        setStatus("Join " .. (fmWho or "HopFM") .. " at " .. fmJobId:sub(1,6) .. "...")
+                        setStatus("Join " .. (fmWho or "HopFM") .. " -> " .. fmJobId:sub(1,8) .. "...")
                         hopTo(fmJobId); task.wait(0.5)
                     else
                         local el = nowTick - lastHopAtHelper
                         if el >= 8 then
-                            setStatus("Join timeout - clear & retry")
+                            warn("[JoinV4][Helper] hopTo timeout (8s) -> reset | target=" .. tostring(lastHopTHelper):sub(1,8))
+                            setStatus("Hop timeout - retry")
                             lastHopTHelper = ""; lastHopAtHelper = 0
                         else
-                            setStatus("Retry join " .. fmJobId:sub(1,6) .. "...")
+                            setStatus("Hopping -> " .. fmJobId:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
                             hopTo(fmJobId); task.wait(0.5)
                         end
                     end
