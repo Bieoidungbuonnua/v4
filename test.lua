@@ -544,7 +544,7 @@ getgenv().TableMobSpawn = getgenv().TableMobSpawn or {}
 local TableMobSpawn = getgenv().TableMobSpawn
 
 local function BnnAddMobSpawn(part)
-    if part and part:IsA("BasePart") and not table.find(TableMobSpawn, part) then
+    if part and not table.find(TableMobSpawn, part) then
         table.insert(TableMobSpawn, part)
     end
 end
@@ -552,7 +552,10 @@ end
 local function BnnRefreshMobSpawns()
     local origin = Workspace:FindFirstChild("_WorldOrigin")
     local enemySpawns = origin and origin:FindFirstChild("EnemySpawns")
-    for _, part in ipairs(enemySpawns and enemySpawns:GetChildren() or {}) do BnnAddMobSpawn(part) end
+    for _, part in ipairs(enemySpawns and enemySpawns:GetChildren() or {}) do
+        local displayName = part:GetAttribute("DisplayName")
+        if displayName and string.find(displayName, "Lv.") then BnnAddMobSpawn(part) end
+    end
     if getnilinstances then
         pcall(function()
             for _, part in ipairs(getnilinstances()) do
@@ -573,7 +576,7 @@ function DetectPartMobBring(name, mob, nearest, centerPart)
     local matches = {}
     local cleanName = BnnCleanMobName(name)
     for _, part in ipairs(TableMobSpawn) do
-        if part and part:IsA("BasePart") then
+        if part and part:IsA("Part") then
             local cleanPartName = BnnCleanMobName(part.Name)
             if cleanPartName == name or part.Name == name or part.Name == cleanName then
                 table.insert(matches, part)
@@ -602,7 +605,7 @@ function getcenter(name)
     local cleanName = BnnCleanMobName(name)
     local sum, count = Vector3.zero, 0
     for _, part in ipairs(TableMobSpawn) do
-        if part and part:IsA("BasePart") then
+        if part and part:IsA("Part") then
             local cleanPartName = BnnCleanMobName(part.Name)
             if cleanPartName == name or part.Name == name or part.Name == cleanName then
                 sum += part.Position
@@ -644,7 +647,8 @@ function BringMob(target)
     if bnnBringTarget ~= target then
         bnnBringTarget = target
         local spawnPart = DetectPartMobBring(target.Name, target, true)
-        bnnBringAnchor = spawnPart and spawnPart.CFrame or targetRoot.CFrame
+        if not spawnPart then bnnBringTarget = nil return end
+        bnnBringAnchor = spawnPart.CFrame
         local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
         local transformed = character:FindFirstChild("RaceTransformed")
         if race and race.Value == "Cyborg" and transformed and transformed.Value then
@@ -707,14 +711,11 @@ function BringMob(target)
     end
 end
 
-local BnnMouse, BnnCombatUtil, BnnRegisterAttack, BnnRegisterHit
-pcall(function()
-    BnnMouse = require(ReplicatedStorage.Mouse)
-    BnnCombatUtil = require(ReplicatedStorage.Modules.CombatUtil)
-    local net = require(ReplicatedStorage.Modules.Net)
-    BnnRegisterAttack = ReplicatedStorage.Modules.Net:WaitForChild("RE/RegisterAttack")
-    BnnRegisterHit = net:RemoteEvent("RegisterHit", true)
-end)
+local BnnMouse = require(ReplicatedStorage.Mouse)
+local BnnCombatUtil = require(ReplicatedStorage.Modules.CombatUtil)
+local BnnNet = require(ReplicatedStorage.Modules.Net)
+local BnnRegisterAttack = ReplicatedStorage.Modules.Net:WaitForChild("RE/RegisterAttack")
+local BnnRegisterHit = BnnNet:RemoteEvent("RegisterHit", true)
 
 local BnnBodyParts = {
     RightUpperArm = true, RightLowerArm = true, RightHand = true,
@@ -1310,6 +1311,28 @@ function DetectPartSpawnMob(name, skipIgnored)
             end
         end
     end
+    local origin = Workspace:FindFirstChild("_WorldOrigin")
+    local enemySpawns = origin and origin:FindFirstChild("EnemySpawns")
+    for _, part in ipairs(enemySpawns and enemySpawns:GetChildren() or {}) do
+        if part:IsA("Part") then
+            local partName = string.find(part.Name, "Lv.") and clean(part.Name) or part.Name
+            if (partName == name or partName == cleanName) and (not skipIgnored or not part:FindFirstChild("Ignored")) then
+                BnnAddMobSpawn(part)
+                return part
+            end
+        end
+    end
+    if getnilinstances then
+        for _, part in ipairs(getnilinstances()) do
+            if part:IsA("Part") then
+                local partName = string.find(part.Name, "Lv.") and clean(part.Name) or part.Name
+                if (partName == name or partName == cleanName) and (not skipIgnored or not part:FindFirstChild("Ignored")) then
+                    BnnAddMobSpawn(part)
+                    return part
+                end
+            end
+        end
+    end
     return nil
 end
 
@@ -1375,9 +1398,12 @@ function NameWeapon(weaponType)
 end
 
 function UsedualFlock()
-    local char = localPlayer.Character
-    if char and not char:FindFirstChild("HasBuso") then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("Buso")
+    local weaponName = NameWeapon(Settings["Select Weapon"] or "Melee")
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local tool = weaponName and localPlayer.Backpack:FindFirstChild(weaponName)
+    if tool and humanoid and not humanoid.Sit then
+        humanoid:EquipTool(tool)
     end
 end
 
@@ -1564,63 +1590,61 @@ function TakeFruitInventory(bool)
     return nil
 end
 
-function CheckAcientOneStatus()
-    local code, progress = nil, nil
-    pcall(function()
-        code, progress = ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check")
-    end)
-    if code == 0 then
-        return "You Are Ready For Trial [Gear: " .. tostring(progress or 0) .. "]"
-    elseif code == 5 then
-        return "You Are Done Your Race"
-    elseif code == 6 then
-        local done = math.clamp((progress or 2) - 2, 0, 3)
-        return "Upgrades completed: " .. tostring(done) .. "/3, Need Trains More"
-    elseif code == 1 or code == 3 then
-        return "Please Train More"
-    elseif code == 2 or code == 4 or code == 7 then
-        return "You Can Buy Gear"
-    elseif code == 8 then
-        local rem = math.max(0, 10 - (progress or 0))
-        return rem > 0 and ("Mastery (" .. tostring(rem) .. " left)") or "Mastery Done"
-    else
-        local vp = nil
-        pcall(function()
-            vp = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-        end)
-        if vp and tonumber(vp) and tonumber(vp) >= 4 then
-            return "You Are Ready For Trial"
-        elseif vp and tonumber(vp) == 0 then
-            return "Quest Not Started"
-        elseif vp then
-            return "Quest " .. tostring(vp) .. "/5"
-        end
+local bnnRaceStatusCache, bnnRaceStatusCheckedAt = nil, 0
+
+local function BnnReadAncientOneStatus()
+    local character = localPlayer.Character
+    if not character or not character:FindFirstChild("RaceTransformed") then
         return "You have yet to achieve greatness"
     end
+    local code, progress, fragments = ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check")
+    if code == 1 or code == 3 then
+        return "Required Train More"
+    elseif code == 2 or code == 4 or code == 7 then
+        return "Can Buy Gear With " .. tostring(fragments) .. " Fragments"
+    elseif code == 5 then
+        return "You Are Done Your Race."
+    elseif code == 6 then
+        return "Upgrades completed: " .. tostring((progress or 2) - 2) .. "/3, Need Trains More"
+    elseif code == 0 then
+        return "Ready For Trial"
+    elseif code == 8 then
+        return "Remaining " .. tostring(10 - (progress or 0)) .. " training sessions."
+    end
+    return "You have yet to achieve greatness"
+end
+
+function CheckAcientOneStatus()
+    if bnnRaceStatusCache and tick() - bnnRaceStatusCheckedAt < 1 then return bnnRaceStatusCache end
+    bnnRaceStatusCache = BnnReadAncientOneStatus()
+    bnnRaceStatusCheckedAt = tick()
+    return bnnRaceStatusCache
 end
 
 function ResetRaceStatus()
-    getgenv().RaceStatus = nil
+    bnnRaceStatusCache = nil
 end
 
 function TurnOnV4()
-    if not localPlayer.Character:FindFirstChild("RaceTransformed") then
-        VirtualInputManager:SendKeyEvent(true, "Y", false, game)
-        task.wait(0.1)
-        VirtualInputManager:SendKeyEvent(false, "Y", false, game)
+    local character = localPlayer.Character
+    local energy = character and character:FindFirstChild("RaceEnergy")
+    local transformed = character and character:FindFirstChild("RaceTransformed")
+    if not energy or energy.Value < 1 or not transformed or transformed.Value then return end
+    local awakening = localPlayer.Backpack:FindFirstChild("Awakening") or character:FindFirstChild("Awakening")
+    if awakening and awakening:FindFirstChild("RemoteFunction") then
+        awakening.RemoteFunction:InvokeServer(true)
     end
 end
 
 function CheckGoTrain()
-    local code, progress = nil, nil
-    pcall(function()
-        code, progress = ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check")
-    end)
-    if code == 1 or code == 3 or code == 6 or (code == 8 and (progress or 0) < 10) then
+    local status = CheckAcientOneStatus()
+    if string.find(status, "Upgrades completed")
+        or status == "Required Train More"
+        or string.find(status, "training sessions.")
+        or string.find(status, "Can Buy Gear")
+    then
         return true
     end
-    local st = CheckAcientOneStatus()
-    return string.find(st, "Train") ~= nil
 end
 
 function DetectGearUp(data)
@@ -1760,7 +1784,7 @@ function CheckMoon()
     local moonMap = {
         ["http://www.roblox.com/asset/?id=15493317929"] = "Blue Moon",
         ["http://www.roblox.com/asset/?id=9709149431"] = "Full Moon",
-        ["http://www.roblox.com/asset/?id=9709149052"] = "7/8",
+        ["http://www.roblox.com/asset/?id=9709149052"] = "Next Night",
         ["http://www.roblox.com/asset/?id=9709143733"] = "6/8",
         ["http://www.roblox.com/asset/?id=9709150401"] = "5/8",
         ["http://www.roblox.com/asset/?id=9709135895"] = "4/8",
@@ -1770,12 +1794,12 @@ function CheckMoon()
     }
     if moonMap[t] then return moonMap[t] end
     if Lighting:GetAttribute("MoonPhase") == 5 then return "Full Moon" end
-    return "Next Night"
+    return "Bad Moon"
 end
 
 function CheckClockTime()
     local ct = Lighting.ClockTime
-    if ct >= 17 or ct < 6 then
+    if ct >= 18 or ct < 5 then
         return "Night"
     end
     return "Day"
@@ -2433,11 +2457,7 @@ function GetRaceGhoul()
 end
 
 function BuyGearV4()
-	local code, progress = nil, nil
-	pcall(function()
-		code, progress = ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check")
-	end)
-	if code == 2 or code == 4 or code == 7 or string.find(CheckAcientOneStatus(), "Can Buy Gear") then
+	if string.find(CheckAcientOneStatus(), "Can Buy Gear") then
 		ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Buy")
 		ResetRaceStatus()
 	end
@@ -2501,62 +2521,45 @@ function CheckAbility()
 end
 
 function CollectBlueGear()
-	local value7 = GetBlueGear()
-	if value7 and not value7.CanCollide and value7.Transparency ~= 1 then
-		if localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") and localPlayer.Character.HumanoidRootPart:FindFirstChild("Agility") then
-			localPlayer.Character.HumanoidRootPart.Agility:Destroy()
-		end
-		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Đã tìm thấy Blue Gear! Đang nhặt...", ShowTime = 3 })
-		ToTarget(value7.CFrame)
-		return
-	end
-
-	-- Gear chưa xuất hiện hoặc chưa kích hoạt -> Bay lên đỉnh cao nhất và niệm nhìn Mặt Trăng
-	local highPoint = GetHighestPoint()
-	if not highPoint then
+	if not GetHighestPoint() then
 		local dealer = DetectNpc("Advanced Fruit Dealer")
-		if dealer and dealer:FindFirstChild("HumanoidRootPart") then
+		if dealer then
 			ToTarget(dealer.HumanoidRootPart.CFrame)
+			return
 		end
-		return
 	end
-
-	local targetCF = highPoint.CFrame * CFrame.new(0, 211.88, 0)
-	local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if not hrp then return end
-
-	if (hrp.Position - targetCF.Position).Magnitude > 10 then
-		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Đang bay lên đỉnh cao nhất Mirage...", ShowTime = 3 })
-		ToTarget(targetCF)
-	else
-		hrp.CFrame = targetCF
-		local moonDir = Lighting:GetMoonDirection()
-		local targetCamPos = Workspace.CurrentCamera.CFrame.Position + moonDir * 100
-		Workspace.CurrentCamera.CFrame = CFrame.lookAt(Workspace.CurrentCamera.CFrame.Position, targetCamPos)
-		if localPlayer.Character:FindFirstChild("Humanoid") then
-			localPlayer.Character.Humanoid.AutoRotate = false
-			localPlayer.Character.Humanoid.RootPart.CFrame = CFrame.lookAt(hrp.Position, targetCamPos)
-			localPlayer.Character.Humanoid.Sit = false
-		end
-		if CheckClockTime() == "Night" then
-			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Đang niệm chiêu thức tộc nhìn Mặt Trăng...", ShowTime = 2 })
-			pcall(function()
-				ReplicatedStorage.Remotes.CommE:FireServer("ActivateAbility")
-			end)
-			VirtualInputManager:SendKeyEvent(true, "T", false, game)
-			task.wait(0.2)
-			VirtualInputManager:SendKeyEvent(false, "T", false, game)
-			if not CheckAbility() and not hrp:FindFirstChild("Agility") then
-				if ReplicatedStorage:FindFirstChild("FX") and ReplicatedStorage.FX:FindFirstChild("Agility") then
-					local fx = ReplicatedStorage.FX.Agility:Clone()
-					fx.Parent = hrp
-					fx.Enabled = false
-				end
-			end
+	local gear = GetBlueGear()
+	if gear and not gear.CanCollide and gear.Transparency ~= 1 then
+		local root = localPlayer.Character.HumanoidRootPart
+		if root:FindFirstChild("Agility") then root.Agility:Destroy() end
+		ToTarget(GetBlueGear().CFrame)
+	elseif gear and gear.Transparency == 1 then
+		local highest = GetHighestPoint()
+		local target = highest and highest.CFrame * CFrame.new(0, 211.88, 0)
+		if target and (target.Position - localPlayer.Character.HumanoidRootPart.Position).Magnitude > 10 then
+			ToTarget(target)
 		else
-			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Đang chờ trời tối (Night) trên Mirage Island...", ShowTime = 3 })
+			localPlayer.CameraMode = "LockFirstPerson"
+			localPlayer.CameraMode = "Classic"
+			local started = tick()
+			repeat
+				task.wait()
+				Workspace.CurrentCamera.CFrame = CFrame.new(
+					Workspace.CurrentCamera.CFrame.Position,
+					Lighting:GetMoonDirection() + Workspace.CurrentCamera.CFrame.Position
+				)
+			until tick() - started >= 3
+			VirtualInputManager:SendKeyEvent(true, "T", false, game)
+			task.wait(0.5)
+			VirtualInputManager:SendKeyEvent(false, "T", false, game)
+			local root = localPlayer.Character.HumanoidRootPart
+			if not CheckAbility() and not root:FindFirstChild("Agility") then
+				local fx = ReplicatedStorage.FX.Agility:Clone()
+				fx.Parent = root
+				fx.Enabled = false
+			end
+			task.wait(1.5)
 		end
-		task.wait(1)
 	end
 end
 
@@ -2587,7 +2590,7 @@ local function CheckRaceV3()
 	return "Not Have V3"
 end
 
-function PullLeverV4()
+local function PullLeverV4Legacy()
 	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
 		uiLibrary.CreateNoti({
 			Title = "Skider Hub V4",
@@ -2699,6 +2702,68 @@ function PullLeverV4()
 			end
 		else
 			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Đã kéo cần gạt V4 thành công!", ShowTime = 5 })
+			task.wait(5)
+		end
+	end
+end
+
+function PullLeverV4()
+	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
+		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
+		task.wait(5)
+		return
+	end
+
+	local doorUnlocked = ReplicatedStorage.Remotes.CommF_:InvokeServer("CheckTempleDoor")
+	if not doorUnlocked then
+		local progress = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
+		if progress == 1 then
+			ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
+			return
+		elseif progress == 2 then
+			-- Exception requested by the user: retain the original Fluent Temple teleport engine.
+			TeleportTempleOfTime()
+			return
+		elseif progress == 3 then
+			ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
+			return
+		end
+
+		local mysticIsland = Workspace.Map:FindFirstChild("MysticIsland")
+		if mysticIsland and CheckClockTime() == "Night" then
+			CollectBlueGear()
+		elseif mysticIsland and CheckClockTime() ~= "Night" then
+			if not GetHighestPoint() then
+				local dealer = DetectNpc("Advanced Fruit Dealer")
+				if dealer then
+					ToTarget(dealer.HumanoidRootPart.CFrame)
+					return
+				end
+			end
+			local highest = GetHighestPoint()
+			local target = highest and highest.CFrame * CFrame.new(0, 211.88, 0)
+			if target and (target.Position - localPlayer.Character.HumanoidRootPart.Position).Magnitude > 10 then
+				ToTarget(target)
+			end
+		elseif not mysticIsland and Settings["Hop Server [Trial Or Pull Lever]"] then
+			SpecialHop("Mirage")
+		end
+	else
+		local temple = GetTempleOfTime()
+		if not IsInTempleOfTime() then
+			TeleportTempleOfTime()
+			return
+		end
+		if not temple or not temple:FindFirstChild("Lever") then return end
+		local lever = temple.Lever
+		if lever.Lever.CFrame.Z > leverTargetCFrame.Z + count12 or lever.Lever.CFrame.Z < leverTargetCFrame.Z - count12 then
+			if (localPlayer.Character.HumanoidRootPart.Position - lever.Part.Position).Magnitude > 10 then
+				ToTarget(lever.Part.CFrame)
+			else
+				fireproximityprompt(lever.Prompt.ProximityPrompt, 1)
+			end
+		else
+			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Done Pull Lever", ShowTime = 5 })
 			task.wait(5)
 		end
 	end
@@ -3362,7 +3427,9 @@ do
                         setStatus("Ghost Temple! Resetting...")
                         handledRoundId  = ""
                         abilityCooldown = tick() + 8
-                        pcall(function() LocalPlayer.Character.Humanoid.Health = 0 end)
+                        if isAlly then
+                            pcall(function() LocalPlayer.Character.Humanoid.Health = 0 end)
+                        end
                     end
                 end)
             else
@@ -3818,16 +3885,6 @@ local function AutoTrialV4Legacy()
 	-- Nếu FFA đang diễn ra: Dừng tween ngay, nhường quyền cho FFA
 	if isFFAActive then
 		TweenManager.CancelCurrent()
-		if isHelperAccount() then
-			pcall(function()
-				local char = localPlayer.Character
-				local hum = char and char:FindFirstChild("Humanoid")
-				if hum and hum.Health > 0 then
-					hum.Health = 0
-					pcall(function() char:BreakJoints() end)
-				end
-			end)
-		end
 		return
 	end
 
@@ -4240,15 +4297,6 @@ function AutoTrialV4()
 	local ffaActive = forcefield and forcefield.Transparency == 0 and not isInsideOwnTrial()
 	if ffaActive then
 		StopTrialTween()
-		if isHelperAccount() then
-			pcall(function()
-				local character, humanoid = TrialCharacterReady()
-				if character and humanoid and humanoid.Health > 0 then
-					humanoid.Health = 0
-					pcall(function() character:BreakJoints() end)
-				end
-			end)
-		end
 		return
 	end
 
@@ -4266,8 +4314,6 @@ function AutoTrialV4()
 				RunSkypieaTrial()
 			elseif race == "Fishman" then
 				RunFishmanTrial()
-			elseif race == "Mink" then
-				RunMinkTrial()
 			elseif race == "Ghoul" then
 				RunGhoulTrial()
 			elseif race == "Cyborg" then
@@ -4870,10 +4916,10 @@ Tabs.RaceV4:AddButton({
 })
 
 local TogglePullLever = Tabs.RaceV4:AddToggle("AutoPullLeverV4", {
-    Title = "Auto Pull Lever V4",
-    Default = Settings["Auto Pull Lever V4"] or false,
+    Title = "Auto Pull Lever",
+    Default = Settings["Auto Pull Lever"] or Settings["Auto Pull Lever V4"] or false,
     Callback = function(enabled)
-        SaveSettings("Auto Pull Lever V4", enabled)
+        SaveSettings("Auto Pull Lever", enabled)
     end
 })
 
@@ -5077,7 +5123,7 @@ local function ExportConfigTableString()
         { key = "Auto Get Ghoul", default = false },
         { key = "Hop Server Get Ghoul", default = false },
         { key = "Teleport Acient Clock", default = false },
-        { key = "Auto Pull Lever V4", default = true },
+        { key = "Auto Pull Lever", default = true },
         { key = "Auto Buy Gear", default = true },
         { key = "Select Gear V4", default = "Omega" },
         { key = "Auto Choose Gears", default = true },
@@ -5205,9 +5251,36 @@ local CombatSection = Tabs.Settings:AddSection("Combat Settings")
 Tabs.Settings:AddToggle("AutoClickToggle", {
     Title = "Auto Click",
     Description = "Fast Attack continuously when holding Melee or Sword",
-    Default = Settings["Auto Click"] ~= nil and Settings["Auto Click"] or true,
+    Default = Settings["Auto Click"] or false,
     Callback = function(enabled)
         SaveSettings("Auto Click", enabled)
+    end
+})
+
+Tabs.Settings:AddToggle("AttackNoAnimation", {
+    Title = "Attack No Animation ",
+    Default = Settings["Attack No Animation "] ~= false,
+    Callback = function(enabled)
+        SaveSettings("Attack No Animation ", enabled)
+    end
+})
+
+Tabs.Settings:AddToggle("BringMob", {
+    Title = "Bring Mob",
+    Default = Settings["Bring Mob"] ~= false,
+    Callback = function(enabled)
+        SaveSettings("Bring Mob", enabled)
+    end
+})
+
+Tabs.Settings:AddSlider("BringMobCount", {
+    Title = "Bring Mob Count",
+    Default = Settings["Bring Mob Count"] or 2,
+    Min = 2,
+    Max = 6,
+    Rounding = 0,
+    Callback = function(value)
+        SaveSettings("Bring Mob Count", value)
     end
 })
 
@@ -5223,19 +5296,19 @@ Window:SelectTab(1)
 
 -- Worker: Auto Click (Continuous Fast Attack for Melee / Sword)
 task.spawn(function()
-    while task.wait(0.03) do
+    while task.wait() do
         if Settings["Auto Click"] then
-            local char = localPlayer.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            if char and hum and hum.Health > 0 then
-                local tool = char:FindFirstChildOfClass("Tool")
-                if tool and (tool.ToolTip == "Melee" or tool.ToolTip == "Sword" or tool:FindFirstChild("Melee") or tool:FindFirstChild("Sword")) then
-                    pcall(function()
-                        tool:Activate()
-                    end)
-                    fastAttackInstance:Attack()
+            pcall(function()
+                local fruitName = NameWeapon("Blox Fruit")
+                if fruitName and localPlayer.Character and localPlayer.Character:FindFirstChild(fruitName) then
+                    local hits = AttackAOE(80, true)
+                    if hits then
+                        getgenv().UseFruitM1(hits[1][1])
+                    end
+                else
+                    getgenv().AttackFunctionnhungSuperTrial()
                 end
-            end
+            end)
         end
     end
 end)
@@ -5292,10 +5365,10 @@ task.spawn(function()
     end
 end)
 
--- Worker 5: Auto Pull Lever V4
+-- Worker 5: Auto Pull Lever
 task.spawn(function()
-    while task.wait(0.3) do
-        if Settings["Auto Pull Lever V4"] then
+    while task.wait(0.1) do
+        if Settings["Auto Pull Lever"] or Settings["Auto Pull Lever V4"] then
             pcall(PullLeverV4)
         end
     end
@@ -5330,11 +5403,7 @@ local function runRaceTrainingWorkLegacy()
 
     -- 1. Nếu đang ở trong Temple of Time mà cần training -> Reset để Out Temple ra Sea 3
     if IsInTempleOfTime() then
-        currentTrainingStatus = "Out Temple: Resetting character..."
-        pcall(function()
-            char.Humanoid.Health = 0
-        end)
-        task.wait(3)
+        currentTrainingStatus = "Legacy training engine disabled in Temple"
         return false
     end
 
@@ -5518,21 +5587,17 @@ local BnnRaceTrainingMobs = {
 local bnnVisitedRaceSpawns = {}
 
 local function BnnNextRaceSpawnName()
+    if #bnnVisitedRaceSpawns >= #BnnRaceTrainingMobs then
+        table.clear(bnnVisitedRaceSpawns)
+        return nil
+    end
     for _, name in ipairs(BnnRaceTrainingMobs) do
         if not table.find(bnnVisitedRaceSpawns, name) then return name end
     end
-    table.clear(bnnVisitedRaceSpawns)
-    return BnnRaceTrainingMobs[1]
+    return nil
 end
 
 local function runRaceTrainingWork()
-    if Settings["Stack Train With Trial Race"] and not CheckGoTrain() then
-        isCurrentlyTraining = false
-        blockHopAfterTrial = false
-        currentTrainingStatus = "Training complete - Ready for trial"
-        return true
-    end
-
     isCurrentlyTraining = true
     blockHopAfterTrial = true
     currentTrainingStatus = "Auto Finish Train Quest (bnn.lua)"
@@ -5562,6 +5627,7 @@ local function runRaceTrainingWork()
             or not CheckGoTrain()
     else
         local spawnName = BnnNextRaceSpawnName()
+        if not spawnName then return end
         local spawnPart = DetectPartSpawnMob(spawnName)
         if spawnPart then
             if not table.find(bnnVisitedRaceSpawns, spawnName) then
@@ -5579,29 +5645,20 @@ local function runRaceTrainingWork()
                 or not Settings["Auto Finish Train Quest"]
                 or not CheckGoTrain()
             task.wait(1)
-        else
-            table.clear(bnnVisitedRaceSpawns)
-            DeleteIgnoredMobSpawn()
         end
     end
 
-    if not CheckGoTrain() then
-        BuyGearV4()
-        isCurrentlyTraining = false
-        blockHopAfterTrial = false
-        currentTrainingStatus = "Training complete - Ready for trial"
-        return true
-    end
-    return false
 end
 
 -- Worker 8: Auto Finish Train Quest
 task.spawn(function()
-    while task.wait(0.2) do
+    while task.wait() do
         if Settings["Auto Finish Train Quest"] then
             pcall(function()
                 if Settings["Stack Train With Trial Race"] and not CheckGoTrain() then
                     isCurrentlyTraining = false
+                    blockHopAfterTrial = false
+                    currentTrainingStatus = "Training complete - Ready for trial"
                     return
                 end
                 runRaceTrainingWork()
@@ -5742,66 +5799,5 @@ task.spawn(function()
 		end)
 	end
 end)
-
--- FFA Watcher & Post-Trial Out Temple (From piggyv4)
--- Out Temple (ChooseGear/BuyGear/Reset) chỉ dành cho Main (isUper)
-task.spawn(function()
-    while task.wait(0.3) do
-        pcall(function()
-            local temple = GetTempleOfTime()
-            if not temple or not temple:FindFirstChild("FFABorder") or not temple.FFABorder:FindFirstChild("Forcefield") then
-                return
-            end
-            local trans = temple.FFABorder.Forcefield.Transparency
-            if trans == 0 then
-                -- FFA đang diễn ra
-                lastFFAState = 0
-                postTrialResetScheduled = false
-            elseif lastFFAState == 0 then
-                -- Chuyển từ 0 sang 1: FFA vừa kết thúc!
-                lastFFAState = 1
-                -- Chỉ Main mới làm Out Temple (nhận gear + reset ra Sea 3)
-                if isUper and not postTrialResetScheduled then
-                    postTrialResetScheduled = true
-                    blockHopAfterTrial = true
-                    postTrialHopDone = true
-                    task.spawn(function()
-                        if uiLibrary and uiLibrary.CreateNoti then
-                            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Trial completed! Claiming gear...", ShowTime = 5 })
-                        end
-                        -- 1. Nhận gear và mua gear tại đền
-                        task.wait(1)
-                        pcall(ChooseGearV4)
-                        task.wait(1)
-                        pcall(BuyGearV4)
-                        -- 2. Chờ 5s rồi reset để Out Temple ra Sea 3
-                        if uiLibrary and uiLibrary.CreateNoti then
-                            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Out Temple: Resetting character in 5s...", ShowTime = 5 })
-                        end
-                        task.wait(5)
-                        pcall(function()
-                            local char = localPlayer.Character
-                            if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
-                                char.Humanoid.Health = 0
-                            end
-                        end)
-                        if uiLibrary and uiLibrary.CreateNoti then
-                            uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Out Temple complete! Respawning in Sea 3...", ShowTime = 5 })
-                        end
-                        task.wait(10)
-                        postTrialResetScheduled = false
-                        blockHopAfterTrial = false
-                        if Settings["Hop After Trial"] ~= false and Settings["Hop Server [Trial Or Pull Lever]"] then
-                            task.wait(2)
-                            HopServer()
-                        end
-                    end)
-                end
-            end
-        end)
-    end
-end)
-
-
 
 uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Script loaded successfully", ShowTime = 5 })
