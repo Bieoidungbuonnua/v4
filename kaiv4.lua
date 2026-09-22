@@ -252,7 +252,7 @@ do
             ["Bring Mob Count"]                          = 6,
             ["Auto Click"]                               = true,
             ["Use skill fast dont hold"]                 = true,
-            ["Reset Teleport"]                           = true,
+            ["Reset Teleport"]                           = false,
         }
     end
 
