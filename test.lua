@@ -20,7 +20,23 @@ local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
-getgenv().Mode = getgenv().Mode or "Main"
+
+-- A supplied JoinV4/Skiderhubv4 group config is itself an explicit OneClickV4 request.
+-- This also supports loaders that forgot to assign getgenv().Mode separately.
+local _HAS_EXTERNAL_JOINV4_CONFIG = type(getgenv().JoinV4Config) == "table"
+    or type(getgenv().Skiderhubv4Config) == "table"
+if getgenv().Mode == nil then
+    local legacyMode = type(getgenv().Skiderhubv4Config) == "table" and getgenv().Skiderhubv4Config.Mode
+    getgenv().Mode = legacyMode or (_HAS_EXTERNAL_JOINV4_CONFIG and "OneClickV4" or "Main")
+end
+do
+    local normalizedMode = tostring(getgenv().Mode):gsub("^%s+", ""):gsub("%s+$", ""):gsub(",+$", "")
+    if normalizedMode:lower() == "oneclickv4" then
+        getgenv().Mode = "OneClickV4"
+    elseif normalizedMode:lower() == "main" then
+        getgenv().Mode = "Main"
+    end
+end
 
 -- OneClickV4 starts only after player data is ready, matching its loader contract.
 if getgenv().Mode == "OneClickV4" and not localPlayer:FindFirstChild("DataLoaded") then
@@ -345,23 +361,28 @@ end
 
 -- OneClickV4 owns these values: saved settings and getgenv().Config cannot disable them.
 -- JoinV4Config.Helper stays nested: one row is one group and slot [1] is Helper (FM).
-if getgenv().Mode == "OneClickV4" then
-    local oneClickSettings = {
-        ["Auto Trial"] = true,
-        ["Auto Turn On V3 Near Door"] = true,
-        ["V3 Countdown"] = 3,
-        ["Auto Buy Gear"] = true,
-        ["Select Gear V4"] = "Omega",
-        ["Auto Choose Gears"] = true,
-        ["Auto Finish Train Quest"] = true,
-        ["Stack Train With Trial Race"] = true,
-        ["Multi Trial"] = true,
-        ["Select Team"] = "Marines",
-        ["No Frog"] = true,
-    }
-    for key, value in pairs(oneClickSettings) do
+local ONECLICK_V4_SETTINGS = {
+    ["Auto Trial"] = true,
+    ["Auto Turn On V3 Near Door"] = true,
+    ["V3 Countdown"] = 3,
+    ["Auto Buy Gear"] = true,
+    ["Select Gear V4"] = "Omega",
+    ["Auto Choose Gears"] = true,
+    ["Auto Finish Train Quest"] = true,
+    ["Stack Train With Trial Race"] = true,
+    ["Multi Trial"] = true,
+    ["Select Team"] = "Marines",
+    ["No Frog"] = true,
+}
+
+local function ApplyOneClickV4Settings()
+    for key, value in pairs(ONECLICK_V4_SETTINGS) do
         Settings[key] = value
     end
+end
+
+if getgenv().Mode == "OneClickV4" then
+    ApplyOneClickV4Settings()
 
     local helperNames, helperSelection, seenHelpers = {}, {}, {}
     for _, group in ipairs(getgenv().JoinV4Config["Helper"] or {}) do
@@ -5456,6 +5477,16 @@ Window:SelectTab(1)
 -- 7. WORKER LOOPS (Preserved and complete)
 --------------------------------------------------------------------------------
 
+-- OneClickV4 is a locked automation preset. Re-apply it in case a late UI callback
+-- or an old saved config attempts to turn one of its required features off.
+task.spawn(function()
+    while task.wait(0.5) do
+        if getgenv().Mode == "OneClickV4" then
+            ApplyOneClickV4Settings()
+        end
+    end
+end)
+
 -- Worker: Auto Click (Continuous Fast Attack for Melee / Sword)
 task.spawn(function()
     while task.wait() do
@@ -5981,6 +6012,9 @@ end)
 --------------------------------------------------------------------------------
 -- INTEGRATED MOONCHECK UI (kept unchanged from mooncheck.lua)
 --------------------------------------------------------------------------------
+-- Run MoonCheck independently so an executor-specific UI/closure error can never
+-- prevent the JoinV4 API and Dynamic Island from starting.
+task.spawn(function()
 repeat task.wait(0.5) until game:IsLoaded()
 local P = game:GetService("Players")
 local L = P.LocalPlayer
@@ -5989,7 +6023,8 @@ local RS = game:GetService("RunService")
 function CheckSea(v)
     return v == tonumber(workspace:GetAttribute("MAP"):match("%d+"))
 end
-CheckMoon = newcclosure(function()
+local MoonNewCClosure = newcclosure or function(callback) return callback end
+CheckMoon = MoonNewCClosure(function()
     local t = (CheckSea(1) or CheckSea(3))
         and ((game.Lighting:FindFirstChild("Sky") and game.Lighting.Sky.MoonTextureId)
         or (game.Lighting:FindFirstChild("Space_Skybox") and game.Lighting.Space_Skybox.MoonTextureId))
@@ -6008,7 +6043,7 @@ CheckMoon = newcclosure(function()
         ["http://www.roblox.com/asset/?id=9709149680"]="0/8";
     })[t] or "nil"
 end)
-CheckMoonPhase = newcclosure(function()
+CheckMoonPhase = MoonNewCClosure(function()
     local m = game.Lighting:GetAttribute("MoonPhase")
     if not m then return "Unknown","Unknown Phase",nil end
     if m > 5 then return "Fake Moon","Fake Moon",m
@@ -6102,6 +6137,7 @@ end
 RS.Heartbeat:Connect(function()
     pcall(Upd)
 end)
+end)
 
 --------------------------------------------------------------------------------
 -- INTEGRATED JOINV4 ENGINE + DYNAMIC ISLAND STATUS UI
@@ -6110,6 +6146,12 @@ end)
 -- ══════════════════════════════════════════════════════════════════
 ;(function()
     local CFG = getgenv().JoinV4Config
+    if type(CFG) ~= "table" then
+        warn("[JoinV4] JoinV4Config is missing; runtime was not started")
+        return
+    end
+    getgenv().JoinV4Active = true
+    getgenv().JoinV4RuntimeStatus = "Starting"
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "http://163.61.183.126:3000/fullmoon"
@@ -6644,10 +6686,20 @@ end)
     -- ══════════════════════════════════════════════════════════════════
     local UserInputService = game:GetService("UserInputService")
     local RunService = game:GetService("RunService")
-    local FONT_SF_BOLD = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.Bold)
-    local FONT_SF_SEMI = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.SemiBold)
-    local FONT_SF_MED  = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.Medium)
-    local FONT_SF_REG  = Font.new("rbxasset://fonts/families/Inter.json", Enum.FontWeight.Regular)
+    local function makeSFFont(weight)
+        local ok, face = pcall(function()
+            return Font.new("rbxasset://fonts/families/Inter.json", weight)
+        end)
+        if ok and face then return face end
+        local fallbackOk, fallback = pcall(function()
+            return Font.fromEnum(Enum.Font.Gotham)
+        end)
+        return fallbackOk and fallback or nil
+    end
+    local FONT_SF_BOLD = makeSFFont(Enum.FontWeight.Bold)
+    local FONT_SF_SEMI = makeSFFont(Enum.FontWeight.SemiBold)
+    local FONT_SF_MED  = makeSFFont(Enum.FontWeight.Medium)
+    local FONT_SF_REG  = makeSFFont(Enum.FontWeight.Regular)
 
     local C_ORANGE = Color3.fromRGB(255, 159, 10)
     local C_GREEN  = Color3.fromRGB(48, 209, 88)
@@ -6669,7 +6721,11 @@ end)
     local statusColor = C_ORANGE
 
     local function applyFont(label, face, size)
-        label.FontFace = face
+        if face then
+            pcall(function() label.FontFace = face end)
+        else
+            label.Font = Enum.Font.Gotham
+        end
         label.TextSize = size
     end
 
@@ -6731,6 +6787,7 @@ end)
 
     local function setStatus(txt)
         currentStatus = tostring(txt or "")
+        getgenv().JoinV4RuntimeStatus = currentStatus
         paintStatus(currentStatus)
     end
 
@@ -6774,13 +6831,21 @@ end)
     end
 
     local function createUI()
+        local function resolveGuiParent()
+            if gethui then
+                local ok, result = pcall(gethui)
+                if ok and result then return result end
+            end
+            local playerGui = Player:FindFirstChildOfClass("PlayerGui") or Player:FindFirstChild("PlayerGui")
+            return playerGui or CoreGui
+        end
+
+        local guiParent = resolveGuiParent()
         pcall(function()
-            local parent = (gethui and gethui()) or CoreGui
-            local old = parent:FindFirstChild("JoinV4UI")
+            local old = guiParent:FindFirstChild("JoinV4UI")
             if old then old:Destroy() end
         end)
 
-        local guiParent = (gethui and gethui()) or CoreGui
         local sg = Instance.new("ScreenGui")
         sg.Name = "JoinV4UI"
         sg.ResetOnSpawn = false
@@ -7037,13 +7102,19 @@ end)
     end
 
     -- BOOT
-    task.spawn(createUI)
+    task.spawn(function()
+        local ok, err = pcall(createUI)
+        if not ok then
+            warn("[JoinV4] Dynamic Island UI failed: " .. tostring(err))
+        end
+    end)
     pcall(function()
         if not Player:FindFirstChild("DataLoaded") then
             Player:WaitForChild("DataLoaded", 5)
         end
     end)
     setStatus("Loaded & Running")
+    getgenv().JoinV4RuntimeStatus = "Loaded & Running"
     task.wait(0.5)
 
     task.spawn(function()
