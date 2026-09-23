@@ -379,6 +379,10 @@ local function ApplyOneClickV4Settings()
     for key, value in pairs(ONECLICK_V4_SETTINGS) do
         Settings[key] = value
     end
+    local joinConfig = getgenv().JoinV4Config
+    if type(joinConfig) == "table" and joinConfig["Hop After Trial"] ~= nil then
+        Settings["Hop After Trial"] = joinConfig["Hop After Trial"] == true
+    end
 end
 
 if getgenv().Mode == "OneClickV4" then
@@ -5329,8 +5333,15 @@ local function ExportOneClickV4ConfigString()
         'getgenv().Mode = "OneClickV4"',
         "",
         "getgenv().JoinV4Config = {",
-        '    ["Helper"] = {',
     }
+
+    local hopAfterTrial = cfg["Hop After Trial"]
+    if hopAfterTrial == nil then
+        hopAfterTrial = Settings["Hop After Trial"]
+    end
+    if hopAfterTrial == nil then hopAfterTrial = true end
+    table.insert(lines, '    ["Hop After Trial"] = ' .. (hopAfterTrial == true and "true" or "false") .. ",")
+    table.insert(lines, '    ["Helper"] = {')
 
     for _, group in ipairs(cfg["Helper"] or {}) do
         if type(group) == "table" then
@@ -5399,7 +5410,7 @@ Tabs.Settings:AddButton({
     Title = "Copy Full Script",
     Description = "Copy Config + Loader script to clipboard",
     Callback = function()
-        local fullScript = ExportActiveConfigString() .. '\n\nloadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/skiderhubv4.lua"))()'
+        local fullScript = ExportActiveConfigString() .. '\n\nloadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/test.lua"))()'
         local copyFn = setclipboard or toclipboard or (Clipboard and Clipboard.set) or (syn and syn.write_clipboard)
         if copyFn then
             copyFn(fullScript)
