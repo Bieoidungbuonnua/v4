@@ -1,106 +1,145 @@
--- Skider Hub full-theme hotpatch.
--- If an older build is already loaded in this server, recolor/rebrand the live GUI
--- instead of returning before the new theme can be applied.
+-- Skider Hub SAFE UI hotpatch.
+-- IMPORTANT: branding/theme changes are scoped to the hub UI only.
+-- PlayerGui/Main, HUD, hotbar, tools and Devil Fruit icons are never scanned or modified.
 if getgenv().__BF_LOADED then
-    if not getgenv().__SKIDER_GREEN_V3_HOTPATCH then
-        getgenv().__SKIDER_GREEN_V3_HOTPATCH = true
+    -- Stop the old V3 global sweep if an older build is still running in this server.
+    -- Its PropertyChanged connections cannot be detached, so a fresh rejoin is still the
+    -- cleanest way to remove hooks installed by that old build.
+    local _loadedResult = getgenv().__BF_RESULT
+    getgenv().__BF_LOADED = false
+    task.wait(0.18)
+    getgenv().__BF_LOADED = true
+
+    if not getgenv().__SKIDER_SAFE_UI_HOTPATCH then
+        getgenv().__SKIDER_SAFE_UI_HOTPATCH = true
         task.spawn(function()
-            local Players = game:GetService("Players")
             local CoreGui = game:GetService("CoreGui")
             local LOGO = "rbxassetid://90412962524051"
             local GREEN = Color3.fromRGB(18, 105, 58)
             local GREEN_HOVER = Color3.fromRGB(24, 130, 72)
             local GREEN_DEEP = Color3.fromRGB(8, 42, 24)
-            local roots = setmetatable({}, { __mode = "k" })
-            local watched = setmetatable({}, { __mode = "k" })
-            local oldLogoAssets = {}
+            local WHITE = Color3.fromRGB(245, 247, 250)
+            local TEXT_DIM = Color3.fromRGB(205, 212, 218)
+            local OLD_BRAND = "Banana" .. " Cat" .. " Hub"
+            local watchedRoots = setmetatable({}, { __mode = "k" })
 
             local function lower(v)
                 return type(v) == "string" and string.lower(v) or ""
             end
 
-            local OLD_BRAND = "Banana" .. " Cat" .. " Hub"
-            local OLD_BRAND_LOWER = string.lower(OLD_BRAND)
-
-            local function hasBrandText(v)
-                local s = lower(v)
-                return string.find(s, OLD_BRAND_LOWER, 1, true) ~= nil
-                    or string.find(s, "skider hub", 1, true) ~= nil
-            end
-
-            local function replaceBrandText(v)
+            local function replaceBrand(v)
                 if type(v) ~= "string" then return v end
                 v = v:gsub(OLD_BRAND, "Skider Hub")
                 v = v:gsub(string.upper(OLD_BRAND), "Skider Hub")
-                v = v:gsub(OLD_BRAND_LOWER, "Skider Hub")
+                v = v:gsub(string.lower(OLD_BRAND), "Skider Hub")
                 return v
             end
 
-            local function greenRichText(v)
-                if type(v) ~= "string" then return v end
-                v = v:gsub('color%s*=%s*"[^"]-"', 'color="#12693A"')
-                v = v:gsub("color%s*=%s*'[^']-'", "color='#12693A'")
-                return v
+            local function hasBrand(v)
+                local s = lower(v)
+                return string.find(s, "banana cat hub", 1, true) ~= nil
+                    or string.find(s, "skider hub", 1, true) ~= nil
             end
 
-            -- Remove every saturated legacy accent (yellow/gold/orange/red/blue/cyan/purple)
-            -- from Skider Hub UI. Neutral black/gray/white colors are intentionally preserved.
+            local function isHubRoot(root)
+                if not root or not root:IsA("ScreenGui") then return false end
+                local n = lower(root.Name)
+                if string.find(n, "nousigi", 1, true)
+                    or string.find(n, "skider", 1, true)
+                    or string.find(n, "banana", 1, true)
+                then
+                    return true
+                end
+                for _, o in ipairs(root:GetDescendants()) do
+                    if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and hasBrand(o.Text) then
+                        return true
+                    end
+                end
+                return false
+            end
+
             local function greenColor(c)
                 if typeof(c) ~= "Color3" then return c end
                 local _, sat, val = c:ToHSV()
                 if sat < 0.12 or val < 0.10 then return c end
-                if val < 0.34 then return GREEN_DEEP end
+                if val < 0.32 then return GREEN_DEEP end
                 if val < 0.72 then return GREEN end
                 return GREEN_HOVER
             end
 
             local function greenSequence(seq)
                 if typeof(seq) ~= "ColorSequence" then return seq end
-                local points, changed = {}, false
+                local pts = {}
                 for _, kp in ipairs(seq.Keypoints) do
-                    local c = greenColor(kp.Value)
-                    if c ~= kp.Value then changed = true end
-                    points[#points + 1] = ColorSequenceKeypoint.new(kp.Time, c)
+                    pts[#pts + 1] = ColorSequenceKeypoint.new(kp.Time, greenColor(kp.Value))
                 end
-                return changed and ColorSequence.new(points) or seq
+                return ColorSequence.new(pts)
             end
 
-            local function screenAncestor(o)
-                while o do
-                    if o:IsA("ScreenGui") then return o end
-                    o = o.Parent
+            local function isButtonText(o)
+                if o:IsA("TextButton") then return true end
+                local p = o.Parent
+                for _ = 1, 4 do
+                    if not p then break end
+                    if p:IsA("TextButton") or p:IsA("ImageButton") then return true end
+                    local n = lower(p.Name)
+                    if string.find(n, "button", 1, true) then return true end
+                    p = p.Parent
                 end
-                return nil
+                return false
             end
 
             local function isExplicitLogo(o)
+                if not (o:IsA("ImageLabel") or o:IsA("ImageButton")) then return false end
                 local n = lower(o.Name)
-                local p = o.Parent and lower(o.Parent.Name) or ""
+                local pn = o.Parent and lower(o.Parent.Name) or ""
                 return string.find(n, "logo", 1, true) ~= nil
                     or string.find(n, "brand", 1, true) ~= nil
                     or string.find(n, "hubicon", 1, true) ~= nil
-                    or string.find(p, "logo", 1, true) ~= nil
-                    or string.find(p, "brand", 1, true) ~= nil
+                    or string.find(n, "toggleuibtn", 1, true) ~= nil
+                    or string.find(pn, "logo", 1, true) ~= nil
+                    or string.find(pn, "brand", 1, true) ~= nil
             end
 
-            local function looksLikeFloatingHubIcon(o)
-                if not (o:IsA("ImageButton") or o:IsA("ImageLabel")) then return false end
-                if o.Image == "" then return false end
-                local ok, result = pcall(function()
-                    local size = o.AbsoluteSize
-                    local pos = o.AbsolutePosition
-                    local cam = workspace.CurrentCamera
-                    local viewport = cam and cam.ViewportSize or Vector2.new(1280, 720)
-                    if size.X < 38 or size.Y < 38 or size.X > 105 or size.Y > 105 then return false end
-                    if math.abs(size.X - size.Y) > math.max(size.X, size.Y) * 0.35 then return false end
-                    -- Nousigi/BNN floating toggle lives in the lower-left quarter.
-                    return pos.X <= math.max(260, viewport.X * 0.30)
-                        and pos.Y >= viewport.Y * 0.45
-                end)
-                return ok and result == true
+            local function patchHeaderLogo(root)
+                local labels, images = {}, {}
+                for _, o in ipairs(root:GetDescendants()) do
+                    if (o:IsA("TextLabel") or o:IsA("TextButton")) and hasBrand(o.Text) then
+                        labels[#labels + 1] = o
+                    elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
+                        images[#images + 1] = o
+                    end
+                end
+                for _, img in ipairs(images) do
+                    if isExplicitLogo(img) then
+                        pcall(function()
+                            img.Image = LOGO
+                            img.ImageRectOffset = Vector2.new(0, 0)
+                            img.ImageRectSize = Vector2.new(0, 0)
+                            img.ImageColor3 = Color3.new(1, 1, 1)
+                        end)
+                    else
+                        pcall(function()
+                            local sz = img.AbsoluteSize
+                            if img.Image == "" or sz.X < 20 or sz.Y < 20 or sz.X > 120 or sz.Y > 120 then return end
+                            if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.35 then return end
+                            local ic = img.AbsolutePosition + sz / 2
+                            for _, label in ipairs(labels) do
+                                local lc = label.AbsolutePosition + label.AbsoluteSize / 2
+                                if math.abs(ic.Y - lc.Y) <= 48 and math.abs(ic.X - lc.X) <= 150 then
+                                    img.Image = LOGO
+                                    img.ImageRectOffset = Vector2.new(0, 0)
+                                    img.ImageRectSize = Vector2.new(0, 0)
+                                    img.ImageColor3 = Color3.new(1, 1, 1)
+                                    break
+                                end
+                            end
+                        end)
+                    end
+                end
             end
 
-            local function applyObject(o)
+            local function patchObject(o)
                 if not o or not o.Parent then return end
                 pcall(function()
                     if o:IsA("GuiObject") then
@@ -108,254 +147,79 @@ if getgenv().__BF_LOADED then
                         o.BorderColor3 = greenColor(o.BorderColor3)
                     end
                     if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                        local t = greenRichText(replaceBrandText(o.Text))
-                        if hasBrandText(t) then
-                            -- The old library colors the title with RichText, which bypasses TextColor3.
-                            -- Strip the legacy tags and force a real green title.
-                            t = t:gsub("<.->", "")
-                            pcall(function() o.RichText = false end)
+                        local txt = replaceBrand(o.Text)
+                        if hasBrand(txt) then
+                            txt = txt:gsub("<.->", "")
+                            o.RichText = false
                             o.TextColor3 = GREEN
                             pcall(function() o.TextStrokeColor3 = GREEN_DEEP end)
-                            for _, child in ipairs(o:GetChildren()) do
-                                if child:IsA("UIGradient") then
-                                    child.Color = ColorSequence.new(GREEN)
-                                elseif child:IsA("UIStroke") then
-                                    child.Color = GREEN_DEEP
-                                end
-                            end
+                        elseif isButtonText(o) then
+                            -- Buttons must stay highly readable on dark-green surfaces.
+                            o.TextColor3 = WHITE
+                            pcall(function() o.TextStrokeColor3 = Color3.fromRGB(0, 0, 0) end)
                         else
-                            o.TextColor3 = greenColor(o.TextColor3)
-                            pcall(function() o.TextStrokeColor3 = greenColor(o.TextStrokeColor3) end)
+                            local _, sat, val = o.TextColor3:ToHSV()
+                            if sat >= 0.12 then
+                                o.TextColor3 = TEXT_DIM
+                            elseif val < 0.55 then
+                                o.TextColor3 = TEXT_DIM
+                            end
                         end
-                        if t ~= o.Text then o.Text = t end
+                        if txt ~= o.Text then o.Text = txt end
                     end
                     if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-                        if oldLogoAssets[o.Image] or isExplicitLogo(o) or looksLikeFloatingHubIcon(o) then
-                            if o.Image ~= LOGO then oldLogoAssets[o.Image] = true end
+                        if isExplicitLogo(o) then
                             o.Image = LOGO
                             o.ImageRectOffset = Vector2.new(0, 0)
                             o.ImageRectSize = Vector2.new(0, 0)
                             o.ImageColor3 = Color3.new(1, 1, 1)
-                            pcall(function() o.BackgroundColor3 = GREEN_DEEP end)
                         else
                             o.ImageColor3 = greenColor(o.ImageColor3)
                         end
                     end
-                    if o:IsA("ScrollingFrame") then
-                        o.ScrollBarImageColor3 = greenColor(o.ScrollBarImageColor3)
-                    end
-                    if o:IsA("UIStroke") then
-                        o.Color = greenColor(o.Color)
-                    end
-                    if o:IsA("UIGradient") then
-                        o.Color = greenSequence(o.Color)
-                    end
+                    if o:IsA("ScrollingFrame") then o.ScrollBarImageColor3 = GREEN end
+                    if o:IsA("UIStroke") then o.Color = greenColor(o.Color) end
+                    if o:IsA("UIGradient") then o.Color = greenSequence(o.Color) end
                 end)
             end
 
-            local function watchObject(o)
-                if watched[o] then return end
-                watched[o] = true
-                local props = {}
-                if o:IsA("GuiObject") then
-                    props[#props + 1] = "BackgroundColor3"
-                    props[#props + 1] = "BorderColor3"
-                end
-                if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                    props[#props + 1] = "Text"
-                    props[#props + 1] = "TextColor3"
-                    props[#props + 1] = "TextStrokeColor3"
-                    props[#props + 1] = "RichText"
-                end
-                if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-                    props[#props + 1] = "Image"
-                    props[#props + 1] = "ImageColor3"
-                end
-                if o:IsA("ScrollingFrame") then props[#props + 1] = "ScrollBarImageColor3" end
-                if o:IsA("UIStroke") then props[#props + 1] = "Color" end
-                if o:IsA("UIGradient") then props[#props + 1] = "Color" end
-                for _, prop in ipairs(props) do
-                    pcall(function()
-                        o:GetPropertyChangedSignal(prop):Connect(function()
-                            task.defer(applyObject, o)
+            local function patchRoot(root)
+                if not isHubRoot(root) then return end
+                patchHeaderLogo(root)
+                patchObject(root)
+                for _, o in ipairs(root:GetDescendants()) do patchObject(o) end
+                if not watchedRoots[root] then
+                    watchedRoots[root] = true
+                    root.DescendantAdded:Connect(function(o)
+                        task.defer(function()
+                            if root.Parent and o.Parent then patchObject(o); patchHeaderLogo(root) end
                         end)
                     end)
-                end
-            end
-
-            local function captureHeaderLogo(root)
-                local labels, images = {}, {}
-                for _, o in ipairs(root:GetDescendants()) do
-                    if (o:IsA("TextLabel") or o:IsA("TextButton")) and hasBrandText(o.Text) then
-                        labels[#labels + 1] = o
-                    elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
-                        images[#images + 1] = o
-                    end
-                end
-                for _, img in ipairs(images) do
-                    pcall(function()
-                        local sz = img.AbsoluteSize
-                        if img.Image == "" or img.Image == LOGO or sz.X < 16 or sz.Y < 16 or sz.X > 130 or sz.Y > 130 then return end
-                        if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.40 then return end
-                        local ic = img.AbsolutePosition + sz / 2
-                        for _, label in ipairs(labels) do
-                            local lc = label.AbsolutePosition + label.AbsoluteSize / 2
-                            if math.abs(ic.Y - lc.Y) <= 55 and math.abs(ic.X - lc.X) <= 180 then
-                                oldLogoAssets[img.Image] = true
-                                img.Image = LOGO
-                                img.ImageRectOffset = Vector2.new(0, 0)
-                                img.ImageRectSize = Vector2.new(0, 0)
-                                img.ImageColor3 = Color3.new(1, 1, 1)
-                                break
-                            end
-                        end
-                    end)
-                end
-            end
-
-            local function patchRoot(root)
-                if not root or not root.Parent then return end
-                captureHeaderLogo(root)
-
-                local rootName = lower(root.Name)
-                local descendants = root:GetDescendants()
-                local standaloneHubGui = (#descendants <= 30) and (
-                    string.find(rootName, "banana", 1, true)
-                    or string.find(rootName, "skider", 1, true)
-                    or string.find(rootName, "nousigi", 1, true)
-                    or string.find(rootName, "toggle", 1, true)
-                )
-                if standaloneHubGui then
-                    for _, obj in ipairs(descendants) do
-                        if obj:IsA("ImageButton") or obj:IsA("ImageLabel") then
-                            pcall(function()
-                                local size = obj.AbsoluteSize
-                                if obj.Image ~= "" and size.X >= 24 and size.Y >= 24 and size.X <= 160 and size.Y <= 160
-                                    and math.abs(size.X - size.Y) <= math.max(size.X, size.Y) * 0.40
-                                then
-                                    if obj.Image ~= LOGO then oldLogoAssets[obj.Image] = true end
-                                    obj.Image = LOGO
-                                    obj.ImageRectOffset = Vector2.new(0, 0)
-                                    obj.ImageRectSize = Vector2.new(0, 0)
-                                    obj.ImageColor3 = Color3.new(1, 1, 1)
-                                end
-                            end)
-                        end
-                    end
-                end
-
-                applyObject(root)
-                watchObject(root)
-                for _, o in ipairs(root:GetDescendants()) do
-                    applyObject(o)
-                    watchObject(o)
                 end
             end
 
             local containers = { CoreGui }
-            local lp = Players.LocalPlayer
-            if lp then
-                local pg = lp:FindFirstChildOfClass("PlayerGui")
-                if pg then containers[#containers + 1] = pg end
-            end
             pcall(function()
                 if gethui then
                     local h = gethui()
-                    local exists = false
-                    for _, c in ipairs(containers) do if c == h then exists = true break end end
-                    if h and not exists then containers[#containers + 1] = h end
+                    if h and h ~= CoreGui then containers[#containers + 1] = h end
                 end
             end)
 
-            local function registerRoot(root)
-                if not root or not root:IsA("ScreenGui") then return end
-                roots[root] = true
-                if not root:GetAttribute("SkiderGreenHooked") then
-                    pcall(function() root:SetAttribute("SkiderGreenHooked", true) end)
-                    root.DescendantAdded:Connect(function(o)
-                        if o and o.Parent then
-                            watchObject(o)
-                            applyObject(o)
-                        end
-                        task.delay(0.02, function()
-                            if o and o.Parent then applyObject(o) end
-                        end)
-                    end)
-                end
-            end
-
-            local function discover()
+            while getgenv().__BF_LOADED do
                 for _, container in ipairs(containers) do
                     if container and container.Parent then
-                        for _, o in ipairs(container:GetDescendants()) do
-                            if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                                if hasBrandText(o.Text) then
-                                    registerRoot(screenAncestor(o))
-                                    applyObject(o)
-                                end
-                            elseif o:IsA("ScreenGui") then
-                                local n = lower(o.Name)
-                                if string.find(n, "nousigi", 1, true) or string.find(n, "banana", 1, true) or string.find(n, "skider", 1, true) then
-                                    registerRoot(o)
-                                end
-                            elseif (o:IsA("ImageLabel") or o:IsA("ImageButton")) and oldLogoAssets[o.Image] then
-                                registerRoot(screenAncestor(o))
-                                applyObject(o)
-                            end
+                        for _, root in ipairs(container:GetChildren()) do
+                            if root:IsA("ScreenGui") and isHubRoot(root) then patchRoot(root) end
                         end
                     end
                 end
+                task.wait(0.20)
             end
-
-            while getgenv().__BF_LOADED do
-                discover()
-                for root in pairs(roots) do patchRoot(root) end
-                -- Once the original header logo asset is learned, replace every reuse of it,
-                -- including the separate floating/toggle Banana logo button.
-                if next(oldLogoAssets) then
-                    for _, container in ipairs(containers) do
-                        for _, o in ipairs(container:GetDescendants()) do
-                            if (o:IsA("ImageLabel") or o:IsA("ImageButton")) and oldLogoAssets[o.Image] then
-                                local r = screenAncestor(o)
-                                if r then registerRoot(r) end
-                                applyObject(o)
-                            end
-                        end
-                    end
-                end
-
-                -- The legacy floating toggle is a separate generic ScreenGui and uses a different image
-                -- from the header. Detect it by its lower-left square geometry in CoreGui/gethui.
-                local playerGui = lp and lp:FindFirstChildOfClass("PlayerGui")
-                local blockedPlayerGuiRoots = {
-                    main = true, touchgui = true, chat = true, bubblechat = true,
-                    contextactiongui = true, freecam = true, playerlist = true,
-                    purchaseprompt = true, emotesmenu = true, topbarplus = true,
-                }
-                for _, container in ipairs(containers) do
-                    for _, o in ipairs(container:GetDescendants()) do
-                        if (o:IsA("ImageButton") or o:IsA("ImageLabel")) and looksLikeFloatingHubIcon(o) then
-                            local r = screenAncestor(o)
-                            local rn = r and lower(r.Name) or ""
-                            local playerGuiSafe = container ~= playerGui or not blockedPlayerGuiRoots[rn]
-                            if playerGuiSafe and not string.find(rn, "robloxgui", 1, true) then
-                                if o.Image ~= LOGO then oldLogoAssets[o.Image] = true end
-                                o.Image = LOGO
-                                o.ImageRectOffset = Vector2.new(0, 0)
-                                o.ImageRectSize = Vector2.new(0, 0)
-                                o.ImageColor3 = Color3.new(1, 1, 1)
-                                pcall(function() o.BackgroundColor3 = GREEN_DEEP end)
-                                if r then registerRoot(r) end
-                            end
-                        end
-                    end
-                end
-                task.wait(0.10)
-            end
-            getgenv().__SKIDER_GREEN_V3_HOTPATCH = nil
+            getgenv().__SKIDER_SAFE_UI_HOTPATCH = nil
         end)
     end
-    return getgenv().__BF_RESULT
+    return _loadedResult
 end
 
 Settings = {}
@@ -632,63 +496,51 @@ local SKIDER_HUB_LOGO = "rbxassetid://90412962524051"
 local SKIDER_GREEN = Color3.fromRGB(18, 105, 58)
 local SKIDER_GREEN_HOVER = Color3.fromRGB(24, 130, 72)
 local SKIDER_GREEN_DEEP = Color3.fromRGB(8, 42, 24)
+local SKIDER_TEXT_WHITE = Color3.fromRGB(245, 247, 250)
+local SKIDER_TEXT_DIM = Color3.fromRGB(205, 212, 218)
 
--- Full Skider theme engine.
--- The external library is obfuscated and writes its own legacy colors/logo at runtime,
--- therefore the theme is enforced on the actual GUI objects instead of trusting CreateMain options.
+-- Scoped Skider theme engine.
+-- It NEVER scans PlayerGui, so Blox Fruits HUD/hotbar/Devil Fruit/skill icons cannot be changed.
 local _skiderRoots = setmetatable({}, { __mode = "k" })
 local _skiderWatched = setmetatable({}, { __mode = "k" })
 local _skiderCreatedDuringMain = setmetatable({}, { __mode = "k" })
-local _skiderOldLogoAssets = {}
+local _skiderCreatingMain = false
+local _SKIDER_OLD_BRAND = "Banana" .. " Cat" .. " Hub"
 
 local function _skiderLower(v)
     return type(v) == "string" and string.lower(v) or ""
-end
-
-local _SKIDER_OLD_BRAND = "Banana" .. " Cat" .. " Hub"
-local _SKIDER_OLD_BRAND_LOWER = string.lower(_SKIDER_OLD_BRAND)
-
-local function _skiderHasBrandText(v)
-    local s = _skiderLower(v)
-    return string.find(s, _SKIDER_OLD_BRAND_LOWER, 1, true) ~= nil
-        or string.find(s, "skider hub", 1, true) ~= nil
 end
 
 local function _skiderReplaceBrandText(v)
     if type(v) ~= "string" then return v end
     v = v:gsub(_SKIDER_OLD_BRAND, "Skider Hub")
     v = v:gsub(string.upper(_SKIDER_OLD_BRAND), "Skider Hub")
-    v = v:gsub(_SKIDER_OLD_BRAND_LOWER, "Skider Hub")
+    v = v:gsub(string.lower(_SKIDER_OLD_BRAND), "Skider Hub")
     return v
 end
 
-local function _skiderGreenRichText(v)
-    if type(v) ~= "string" then return v end
-    v = v:gsub('color%s*=%s*"[^"]-"', 'color="#12693A"')
-    v = v:gsub("color%s*=%s*'[^']-'", "color='#12693A'")
-    return v
+local function _skiderHasBrandText(v)
+    local s = _skiderLower(v)
+    return string.find(s, "banana cat hub", 1, true) ~= nil
+        or string.find(s, "skider hub", 1, true) ~= nil
 end
 
--- Any saturated color belongs to the old accent system. Convert it to the Skider green family.
--- Black/gray/white remain neutral so the UI keeps readable contrast.
 local function _skiderGreenColor(c)
     if typeof(c) ~= "Color3" then return c end
     local _, sat, val = c:ToHSV()
     if sat < 0.12 or val < 0.10 then return c end
-    if val < 0.34 then return SKIDER_GREEN_DEEP end
+    if val < 0.32 then return SKIDER_GREEN_DEEP end
     if val < 0.72 then return SKIDER_GREEN end
     return SKIDER_GREEN_HOVER
 end
 
 local function _skiderGreenSequence(seq)
     if typeof(seq) ~= "ColorSequence" then return seq end
-    local points, changed = {}, false
+    local points = {}
     for _, kp in ipairs(seq.Keypoints) do
-        local c = _skiderGreenColor(kp.Value)
-        if c ~= kp.Value then changed = true end
-        points[#points + 1] = ColorSequenceKeypoint.new(kp.Time, c)
+        points[#points + 1] = ColorSequenceKeypoint.new(kp.Time, _skiderGreenColor(kp.Value))
     end
-    return changed and ColorSequence.new(points) or seq
+    return ColorSequence.new(points)
 end
 
 local function _skiderScreenAncestor(o)
@@ -699,30 +551,82 @@ local function _skiderScreenAncestor(o)
     return nil
 end
 
+local function _skiderIsButtonText(o)
+    if o:IsA("TextButton") then return true end
+    local p = o.Parent
+    for _ = 1, 4 do
+        if not p then break end
+        if p:IsA("TextButton") or p:IsA("ImageButton") then return true end
+        if string.find(_skiderLower(p.Name), "button", 1, true) then return true end
+        p = p.Parent
+    end
+    return false
+end
+
 local function _skiderIsExplicitLogo(o)
+    if not (o:IsA("ImageLabel") or o:IsA("ImageButton")) then return false end
     local n = _skiderLower(o.Name)
     local p = o.Parent and _skiderLower(o.Parent.Name) or ""
     return string.find(n, "logo", 1, true) ~= nil
         or string.find(n, "brand", 1, true) ~= nil
         or string.find(n, "hubicon", 1, true) ~= nil
+        or string.find(n, "toggleuibtn", 1, true) ~= nil
         or string.find(p, "logo", 1, true) ~= nil
         or string.find(p, "brand", 1, true) ~= nil
 end
 
-local function _skiderLooksLikeFloatingHubIcon(o)
-    if not (o:IsA("ImageButton") or o:IsA("ImageLabel")) then return false end
-    if o.Image == "" then return false end
-    local ok, result = pcall(function()
-        local size = o.AbsoluteSize
-        local pos = o.AbsolutePosition
-        local cam = workspace.CurrentCamera
-        local viewport = cam and cam.ViewportSize or Vector2.new(1280, 720)
-        if size.X < 38 or size.Y < 38 or size.X > 105 or size.Y > 105 then return false end
-        if math.abs(size.X - size.Y) > math.max(size.X, size.Y) * 0.35 then return false end
-        return pos.X <= math.max(260, viewport.X * 0.30)
-            and pos.Y >= viewport.Y * 0.45
-    end)
-    return ok and result == true
+local function _skiderIsHubRoot(root)
+    if not root or not root:IsA("ScreenGui") then return false end
+    if _skiderCreatedDuringMain[root] then return true end
+    local n = _skiderLower(root.Name)
+    if string.find(n, "nousigi", 1, true)
+        or string.find(n, "skider", 1, true)
+        or string.find(n, "banana", 1, true)
+    then
+        return true
+    end
+    for _, o in ipairs(root:GetDescendants()) do
+        if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and _skiderHasBrandText(o.Text) then
+            return true
+        end
+    end
+    return false
+end
+
+local function _skiderPatchHeaderLogo(root)
+    local labels, images = {}, {}
+    for _, o in ipairs(root:GetDescendants()) do
+        if (o:IsA("TextLabel") or o:IsA("TextButton")) and _skiderHasBrandText(o.Text) then
+            labels[#labels + 1] = o
+        elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
+            images[#images + 1] = o
+        end
+    end
+    for _, img in ipairs(images) do
+        pcall(function()
+            if _skiderIsExplicitLogo(img) then
+                img.Image = SKIDER_HUB_LOGO
+                img.ImageRectOffset = Vector2.new(0, 0)
+                img.ImageRectSize = Vector2.new(0, 0)
+                img.ImageColor3 = Color3.new(1, 1, 1)
+                return
+            end
+            local sz = img.AbsoluteSize
+            if img.Image == "" or sz.X < 20 or sz.Y < 20 or sz.X > 120 or sz.Y > 120 then return end
+            if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.35 then return end
+            local ic = img.AbsolutePosition + sz / 2
+            for _, label in ipairs(labels) do
+                local lc = label.AbsolutePosition + label.AbsoluteSize / 2
+                if math.abs(ic.Y - lc.Y) <= 48 and math.abs(ic.X - lc.X) <= 150 then
+                    img.Image = SKIDER_HUB_LOGO
+                    img.ImageRectOffset = Vector2.new(0, 0)
+                    img.ImageRectSize = Vector2.new(0, 0)
+                    img.ImageColor3 = Color3.new(1, 1, 1)
+                    break
+                end
+            end
+        end)
+    end
 end
 
 local function _skiderApplyObject(o)
@@ -732,47 +636,42 @@ local function _skiderApplyObject(o)
             o.BackgroundColor3 = _skiderGreenColor(o.BackgroundColor3)
             o.BorderColor3 = _skiderGreenColor(o.BorderColor3)
         end
+
         if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-            local newText = _skiderGreenRichText(_skiderReplaceBrandText(o.Text))
+            local newText = _skiderReplaceBrandText(o.Text)
             if _skiderHasBrandText(newText) then
                 newText = newText:gsub("<.->", "")
-                pcall(function() o.RichText = false end)
+                o.RichText = false
                 o.TextColor3 = SKIDER_GREEN
                 pcall(function() o.TextStrokeColor3 = SKIDER_GREEN_DEEP end)
-                for _, child in ipairs(o:GetChildren()) do
-                    if child:IsA("UIGradient") then
-                        child.Color = ColorSequence.new(SKIDER_GREEN)
-                    elseif child:IsA("UIStroke") then
-                        child.Color = SKIDER_GREEN_DEEP
-                    end
-                end
+            elseif _skiderIsButtonText(o) then
+                -- All button captions are white for clear contrast on dark-green buttons.
+                o.TextColor3 = SKIDER_TEXT_WHITE
+                pcall(function() o.TextStrokeColor3 = Color3.fromRGB(0, 0, 0) end)
             else
-                o.TextColor3 = _skiderGreenColor(o.TextColor3)
-                pcall(function() o.TextStrokeColor3 = _skiderGreenColor(o.TextStrokeColor3) end)
+                local _, sat, val = o.TextColor3:ToHSV()
+                if sat >= 0.12 or val < 0.55 then o.TextColor3 = SKIDER_TEXT_DIM end
             end
             if newText ~= o.Text then o.Text = newText end
         end
+
         if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-            if _skiderOldLogoAssets[o.Image] or _skiderIsExplicitLogo(o) or _skiderLooksLikeFloatingHubIcon(o) then
-                if o.Image ~= SKIDER_HUB_LOGO then _skiderOldLogoAssets[o.Image] = true end
+            -- Never identify logos by image asset reuse or screen position.
+            -- Only explicit hub-logo objects are replaced here; the generic header logo
+            -- is handled by _skiderPatchHeaderLogo inside the already-verified hub root.
+            if _skiderIsExplicitLogo(o) then
                 o.Image = SKIDER_HUB_LOGO
                 o.ImageRectOffset = Vector2.new(0, 0)
                 o.ImageRectSize = Vector2.new(0, 0)
                 o.ImageColor3 = Color3.new(1, 1, 1)
-                pcall(function() o.BackgroundColor3 = SKIDER_GREEN_DEEP end)
             else
                 o.ImageColor3 = _skiderGreenColor(o.ImageColor3)
             end
         end
-        if o:IsA("ScrollingFrame") then
-            o.ScrollBarImageColor3 = _skiderGreenColor(o.ScrollBarImageColor3)
-        end
-        if o:IsA("UIStroke") then
-            o.Color = _skiderGreenColor(o.Color)
-        end
-        if o:IsA("UIGradient") then
-            o.Color = _skiderGreenSequence(o.Color)
-        end
+
+        if o:IsA("ScrollingFrame") then o.ScrollBarImageColor3 = SKIDER_GREEN end
+        if o:IsA("UIStroke") then o.Color = _skiderGreenColor(o.Color) end
+        if o:IsA("UIGradient") then o.Color = _skiderGreenSequence(o.Color) end
     end)
 end
 
@@ -791,12 +690,11 @@ local function _skiderWatchObject(o)
         props[#props + 1] = "RichText"
     end
     if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-        props[#props + 1] = "Image"
         props[#props + 1] = "ImageColor3"
+        if _skiderIsExplicitLogo(o) then props[#props + 1] = "Image" end
     end
     if o:IsA("ScrollingFrame") then props[#props + 1] = "ScrollBarImageColor3" end
-    if o:IsA("UIStroke") then props[#props + 1] = "Color" end
-    if o:IsA("UIGradient") then props[#props + 1] = "Color" end
+    if o:IsA("UIStroke") or o:IsA("UIGradient") then props[#props + 1] = "Color" end
     for _, prop in ipairs(props) do
         pcall(function()
             o:GetPropertyChangedSignal(prop):Connect(function()
@@ -806,90 +704,26 @@ local function _skiderWatchObject(o)
     end
 end
 
-local function _skiderCaptureHeaderLogo(root)
-    local labels, images = {}, {}
-    for _, o in ipairs(root:GetDescendants()) do
-        if (o:IsA("TextLabel") or o:IsA("TextButton")) and _skiderHasBrandText(o.Text) then
-            labels[#labels + 1] = o
-        elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
-            images[#images + 1] = o
-        end
-    end
-    for _, img in ipairs(images) do
-        pcall(function()
-            local sz = img.AbsoluteSize
-            if img.Image == "" or img.Image == SKIDER_HUB_LOGO or sz.X < 16 or sz.Y < 16 or sz.X > 130 or sz.Y > 130 then return end
-            if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.40 then return end
-            local ic = img.AbsolutePosition + sz / 2
-            for _, label in ipairs(labels) do
-                local lc = label.AbsolutePosition + label.AbsoluteSize / 2
-                if math.abs(ic.Y - lc.Y) <= 55 and math.abs(ic.X - lc.X) <= 180 then
-                    _skiderOldLogoAssets[img.Image] = true
-                    img.Image = SKIDER_HUB_LOGO
-                    img.ImageRectOffset = Vector2.new(0, 0)
-                    img.ImageRectSize = Vector2.new(0, 0)
-                    img.ImageColor3 = Color3.new(1, 1, 1)
-                    break
-                end
-            end
-        end)
-    end
-end
-
 local function _skiderRegisterRoot(root)
-    if not root or not root:IsA("ScreenGui") then return end
+    if not root or not root:IsA("ScreenGui") or not _skiderIsHubRoot(root) then return end
     _skiderRoots[root] = true
-    if not root:GetAttribute("SkiderFullGreenHooked") then
-        pcall(function() root:SetAttribute("SkiderFullGreenHooked", true) end)
+    if not root:GetAttribute("SkiderScopedThemeHooked") then
+        pcall(function() root:SetAttribute("SkiderScopedThemeHooked", true) end)
         root.DescendantAdded:Connect(function(o)
-            if o and o.Parent then
-                _skiderWatchObject(o)
-                _skiderApplyObject(o)
-            end
             task.delay(0.02, function()
-                if o and o.Parent then _skiderApplyObject(o) end
+                if root.Parent and o.Parent then
+                    _skiderApplyObject(o)
+                    _skiderWatchObject(o)
+                    _skiderPatchHeaderLogo(root)
+                end
             end)
         end)
     end
 end
 
 local function _skiderPatchRoot(root)
-    if not root or not root.Parent then return end
-    -- Learn the old Banana logo BEFORE changing images; this lets us replace the
-    -- separate floating logo button even when that button lives in another ScreenGui.
-    _skiderCaptureHeaderLogo(root)
-
-    -- A separate floating/toggle GUI often has no title text and may use a different
-    -- Banana image asset. If the ScreenGui is small and clearly belongs to the hub,
-    -- treat its square ImageButton as a hub logo as well.
-    local rootName = _skiderLower(root.Name)
-    local descendants = root:GetDescendants()
-    local standaloneHubGui = (#descendants <= 30) and (
-        _skiderCreatedDuringMain[root]
-        or string.find(rootName, "banana", 1, true)
-        or string.find(rootName, "skider", 1, true)
-        or string.find(rootName, "nousigi", 1, true)
-        or string.find(rootName, "toggle", 1, true)
-    )
-    if standaloneHubGui then
-        for _, obj in ipairs(descendants) do
-            if obj:IsA("ImageButton") or obj:IsA("ImageLabel") then
-                pcall(function()
-                    local size = obj.AbsoluteSize
-                    if obj.Image ~= "" and size.X >= 24 and size.Y >= 24 and size.X <= 160 and size.Y <= 160
-                        and math.abs(size.X - size.Y) <= math.max(size.X, size.Y) * 0.40
-                    then
-                        if obj.Image ~= SKIDER_HUB_LOGO then _skiderOldLogoAssets[obj.Image] = true end
-                        obj.Image = SKIDER_HUB_LOGO
-                        obj.ImageRectOffset = Vector2.new(0, 0)
-                        obj.ImageRectSize = Vector2.new(0, 0)
-                        obj.ImageColor3 = Color3.new(1, 1, 1)
-                    end
-                end)
-            end
-        end
-    end
-
+    if not root or not root.Parent or not _skiderIsHubRoot(root) then return end
+    _skiderPatchHeaderLogo(root)
     _skiderApplyObject(root)
     _skiderWatchObject(root)
     for _, o in ipairs(root:GetDescendants()) do
@@ -898,74 +732,28 @@ local function _skiderPatchRoot(root)
     end
 end
 
+-- Only CoreGui/gethui are theme containers. PlayerGui is intentionally excluded.
 local _skiderContainers = { game:GetService("CoreGui") }
-do
-    local lp = game:GetService("Players").LocalPlayer
-    if lp then
-        local pg = lp:FindFirstChildOfClass("PlayerGui") or lp:FindFirstChild("PlayerGui")
-        if pg then _skiderContainers[#_skiderContainers + 1] = pg end
+pcall(function()
+    if gethui then
+        local h = gethui()
+        if h and h ~= _skiderContainers[1] then _skiderContainers[#_skiderContainers + 1] = h end
     end
-    pcall(function()
-        if gethui then
-            local h = gethui()
-            local exists = false
-            for _, c in ipairs(_skiderContainers) do if c == h then exists = true break end end
-            if h and not exists then _skiderContainers[#_skiderContainers + 1] = h end
-        end
-    end)
-end
+end)
 
-local function _skiderDiscoverRoots()
-    for _, container in ipairs(_skiderContainers) do
-        if container and container.Parent then
-            for _, o in ipairs(container:GetDescendants()) do
-                if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                    if _skiderHasBrandText(o.Text) then
-                        _skiderRegisterRoot(_skiderScreenAncestor(o))
-                        _skiderApplyObject(o)
-                    end
-                elseif o:IsA("ScreenGui") then
-                    local n = _skiderLower(o.Name)
-                    if string.find(n, "nousigi", 1, true)
-                        or string.find(n, "banana", 1, true)
-                        or string.find(n, "skider", 1, true)
-                    then
-                        _skiderRegisterRoot(o)
-                    end
-                elseif (o:IsA("ImageLabel") or o:IsA("ImageButton")) and _skiderOldLogoAssets[o.Image] then
-                    _skiderRegisterRoot(_skiderScreenAncestor(o))
-                    _skiderApplyObject(o)
-                end
-            end
-        end
-    end
-end
-
-local _skiderCreatingMain = false
-
--- Install discovery hooks BEFORE CreateMain so no legacy logo/color assignment can escape.
+-- Capture only ScreenGuis created by the hub while CreateMain is running.
 for _, container in ipairs(_skiderContainers) do
     pcall(function()
         container.DescendantAdded:Connect(function(o)
-            task.delay(0.03, function()
-                if not o or not o.Parent then return end
-                if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                    if _skiderHasBrandText(o.Text) then _skiderRegisterRoot(_skiderScreenAncestor(o)) end
-                elseif o:IsA("ScreenGui") then
-                    local n = _skiderLower(o.Name)
-                    if _skiderCreatingMain
-                        or string.find(n, "nousigi", 1, true)
-                        or string.find(n, "banana", 1, true)
-                        or string.find(n, "skider", 1, true)
-                    then
-                        if _skiderCreatingMain then _skiderCreatedDuringMain[o] = true end
-                        _skiderRegisterRoot(o)
-                    end
-                elseif (o:IsA("ImageLabel") or o:IsA("ImageButton")) and _skiderOldLogoAssets[o.Image] then
-                    _skiderRegisterRoot(_skiderScreenAncestor(o))
-                    _skiderApplyObject(o)
+            if o:IsA("ScreenGui") and _skiderCreatingMain then
+                _skiderCreatedDuringMain[o] = true
+                task.defer(_skiderRegisterRoot, o)
+            elseif o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+                if _skiderHasBrandText(o.Text) then
+                    local root = _skiderScreenAncestor(o)
+                    if root then task.defer(_skiderRegisterRoot, root) end
                 end
-            end)
+            end
         end)
     end)
 end
@@ -980,51 +768,26 @@ Main = A.CreateMain({
 })
 _skiderCreatingMain = false
 
--- Continuous enforcement: the old UI library uses hover/tween callbacks that can restore
--- its previous palette. Property watchers fix it immediately and this sweep is a safety net.
+-- Initial discovery is restricted to hub-identifiable ScreenGuis in CoreGui/gethui.
+for _, container in ipairs(_skiderContainers) do
+    for _, root in ipairs(container:GetChildren()) do
+        if root:IsA("ScreenGui") and _skiderIsHubRoot(root) then _skiderRegisterRoot(root) end
+    end
+end
+
 task.spawn(function()
     while getgenv().LoadScript ~= false do
-        _skiderDiscoverRoots()
-        for root in pairs(_skiderRoots) do _skiderPatchRoot(root) end
-
-        if next(_skiderOldLogoAssets) then
-            for _, container in ipairs(_skiderContainers) do
-                for _, o in ipairs(container:GetDescendants()) do
-                    if (o:IsA("ImageLabel") or o:IsA("ImageButton")) and _skiderOldLogoAssets[o.Image] then
-                        local r = _skiderScreenAncestor(o)
-                        if r then _skiderRegisterRoot(r) end
-                        _skiderApplyObject(o)
-                    end
-                end
-            end
-        end
-
-        -- Hard catch for the old standalone lower-left BNN/Nousigi toggle button.
-        local playerGui = game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        local blockedPlayerGuiRoots = {
-            main = true, touchgui = true, chat = true, bubblechat = true,
-            contextactiongui = true, freecam = true, playerlist = true,
-            purchaseprompt = true, emotesmenu = true, topbarplus = true,
-        }
         for _, container in ipairs(_skiderContainers) do
-            for _, o in ipairs(container:GetDescendants()) do
-                if (o:IsA("ImageButton") or o:IsA("ImageLabel")) and _skiderLooksLikeFloatingHubIcon(o) then
-                    local r = _skiderScreenAncestor(o)
-                    local rn = r and _skiderLower(r.Name) or ""
-                    local playerGuiSafe = container ~= playerGui or not blockedPlayerGuiRoots[rn]
-                    if playerGuiSafe and not string.find(rn, "robloxgui", 1, true) then
-                        if o.Image ~= SKIDER_HUB_LOGO then _skiderOldLogoAssets[o.Image] = true end
-                        o.Image = SKIDER_HUB_LOGO
-                        o.ImageRectOffset = Vector2.new(0, 0)
-                        o.ImageRectSize = Vector2.new(0, 0)
-                        o.ImageColor3 = Color3.new(1, 1, 1)
-                        pcall(function() o.BackgroundColor3 = SKIDER_GREEN_DEEP end)
-                        if r then _skiderRegisterRoot(r) end
+            if container and container.Parent then
+                for _, root in ipairs(container:GetChildren()) do
+                    if root:IsA("ScreenGui") and _skiderIsHubRoot(root) then
+                        _skiderRegisterRoot(root)
                     end
                 end
             end
         end
-        task.wait(0.10)
+        for root in pairs(_skiderRoots) do _skiderPatchRoot(root) end
+        task.wait(0.15)
     end
 end)
 
@@ -20509,12 +20272,19 @@ a.CreateButton({ Title = "Copy Setting" }, function()
 end)
 a.CreateBind({ Title = "Toggle GUI", Key = Enum.KeyCode.LeftControl }, function()
 	getgenv().UIToggled = not getgenv().UIToggled
-	for _, container in ipairs({ game:GetService("CoreGui"), game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui") }) do
+	local containers = { game:GetService("CoreGui") }
+	pcall(function()
+		if gethui then
+			local h = gethui()
+			if h and h ~= containers[1] then table.insert(containers, h) end
+		end
+	end)
+	for _, container in ipairs(containers) do
 		if container then
 			for _, gui in ipairs(container:GetChildren()) do
 				if gui:IsA("ScreenGui") then
 					local n = string.lower(gui.Name)
-					if string.find(n, "nousigi", 1, true) or string.find(n, "skider", 1, true) or string.find(n, "banana", 1, true) then
+					if string.find(n, "nousigi", 1, true) or string.find(n, "skider", 1, true) then
 						gui.Enabled = getgenv().UIToggled
 					end
 				end
