@@ -1307,8 +1307,10 @@ end
 
 local topOfGreatTree = CFrame.new(3028, 2281, -7325)
 local TEMPLE_ENTRY_POS = Vector3.new(28310.0234, 14895.1123, 109.456741)
+local templeTeleportRetryRunning = false
+local templeTeleportRetryState = "idle"
 
-function TeleportTempleOfTime()
+local function TryTeleportTempleOfTimeOnce()
     BorrowTempleOfTime()
     if IsInTempleOfTime() then
         return "arrived"
@@ -1364,6 +1366,46 @@ function TeleportTempleOfTime()
     end
 
     return "in_progress"
+end
+
+function TeleportTempleOfTime()
+    if IsInTempleOfTime() then
+        templeTeleportRetryState = "arrived"
+        return "arrived"
+    end
+
+    -- Tất cả nơi gọi dùng chung một worker để không tạo nhiều luồng InvokeServer
+    -- chồng lên nhau. Lượt đầu chạy ngay, các lượt sau cách nhau đúng 1 giây.
+    if templeTeleportRetryRunning then
+        return templeTeleportRetryState
+    end
+
+    templeTeleportRetryRunning = true
+    templeTeleportRetryState = TryTeleportTempleOfTimeOnce()
+
+    if templeTeleportRetryState == "wrong_sea" then
+        templeTeleportRetryRunning = false
+        return templeTeleportRetryState
+    end
+
+    task.spawn(function()
+        while not IsInTempleOfTime() do
+            task.wait(1)
+            if IsInTempleOfTime() then break end
+
+            templeTeleportRetryState = TryTeleportTempleOfTimeOnce()
+            if templeTeleportRetryState == "wrong_sea" then
+                break
+            end
+        end
+
+        if IsInTempleOfTime() then
+            templeTeleportRetryState = "arrived"
+        end
+        templeTeleportRetryRunning = false
+    end)
+
+    return templeTeleportRetryState
 end
 
 function DetectMob(nameOrTable)
