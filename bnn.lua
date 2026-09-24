@@ -19295,61 +19295,89 @@ a.CreateToggle({ Title = "Black Screen", Desc = nil, Default = Settings["Black S
 	end)
 	SaveSettings("Black Screen", b)
 end)
-local function b(s)
-	if type(s) ~= "table" then
-		return s
+-- FIX: clean config serializer (replaces broken obfuscated serializer)
+local function SerializeConfigValue(value, indent, seen)
+	indent = indent or 0
+	seen = seen or {}
+	local valueType = type(value)
+
+	if valueType == "string" then
+		return string.format("%q", value)
+	elseif valueType == "number" or valueType == "boolean" then
+		return tostring(value)
+	elseif valueType == "nil" then
+		return "nil"
+	elseif valueType ~= "table" then
+		return string.format("%q", tostring(value))
 	end
-	local X, g, f, K, R = {}, {}, {}, "{\10", 1
-	while true do
-		local m = 0
-		for E, E in pairs(s) do
-			m += 1
+
+	if seen[value] then
+		return "{}" -- Settings should be JSON-safe; guard against accidental cycles.
+	end
+	seen[value] = true
+
+	local keys = {}
+	for key in pairs(value) do
+		keys[#keys + 1] = key
+	end
+	table.sort(keys, function(a, b)
+		local ta, tb = type(a), type(b)
+		if ta == tb then
+			if ta == "number" then return a < b end
+			return tostring(a) < tostring(b)
 		end
-		local E = 1
-		for l, Q in pairs(s) do
-			if X[s] == nil or E >= X[s] then
-				local S, d = string.find, T[24](K:len())
-				table.insert(
-					f,
-					if S(K, "}", T:d5(d))
-						then K .. ",\10"
-						else if not string.find(K, "\10", K:len()) then K .. "\10" else K
-				)
-				K = ""
-				d, S =
-					if type(l) == "number" or type(l) == "boolean"
-						then "[" .. tostring(l) .. "]"
-						else '["' .. tostring(l) .. '"]',
-					type(Q) == "number" or type(Q) == "boolean"
-				if S then
-					K ..= string.rep("\9", R) .. d .. " = " .. tostring(Q)
-				elseif type(Q) == "table" then
-					K ..= string.rep("\9", R) .. d .. " = {\10"
-					table.insert(g, s)
-					table.insert(g, Q)
-					X[s] = E + 1
-					break
-				else
-					K ..= string.rep("\9", R) .. d .. ' = "' .. tostring(Q) .. '"'
-				end
-				K = if E == m then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K .. ","
-			else
-				K = if E == m then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K
-			end
-			E += 1
-		end
-		K = if m == 0 then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K
-		if #g > 0 then
-			s = g[#g]
-			g[#g] = nil
-			R = X[s] == nil and R + 1 or R - 1
+		if ta == "number" then return true end
+		if tb == "number" then return false end
+		return ta < tb
+	end)
+
+	if #keys == 0 then
+		seen[value] = nil
+		return "{}"
+	end
+
+	local pad = string.rep("\t", indent)
+	local childPad = string.rep("\t", indent + 1)
+	local out = {"{\n"}
+	for _, key in ipairs(keys) do
+		local keyText
+		if type(key) == "string" then
+			keyText = "[" .. string.format("%q", key) .. "]"
+		elseif type(key) == "number" or type(key) == "boolean" then
+			keyText = "[" .. tostring(key) .. "]"
 		else
-			break
+			keyText = "[" .. string.format("%q", tostring(key)) .. "]"
 		end
+		out[#out + 1] = childPad .. keyText .. " = " .. SerializeConfigValue(value[key], indent + 1, seen) .. ",\n"
 	end
-	table.insert(f, K)
-	return "getgenv().Config = " .. table.concat(f)
+	out[#out + 1] = pad .. "}"
+	seen[value] = nil
+	return table.concat(out)
 end
+
+local function BuildConfigExport()
+	return "getgenv().Config = " .. SerializeConfigValue(Settings or {})
+end
+
+local function CopyTextToClipboard(text)
+	local candidates = {}
+	if type(setclipboard) == "function" then candidates[#candidates + 1] = setclipboard end
+	if type(toclipboard) == "function" then candidates[#candidates + 1] = toclipboard end
+	if type(set_clipboard) == "function" then candidates[#candidates + 1] = set_clipboard end
+	if type(syn) == "table" and type(syn.write_clipboard) == "function" then
+		candidates[#candidates + 1] = syn.write_clipboard
+	end
+	if type(Clipboard) == "table" and type(Clipboard.set) == "function" then
+		candidates[#candidates + 1] = Clipboard.set
+	end
+
+	for _, copyFn in ipairs(candidates) do
+		local ok = pcall(copyFn, text)
+		if ok then return true end
+	end
+	return false
+end
+
 a.CreateToggle(
 	{ Title = "Remove Notifications", Desc = nil, Default = Settings["Remove Notifications"] or false },
 	function(T)
@@ -19513,8 +19541,31 @@ spawn(function()
 	end)
 end)
 a.CreateButton({ Title = "Copy Config" }, function()
-	setclipboard(b((HttpService:JSONDecode(readfile(FolderName .. "/" .. SaveFileName)))))
-	A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Successfully Copy Config", ShowTime = 5 })
+	local ok, exportText = pcall(BuildConfigExport)
+	if not ok or type(exportText) ~= "string" then
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Copy Config failed: cannot serialize settings", ShowTime = 5 })
+		return
+	end
+
+	-- Persist the current in-memory Settings first, but clipboard does not depend on readfile.
+	pcall(function() SaveSettings() end)
+
+	if CopyTextToClipboard(exportText) then
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Successfully Copy Config", ShowTime = 5 })
+		return
+	end
+
+	-- Executor has no clipboard API: keep a usable copy on disk instead of silently failing.
+	local fallbackPath = FolderName .. "/" .. game.Players.LocalPlayer.Name .. "-CopiedConfig.lua"
+	local wrote = false
+	if type(writefile) == "function" then
+		wrote = pcall(writefile, fallbackPath, exportText)
+	end
+	if wrote then
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Clipboard unsupported. Saved config to " .. fallbackPath, ShowTime = 7 })
+	else
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Executor does not support clipboard", ShowTime = 5 })
+	end
 end)
 a.CreateBind({ Title = "Toggle GUI", Key = Enum.KeyCode.LeftControl }, function()
 	getgenv().UIToggled = not getgenv().UIToggled
