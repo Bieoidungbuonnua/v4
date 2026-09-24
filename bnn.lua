@@ -2,8 +2,8 @@
 -- If an older build is already loaded in this server, recolor/rebrand the live GUI
 -- instead of returning before the new theme can be applied.
 if getgenv().__BF_LOADED then
-    if not getgenv().__SKIDER_FULL_GREEN_HOTPATCH then
-        getgenv().__SKIDER_FULL_GREEN_HOTPATCH = true
+    if not getgenv().__SKIDER_GREEN_V3_HOTPATCH then
+        getgenv().__SKIDER_GREEN_V3_HOTPATCH = true
         task.spawn(function()
             local Players = game:GetService("Players")
             local CoreGui = game:GetService("CoreGui")
@@ -19,17 +19,27 @@ if getgenv().__BF_LOADED then
                 return type(v) == "string" and string.lower(v) or ""
             end
 
+            local OLD_BRAND = "Banana" .. " Cat" .. " Hub"
+            local OLD_BRAND_LOWER = string.lower(OLD_BRAND)
+
             local function hasBrandText(v)
                 local s = lower(v)
-                return string.find(s, "banana cat hub", 1, true) ~= nil
+                return string.find(s, OLD_BRAND_LOWER, 1, true) ~= nil
                     or string.find(s, "skider hub", 1, true) ~= nil
             end
 
             local function replaceBrandText(v)
                 if type(v) ~= "string" then return v end
-                v = v:gsub("Banana Cat Hub", "Skider Hub")
-                v = v:gsub("BANANA CAT HUB", "Skider Hub")
-                v = v:gsub("banana cat hub", "Skider Hub")
+                v = v:gsub(OLD_BRAND, "Skider Hub")
+                v = v:gsub(string.upper(OLD_BRAND), "Skider Hub")
+                v = v:gsub(OLD_BRAND_LOWER, "Skider Hub")
+                return v
+            end
+
+            local function greenRichText(v)
+                if type(v) ~= "string" then return v end
+                v = v:gsub('color%s*=%s*"[^"]-"', 'color="#12693A"')
+                v = v:gsub("color%s*=%s*'[^']-'", "color='#12693A'")
                 return v
             end
 
@@ -73,6 +83,23 @@ if getgenv().__BF_LOADED then
                     or string.find(p, "brand", 1, true) ~= nil
             end
 
+            local function looksLikeFloatingHubIcon(o)
+                if not (o:IsA("ImageButton") or o:IsA("ImageLabel")) then return false end
+                if o.Image == "" then return false end
+                local ok, result = pcall(function()
+                    local size = o.AbsoluteSize
+                    local pos = o.AbsolutePosition
+                    local cam = workspace.CurrentCamera
+                    local viewport = cam and cam.ViewportSize or Vector2.new(1280, 720)
+                    if size.X < 38 or size.Y < 38 or size.X > 105 or size.Y > 105 then return false end
+                    if math.abs(size.X - size.Y) > math.max(size.X, size.Y) * 0.35 then return false end
+                    -- Nousigi/BNN floating toggle lives in the lower-left quarter.
+                    return pos.X <= math.max(260, viewport.X * 0.30)
+                        and pos.Y >= viewport.Y * 0.45
+                end)
+                return ok and result == true
+            end
+
             local function applyObject(o)
                 if not o or not o.Parent then return end
                 pcall(function()
@@ -81,16 +108,35 @@ if getgenv().__BF_LOADED then
                         o.BorderColor3 = greenColor(o.BorderColor3)
                     end
                     if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                        local t = replaceBrandText(o.Text)
+                        local t = greenRichText(replaceBrandText(o.Text))
+                        if hasBrandText(t) then
+                            -- The old library colors the title with RichText, which bypasses TextColor3.
+                            -- Strip the legacy tags and force a real green title.
+                            t = t:gsub("<.->", "")
+                            pcall(function() o.RichText = false end)
+                            o.TextColor3 = GREEN
+                            pcall(function() o.TextStrokeColor3 = GREEN_DEEP end)
+                            for _, child in ipairs(o:GetChildren()) do
+                                if child:IsA("UIGradient") then
+                                    child.Color = ColorSequence.new(GREEN)
+                                elseif child:IsA("UIStroke") then
+                                    child.Color = GREEN_DEEP
+                                end
+                            end
+                        else
+                            o.TextColor3 = greenColor(o.TextColor3)
+                            pcall(function() o.TextStrokeColor3 = greenColor(o.TextStrokeColor3) end)
+                        end
                         if t ~= o.Text then o.Text = t end
-                        o.TextColor3 = greenColor(o.TextColor3)
                     end
                     if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-                        if oldLogoAssets[o.Image] or isExplicitLogo(o) then
-                            if o.Image ~= LOGO then o.Image = LOGO end
+                        if oldLogoAssets[o.Image] or isExplicitLogo(o) or looksLikeFloatingHubIcon(o) then
+                            if o.Image ~= LOGO then oldLogoAssets[o.Image] = true end
+                            o.Image = LOGO
                             o.ImageRectOffset = Vector2.new(0, 0)
                             o.ImageRectSize = Vector2.new(0, 0)
                             o.ImageColor3 = Color3.new(1, 1, 1)
+                            pcall(function() o.BackgroundColor3 = GREEN_DEEP end)
                         else
                             o.ImageColor3 = greenColor(o.ImageColor3)
                         end
@@ -118,6 +164,8 @@ if getgenv().__BF_LOADED then
                 if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
                     props[#props + 1] = "Text"
                     props[#props + 1] = "TextColor3"
+                    props[#props + 1] = "TextStrokeColor3"
+                    props[#props + 1] = "RichText"
                 end
                 if o:IsA("ImageLabel") or o:IsA("ImageButton") then
                     props[#props + 1] = "Image"
@@ -241,7 +289,10 @@ if getgenv().__BF_LOADED then
                     if container and container.Parent then
                         for _, o in ipairs(container:GetDescendants()) do
                             if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                                if hasBrandText(o.Text) then registerRoot(screenAncestor(o)) end
+                                if hasBrandText(o.Text) then
+                                    registerRoot(screenAncestor(o))
+                                    applyObject(o)
+                                end
                             elseif o:IsA("ScreenGui") then
                                 local n = lower(o.Name)
                                 if string.find(n, "nousigi", 1, true) or string.find(n, "banana", 1, true) or string.find(n, "skider", 1, true) then
@@ -272,9 +323,36 @@ if getgenv().__BF_LOADED then
                         end
                     end
                 end
-                task.wait(0.12)
+
+                -- The legacy floating toggle is a separate generic ScreenGui and uses a different image
+                -- from the header. Detect it by its lower-left square geometry in CoreGui/gethui.
+                local playerGui = lp and lp:FindFirstChildOfClass("PlayerGui")
+                local blockedPlayerGuiRoots = {
+                    main = true, touchgui = true, chat = true, bubblechat = true,
+                    contextactiongui = true, freecam = true, playerlist = true,
+                    purchaseprompt = true, emotesmenu = true, topbarplus = true,
+                }
+                for _, container in ipairs(containers) do
+                    for _, o in ipairs(container:GetDescendants()) do
+                        if (o:IsA("ImageButton") or o:IsA("ImageLabel")) and looksLikeFloatingHubIcon(o) then
+                            local r = screenAncestor(o)
+                            local rn = r and lower(r.Name) or ""
+                            local playerGuiSafe = container ~= playerGui or not blockedPlayerGuiRoots[rn]
+                            if playerGuiSafe and not string.find(rn, "robloxgui", 1, true) then
+                                if o.Image ~= LOGO then oldLogoAssets[o.Image] = true end
+                                o.Image = LOGO
+                                o.ImageRectOffset = Vector2.new(0, 0)
+                                o.ImageRectSize = Vector2.new(0, 0)
+                                o.ImageColor3 = Color3.new(1, 1, 1)
+                                pcall(function() o.BackgroundColor3 = GREEN_DEEP end)
+                                if r then registerRoot(r) end
+                            end
+                        end
+                    end
+                end
+                task.wait(0.10)
             end
-            getgenv().__SKIDER_FULL_GREEN_HOTPATCH = nil
+            getgenv().__SKIDER_GREEN_V3_HOTPATCH = nil
         end)
     end
     return getgenv().__BF_RESULT
@@ -567,17 +645,27 @@ local function _skiderLower(v)
     return type(v) == "string" and string.lower(v) or ""
 end
 
+local _SKIDER_OLD_BRAND = "Banana" .. " Cat" .. " Hub"
+local _SKIDER_OLD_BRAND_LOWER = string.lower(_SKIDER_OLD_BRAND)
+
 local function _skiderHasBrandText(v)
     local s = _skiderLower(v)
-    return string.find(s, "banana cat hub", 1, true) ~= nil
+    return string.find(s, _SKIDER_OLD_BRAND_LOWER, 1, true) ~= nil
         or string.find(s, "skider hub", 1, true) ~= nil
 end
 
 local function _skiderReplaceBrandText(v)
     if type(v) ~= "string" then return v end
-    v = v:gsub("Banana Cat Hub", "Skider Hub")
-    v = v:gsub("BANANA CAT HUB", "Skider Hub")
-    v = v:gsub("banana cat hub", "Skider Hub")
+    v = v:gsub(_SKIDER_OLD_BRAND, "Skider Hub")
+    v = v:gsub(string.upper(_SKIDER_OLD_BRAND), "Skider Hub")
+    v = v:gsub(_SKIDER_OLD_BRAND_LOWER, "Skider Hub")
+    return v
+end
+
+local function _skiderGreenRichText(v)
+    if type(v) ~= "string" then return v end
+    v = v:gsub('color%s*=%s*"[^"]-"', 'color="#12693A"')
+    v = v:gsub("color%s*=%s*'[^']-'", "color='#12693A'")
     return v
 end
 
@@ -621,6 +709,22 @@ local function _skiderIsExplicitLogo(o)
         or string.find(p, "brand", 1, true) ~= nil
 end
 
+local function _skiderLooksLikeFloatingHubIcon(o)
+    if not (o:IsA("ImageButton") or o:IsA("ImageLabel")) then return false end
+    if o.Image == "" then return false end
+    local ok, result = pcall(function()
+        local size = o.AbsoluteSize
+        local pos = o.AbsolutePosition
+        local cam = workspace.CurrentCamera
+        local viewport = cam and cam.ViewportSize or Vector2.new(1280, 720)
+        if size.X < 38 or size.Y < 38 or size.X > 105 or size.Y > 105 then return false end
+        if math.abs(size.X - size.Y) > math.max(size.X, size.Y) * 0.35 then return false end
+        return pos.X <= math.max(260, viewport.X * 0.30)
+            and pos.Y >= viewport.Y * 0.45
+    end)
+    return ok and result == true
+end
+
 local function _skiderApplyObject(o)
     if not o or not o.Parent then return end
     pcall(function()
@@ -629,16 +733,33 @@ local function _skiderApplyObject(o)
             o.BorderColor3 = _skiderGreenColor(o.BorderColor3)
         end
         if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-            local newText = _skiderReplaceBrandText(o.Text)
+            local newText = _skiderGreenRichText(_skiderReplaceBrandText(o.Text))
+            if _skiderHasBrandText(newText) then
+                newText = newText:gsub("<.->", "")
+                pcall(function() o.RichText = false end)
+                o.TextColor3 = SKIDER_GREEN
+                pcall(function() o.TextStrokeColor3 = SKIDER_GREEN_DEEP end)
+                for _, child in ipairs(o:GetChildren()) do
+                    if child:IsA("UIGradient") then
+                        child.Color = ColorSequence.new(SKIDER_GREEN)
+                    elseif child:IsA("UIStroke") then
+                        child.Color = SKIDER_GREEN_DEEP
+                    end
+                end
+            else
+                o.TextColor3 = _skiderGreenColor(o.TextColor3)
+                pcall(function() o.TextStrokeColor3 = _skiderGreenColor(o.TextStrokeColor3) end)
+            end
             if newText ~= o.Text then o.Text = newText end
-            o.TextColor3 = _skiderGreenColor(o.TextColor3)
         end
         if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-            if _skiderOldLogoAssets[o.Image] or _skiderIsExplicitLogo(o) then
-                if o.Image ~= SKIDER_HUB_LOGO then o.Image = SKIDER_HUB_LOGO end
+            if _skiderOldLogoAssets[o.Image] or _skiderIsExplicitLogo(o) or _skiderLooksLikeFloatingHubIcon(o) then
+                if o.Image ~= SKIDER_HUB_LOGO then _skiderOldLogoAssets[o.Image] = true end
+                o.Image = SKIDER_HUB_LOGO
                 o.ImageRectOffset = Vector2.new(0, 0)
                 o.ImageRectSize = Vector2.new(0, 0)
                 o.ImageColor3 = Color3.new(1, 1, 1)
+                pcall(function() o.BackgroundColor3 = SKIDER_GREEN_DEEP end)
             else
                 o.ImageColor3 = _skiderGreenColor(o.ImageColor3)
             end
@@ -666,6 +787,8 @@ local function _skiderWatchObject(o)
     if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
         props[#props + 1] = "Text"
         props[#props + 1] = "TextColor3"
+        props[#props + 1] = "TextStrokeColor3"
+        props[#props + 1] = "RichText"
     end
     if o:IsA("ImageLabel") or o:IsA("ImageButton") then
         props[#props + 1] = "Image"
@@ -797,7 +920,10 @@ local function _skiderDiscoverRoots()
         if container and container.Parent then
             for _, o in ipairs(container:GetDescendants()) do
                 if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                    if _skiderHasBrandText(o.Text) then _skiderRegisterRoot(_skiderScreenAncestor(o)) end
+                    if _skiderHasBrandText(o.Text) then
+                        _skiderRegisterRoot(_skiderScreenAncestor(o))
+                        _skiderApplyObject(o)
+                    end
                 elseif o:IsA("ScreenGui") then
                     local n = _skiderLower(o.Name)
                     if string.find(n, "nousigi", 1, true)
@@ -872,7 +998,33 @@ task.spawn(function()
                 end
             end
         end
-        task.wait(0.12)
+
+        -- Hard catch for the old standalone lower-left BNN/Nousigi toggle button.
+        local playerGui = game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local blockedPlayerGuiRoots = {
+            main = true, touchgui = true, chat = true, bubblechat = true,
+            contextactiongui = true, freecam = true, playerlist = true,
+            purchaseprompt = true, emotesmenu = true, topbarplus = true,
+        }
+        for _, container in ipairs(_skiderContainers) do
+            for _, o in ipairs(container:GetDescendants()) do
+                if (o:IsA("ImageButton") or o:IsA("ImageLabel")) and _skiderLooksLikeFloatingHubIcon(o) then
+                    local r = _skiderScreenAncestor(o)
+                    local rn = r and _skiderLower(r.Name) or ""
+                    local playerGuiSafe = container ~= playerGui or not blockedPlayerGuiRoots[rn]
+                    if playerGuiSafe and not string.find(rn, "robloxgui", 1, true) then
+                        if o.Image ~= SKIDER_HUB_LOGO then _skiderOldLogoAssets[o.Image] = true end
+                        o.Image = SKIDER_HUB_LOGO
+                        o.ImageRectOffset = Vector2.new(0, 0)
+                        o.ImageRectSize = Vector2.new(0, 0)
+                        o.ImageColor3 = Color3.new(1, 1, 1)
+                        pcall(function() o.BackgroundColor3 = SKIDER_GREEN_DEEP end)
+                        if r then _skiderRegisterRoot(r) end
+                    end
+                end
+            end
+        end
+        task.wait(0.10)
     end
 end)
 
@@ -3330,27 +3482,63 @@ function DetectPrehistoricIsland()
 		end
 	end
 end
-function SetNoClip(l)
-	getgenv().noclip = l
-	local Q = t.Character
-	if not Q then
-		return
-	end
-	local S, L = Q:FindFirstChild("HumanoidRootPart"), Q:FindFirstChildOfClass("Humanoid")
-	if not l then
-		for l, l in ipairs(Q:GetDescendants()) do
-			if l:IsA("BasePart") then
-				l.CanCollide = true
+-- Stable noclip state. Preserve the original collision state of each character part.
+local _SkiderCollisionOriginal = setmetatable({}, { __mode = "k" })
+local _SkiderManualNoclip = false
+local _SkiderMovementNoclip = false
+local _SkiderNoclipWasActive = false
+
+local function _SkiderDisableCharacterCollision(character)
+	if not character then return end
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") then
+			if _SkiderCollisionOriginal[part] == nil then
+				_SkiderCollisionOriginal[part] = part.CanCollide
 			end
-		end
-		if L then
-			L.PlatformStand = false
-		end
-		if S and (S:FindFirstChild("FloatForce")) and not ToggleNoclip() then
-			S.FloatForce:Destroy()
+			if part.CanCollide then part.CanCollide = false end
 		end
 	end
 end
+
+local function _SkiderRestoreCharacterCollision(character)
+	if not character then return end
+	for part, oldValue in pairs(_SkiderCollisionOriginal) do
+		if part and part.Parent and part:IsDescendantOf(character) then
+			pcall(function() part.CanCollide = oldValue end)
+		end
+		_SkiderCollisionOriginal[part] = nil
+	end
+end
+
+local function _SkiderRemoveMovementForces(character)
+	if not character then return end
+	for _, obj in ipairs(character:GetDescendants()) do
+		if obj:IsA("BodyVelocity") and (obj.Name == "eltrul" or obj.Name == "FloatForce") then
+			pcall(function() obj:Destroy() end)
+		end
+	end
+end
+
+function SetNoClip(enabled)
+	_SkiderManualNoclip = enabled == true
+	getgenv().noclip = enabled == true
+	local character = t.Character
+	if not character then return end
+	if enabled then
+		_SkiderDisableCharacterCollision(character)
+	else
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid.PlatformStand = false end
+		local featureNoclip = false
+		pcall(function() featureNoclip = ToggleNoclip() == true end)
+		if not _SkiderMovementNoclip and not (Settings and Settings.Noclip) and not featureNoclip then
+			_SkiderRemoveMovementForces(character)
+			_SkiderRestoreCharacterCollision(character)
+			_SkiderNoclipWasActive = false
+		end
+	end
+end
+
 function ToggleNoclip()
 	if
 		Settings["Start Farm"]
@@ -3448,93 +3636,147 @@ function ToggleNoclip()
 		return true
 	end
 end
-local l = game:GetService("TweenService")
-getgenv().TweenManager = {
-	currentTween = nil,
-	currentPart = nil,
-	currentGoal = nil,
-	TweenRunning = false,
-	CancelTweenOnly = function()
-		local Q, S = TweenManager.currentTween, getgenv().Tween
-		if Q then
-			pcall(function()
-				Q:Cancel()
-				Q:Destroy()
-			end)
+local _SkiderTweenService = game:GetService("TweenService")
+local _SkiderRunService = game:GetService("RunService")
+
+local function _SkiderShouldNoclip()
+	local featureNoclip = false
+	pcall(function() featureNoclip = ToggleNoclip() == true end)
+	return _SkiderManualNoclip
+		or _SkiderMovementNoclip
+		or getgenv().noclip == true
+		or (Settings and Settings.Noclip == true)
+		or featureNoclip
+end
+
+if getgenv().__SKIDER_BNN_NOCLIP_CONNECTION then
+	pcall(function() getgenv().__SKIDER_BNN_NOCLIP_CONNECTION:Disconnect() end)
+end
+getgenv().__SKIDER_BNN_NOCLIP_CONNECTION = _SkiderRunService.Stepped:Connect(function()
+	local character = t.Character
+	if not character then return end
+	local active = _SkiderShouldNoclip()
+	if active then
+		_SkiderDisableCharacterCollision(character)
+		_SkiderNoclipWasActive = true
+	elseif _SkiderNoclipWasActive then
+		_SkiderRestoreCharacterCollision(character)
+		_SkiderNoclipWasActive = false
+	end
+end)
+
+if getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION then
+	pcall(function() getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION:Disconnect() end)
+end
+getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION = t.CharacterAdded:Connect(function(character)
+	_SkiderMovementNoclip = false
+	_SkiderNoclipWasActive = false
+	table.clear(_SkiderCollisionOriginal)
+	task.defer(function()
+		if character and _SkiderShouldNoclip() then
+			_SkiderDisableCharacterCollision(character)
+			_SkiderNoclipWasActive = true
 		end
-		if S and S ~= Q then
-			pcall(function()
-				S:Cancel()
-				S:Destroy()
-			end)
-		end
-		TweenManager.currentTween = nil
-		TweenManager.currentPart = nil
-		TweenManager.currentGoal = nil
-		TweenManager.TweenRunning = false
-		getgenv().Tween = nil
-	end,
-	PlayTween = function(Q, S, L, d)
-		if not Q or not S or not L or not L.CFrame then
-			return
-		end
-		local I = (d or {}).TargetEpsilon or 12
-		if
-			TweenManager.currentTween
-			and TweenManager.currentPart == Q
-			and TweenManager.currentGoal
-			and I >= (TweenManager.currentGoal.Position - L.CFrame.Position).Magnitude
-		then
+	end)
+end)
+
+getgenv().TweenManager = getgenv().TweenManager or {}
+TweenManager = getgenv().TweenManager
+
+pcall(function()
+	local oldTween = TweenManager.currentTween or getgenv().Tween
+	if oldTween and oldTween.Cancel then oldTween:Cancel() end
+end)
+
+TweenManager.currentTween = nil
+TweenManager.currentPart = nil
+TweenManager.currentGoal = nil
+TweenManager.currentSpeed = nil
+TweenManager.TweenRunning = false
+TweenManager.lastRetarget = 0
+
+function TweenManager.CancelTweenOnly(keepNoclip)
+	local current = TweenManager.currentTween
+	local globalTween = getgenv().Tween
+	if current then
+		pcall(function() current:Cancel() end)
+		pcall(function() current:Destroy() end)
+	end
+	if globalTween and globalTween ~= current then
+		pcall(function() globalTween:Cancel() end)
+		pcall(function() globalTween:Destroy() end)
+	end
+	TweenManager.currentTween = nil
+	TweenManager.currentPart = nil
+	TweenManager.currentGoal = nil
+	TweenManager.currentSpeed = nil
+	TweenManager.TweenRunning = false
+	getgenv().Tween = nil
+	if not keepNoclip then _SkiderMovementNoclip = false end
+end
+
+function TweenManager.PlayTween(part, tweenInfo, properties, options)
+	if not part or not part.Parent or not tweenInfo or type(properties) ~= "table" then return nil end
+	local goal = properties.CFrame
+	if typeof(goal) ~= "CFrame" then return nil end
+	options = options or {}
+	local epsilon = tonumber(options.TargetEpsilon) or 5
+	local cooldown = tonumber(options.RetargetCooldown) or 0.10
+	local now = tick()
+
+	if TweenManager.currentTween and TweenManager.currentPart == part and TweenManager.currentGoal then
+		local goalShift = (TweenManager.currentGoal.Position - goal.Position).Magnitude
+		if goalShift <= epsilon then return TweenManager.currentTween end
+		if now - (TweenManager.lastRetarget or 0) < cooldown and goalShift < 35 then
 			return TweenManager.currentTween
 		end
-		TweenManager.CancelTweenOnly()
-		local d = l:Create(Q, S, L)
-		TweenManager.currentTween = d
-		TweenManager.currentPart = Q
-		TweenManager.currentGoal = L.CFrame
-		TweenManager.TweenRunning = true
-		getgenv().Tween = d
-		d.Completed:Connect(function()
-			if TweenManager.currentTween == d then
-				TweenManager.currentTween = nil
-				TweenManager.currentPart = nil
-				TweenManager.currentGoal = nil
-				TweenManager.TweenRunning = false
-				getgenv().Tween = nil
-				pcall(function()
-					d:Destroy()
-				end)
-			end
-		end)
-		d:Play()
-		return d
-	end,
-	CancelCurrent = function()
-		local l = t.Character
-		local Q = l and (l:FindFirstChild("HumanoidRootPart"))
-		if TweenManager.currentTween or getgenv().Tween or Q and (Q:FindFirstChild("FloatForce")) then
-			TweenManager.CancelTweenOnly()
-			pcall(function()
-				if not l then
-					return
-				end
-				for S, S in ipairs(l:GetDescendants()) do
-					if S:IsA("BasePart") then
-						S.CanCollide = true
-					end
-				end
-				local S = l:FindFirstChildOfClass("Humanoid")
-				if S then
-					S.PlatformStand = false
-				end
-				if Q and (Q:FindFirstChild("FloatForce")) then
-					Q.FloatForce:Destroy()
-				end
-			end)
+	end
+
+	TweenManager.CancelTweenOnly(true)
+	_SkiderMovementNoclip = true
+	_SkiderDisableCharacterCollision(t.Character)
+
+	local tween = _SkiderTweenService:Create(part, tweenInfo, properties)
+	TweenManager.currentTween = tween
+	TweenManager.currentPart = part
+	TweenManager.currentGoal = goal
+	TweenManager.currentSpeed = options.Speed
+	TweenManager.TweenRunning = true
+	TweenManager.lastRetarget = now
+	getgenv().Tween = tween
+
+	local completedConnection
+	completedConnection = tween.Completed:Connect(function()
+		if completedConnection then completedConnection:Disconnect() end
+		if TweenManager.currentTween == tween then
+			TweenManager.currentTween = nil
+			TweenManager.currentPart = nil
+			TweenManager.currentGoal = nil
+			TweenManager.currentSpeed = nil
+			TweenManager.TweenRunning = false
+			getgenv().Tween = nil
+			_SkiderMovementNoclip = false
 		end
-	end,
-}
-TweenManager = getgenv().TweenManager
+		pcall(function() tween:Destroy() end)
+	end)
+
+	tween:Play()
+	return tween
+end
+
+function TweenManager.CancelCurrent()
+	TweenManager.CancelTweenOnly(false)
+	local character = t.Character
+	if character then
+		_SkiderRemoveMovementForces(character)
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid.PlatformStand = false end
+		if not _SkiderShouldNoclip() then
+			_SkiderRestoreCharacterCollision(character)
+			_SkiderNoclipWasActive = false
+		end
+	end
+end
 local l, Q, S, L, d =
 	{
 		Sea1 = {
@@ -4065,132 +4307,61 @@ task.spawn(function()
 	travelFunctions.LoadBypassTPLocation()
 end)
 BypassTp = travelFunctions
-local function y(x)
-	if x:FindFirstChild("FloatForce") then
-		return
+local _SkiderDefaultTweenSpeed = 150
+local x = game:GetService("RunService")
+local k = { LastTP = 0, LastCF = nil, ActiveConnection = nil, LastCall = 0, LastRetarget = 0 }
+
+local function y(root)
+	local character = t.Character
+	if not character or not root then return end
+	local oldForce = root:FindFirstChild("FloatForce")
+	if oldForce then pcall(function() oldForce:Destroy() end) end
+	local holder = character:FindFirstChild("Head") or root
+	if not holder:FindFirstChild("eltrul") then
+		local bv = Instance.new("BodyVelocity")
+		bv.Name = "eltrul"
+		bv.MaxForce = Vector3.new(0, math.huge, 0)
+		bv.Velocity = Vector3.zero
+		bv.P = 10000
+		bv.Parent = holder
 	end
-	local k = Instance.new("BodyVelocity")
-	k.Name = "FloatForce"
-	k.Velocity = Vector3.new(0.0, 0.0, 0.0)
-	k.MaxForce = Vector3.new(100000, 100000, 100000)
-	k.P = 10000
-	k.Parent = x
 end
-local x, k, P, e, Y =
-	game:GetService("RunService"), { LastTP = 0, LastCF = nil, ActiveConnection = nil, LastCall = 0 }, 18, 120, 40
-local function H()
-	local B = getgenv().CharSpeed
-	if not B then
-		B = { cap = 1000, nextRaise = 0 }
-		getgenv().CharSpeed = B
+
+local function B(root, targetCFrame, speed, arrivalEpsilon)
+	if not root or typeof(targetCFrame) ~= "CFrame" then return nil end
+	local character = t.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not character or root.Parent ~= character or not humanoid or humanoid.Health <= 0 or root.Anchored then
+		return nil
 	end
-	return B
-end
-local function B(Z, C, J, F)
-	if not Z or typeof(C) ~= "CFrame" then
-		return
+
+	k.LastCall = tick()
+	speed = math.max(tonumber(speed) or tonumber(Settings["Speed Tween "]) or _SkiderDefaultTweenSpeed, 1)
+	arrivalEpsilon = tonumber(arrivalEpsilon) or 2.5
+	local distance = (targetCFrame.Position - root.Position).Magnitude
+
+	_SkiderMovementNoclip = true
+	_SkiderDisableCharacterCollision(character)
+	y(root)
+	I()
+
+	if distance <= arrivalEpsilon then
+		TweenManager.CancelTweenOnly(true)
+		root.CFrame = targetCFrame
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+		return nil
 	end
-	local q = t.Character
-	local c = q and (q:FindFirstChildOfClass("Humanoid"))
-	if not q or Z.Parent ~= q or not c or c.Health <= 0 then
-		return
-	end
-	if tick() - k.LastTP < 1 and C == k.LastCF then
-		return
-	end
-	TweenManager.CancelTweenOnly()
-	if k.ActiveConnection and coroutine.status(k.ActiveConnection) == "suspended" then
-		pcall(coroutine.close, k.ActiveConnection)
-	end
-	J = math.max(tonumber(J) or 350, 1)
-	F = tonumber(F) or 2.5
-	k.LastTP = tick()
-	k.LastCF = C
-	local c, D = false
-	local r = {}
-	local function n()
-		if k.ActiveConnection == D then
-			k.ActiveConnection = nil
-		end
-		if TweenManager.currentTween == r then
-			TweenManager.currentTween = nil
-			TweenManager.currentPart = nil
-			TweenManager.currentGoal = nil
-			TweenManager.TweenRunning = false
-		end
-		if getgenv().Tween == r then
-			getgenv().Tween = nil
-		end
-	end
-	r.Pause = function(u)
-		c = true
-		if D and coroutine.status(D) == "suspended" then
-			pcall(coroutine.close, D)
-		end
-	end
-	r.Cancel = function(u)
-		u:Pause()
-		n()
-	end
-	r.Destroy = function(u)
-		u:Cancel()
-	end
-	D = coroutine.create(function()
-		local u, W = Z.Position, C.Position
-		local O, z, U, h, p, w = (W - u).Magnitude, 1 / 0, (tick()), true
-		while not c do
-			local M = t.Character
-			local j = M and (M:FindFirstChildOfClass("Humanoid"))
-			if M ~= q or Z.Parent ~= M or not j or j.Health <= 0 or Z.Anchored or O <= F then
-				break
-			end
-			local q, v0, T0 = x.Heartbeat:Wait(), H(), Z.Position
-			M = (W - T0).Magnitude
-			if M < z - 5 then
-				z, U = M, (tick())
-			else
-				h = if tick() - U > 2.5 then false else h
-			end
-			if h and p and w and M > w + Y then
-				v0.cap = math.max(v0.cap * 0.7, e)
-				v0.nextRaise = tick() + 3
-				u = T0
-			else
-				u = if h and p and (T0 - p).Magnitude > Y then T0 else u
-			end
-			j = W - u
-			local e, Y = j.Magnitude, math.min(math.min(J, v0.cap) * q, P)
-			if e > Y and tick() >= v0.nextRaise then
-				v0.cap = math.min(v0.cap * 1.08, J)
-				v0.nextRaise = tick() + 1.5
-			end
-			u = if e <= Y or e <= 0.05 then W else u + j / e * Y
-			O = (W - u).Magnitude
-			I()
-			getgenv().noclip = true
-			Z.CFrame = CFrame.new(u)
-			Z.AssemblyLinearVelocity = Vector3.new(0.0, 0.0, 0.0)
-			Z.AssemblyAngularVelocity = Vector3.new(0.0, 0.0, 0.0)
-			p, w = u, M
-		end
-		if not c and Z.Parent == t.Character and (W - Z.Position).Magnitude <= F then
-			Z.CFrame = C
-			Z.AssemblyLinearVelocity = Vector3.new(0.0, 0.0, 0.0)
-			Z.AssemblyAngularVelocity = Vector3.new(0.0, 0.0, 0.0)
-		end
-		n()
-	end)
-	k.ActiveConnection = D
-	TweenManager.currentTween = r
-	TweenManager.currentPart = Z
-	TweenManager.currentGoal = C
-	TweenManager.TweenRunning = true
-	getgenv().Tween = r
-	if not coroutine.resume(D) then
-		r:Cancel()
-		return
-	end
-	return r
+
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+	local duration = distance / speed
+	local info = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+	return TweenManager.PlayTween(root, info, { CFrame = targetCFrame }, {
+		TargetEpsilon = math.max(5, arrivalEpsilon * 2),
+		RetargetCooldown = 0.10,
+		Speed = speed,
+	})
 end
 
 function toTarget(P, e)
@@ -4223,9 +4394,7 @@ function toTarget(P, e)
 		H.CFrame = H.CFrame * CFrame.new(0, 10, 0)
 		return
 	end
-	if not H:FindFirstChild("FloatForce") then
-		y(H)
-	end
+	y(H)
 	Y = (P.Position - H.Position).Magnitude
 	if Settings["Teleport Y"] then
 		local d, y = Settings["% Health Player"] or 40, Z.Health / Z.MaxHealth
@@ -4465,6 +4634,28 @@ function toTarget(P, e)
 	end
 	B(H, e, Y)
 end
+
+task.spawn(function()
+	while task.wait(0.20) do
+		if not TweenManager.TweenRunning and tick() - (k.LastCall or 0) > 0.45 then
+			_SkiderMovementNoclip = false
+			local featureNoclip = false
+			pcall(function() featureNoclip = ToggleNoclip() == true end)
+			if not _SkiderManualNoclip and not (Settings and Settings.Noclip) and not featureNoclip then
+				getgenv().noclip = false
+			end
+			local character = t.Character
+			if character then
+				_SkiderRemoveMovementForces(character)
+				if not _SkiderShouldNoclip() then
+					_SkiderRestoreCharacterCollision(character)
+					_SkiderNoclipWasActive = false
+				end
+			end
+		end
+	end
+end)
+
 getgenv().BackupTween = toTarget
 spawn(function()
 	while wait(0.25) do
