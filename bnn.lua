@@ -4,41 +4,103 @@ end
 
 Settings = {}
 HttpService = game:GetService("HttpService")
+local PlayersService = game:GetService("Players")
+local ReplicatedStorageService = game:GetService("ReplicatedStorage")
+
+-- Startup guard: wait for the player before touching PlayerGui/config filenames.
+repeat
+	task.wait(0.05)
+until game:IsLoaded() and PlayersService.LocalPlayer
+
+local _startupPlayer = PlayersService.LocalPlayer
 FolderName = "Banana Cat Hub"
 SaveFileNameGame = "-BloxFruitBNNC.json"
-SaveFileName = game.Players.LocalPlayer.Name .. SaveFileNameGame
+SaveFileName = _startupPlayer.Name .. SaveFileNameGame
+
+local function _ensureSettingsFolder()
+	if type(isfolder) == "function" and type(makefolder) == "function" then
+		local ok, exists = pcall(isfolder, FolderName)
+		if ok and not exists then
+			pcall(makefolder, FolderName)
+		end
+	end
+end
+
 function SaveSettings(b, t, A)
 	if A ~= nil then
-		Settings[b] = Settings[b] or {}
+		Settings[b] = type(Settings[b]) == "table" and Settings[b] or {}
 		Settings[b][t] = A
 	elseif b ~= nil then
 		Settings[b] = t
 	end
-	if not isfolder(FolderName) then
-		makefolder(FolderName)
+
+	if type(writefile) ~= "function" then
+		return false
 	end
-	writefile(FolderName .. "/" .. SaveFileName, HttpService:JSONEncode(Settings))
-end
-if getgenv().Config then
-	Settings = getgenv().Config
-	SaveSettings()
-end
-function ReadSetting()
-	local b, t = pcall(function()
-		if not isfolder(FolderName) then
-			makefolder(FolderName)
-		end
-		return HttpService:JSONDecode(readfile(FolderName .. "/" .. SaveFileName))
+
+	_ensureSettingsFolder()
+	local ok = pcall(function()
+		writefile(FolderName .. "/" .. SaveFileName, HttpService:JSONEncode(Settings))
 	end)
-	if b then
-		return t
-	else
+	return ok
+end
+
+function ReadSetting()
+	if type(readfile) ~= "function" then
+		return {}
+	end
+
+	_ensureSettingsFolder()
+	local ok, data = pcall(function()
+		local raw = readfile(FolderName .. "/" .. SaveFileName)
+		return HttpService:JSONDecode(raw)
+	end)
+
+	if ok and type(data) == "table" then
+		return data
+	end
+
+	-- Old code recursively called ReadSetting() forever if read/write failed.
+	-- Fall back to a clean table and try to recreate the file once instead.
+	Settings = {}
+	SaveSettings()
+	return Settings
+end
+
+Settings = ReadSetting()
+
+-- Apply external config after the saved file, compatible with kaiv4's
+-- AccountConfigs / per-user Config / flat Config formats.
+do
+	local username = _startupPlayer.Name
+	local external = nil
+	if type(getgenv().AccountConfigs) == "table" and type(getgenv().AccountConfigs[username]) == "table" then
+		external = getgenv().AccountConfigs[username]
+	elseif type(getgenv().Config) == "table" then
+		if type(getgenv().Config[username]) == "table" then
+			external = getgenv().Config[username]
+		else
+			external = getgenv().Config
+		end
+	end
+	if type(external) == "table" then
+		for key, value in pairs(external) do
+			Settings[key] = value
+		end
 		SaveSettings()
-		return ReadSetting()
 	end
 end
-Settings = ReadSetting()
+
 getgenv().Settings = Settings
+
+function GetSettingDefault(key, defaultValue)
+	local value = Settings[key]
+	if value == nil then
+		return defaultValue
+	end
+	return value
+end
+
 function PrepareMultiSelectList(b, t, A)
 	local a = {}
 	for s in pairs(b) do
@@ -68,84 +130,128 @@ function EnsureAllTrueDefaults(b, t)
 		end
 	end
 end
-repeat
-	wait()
-until game:FindFirstChild("CoreGui")
-repeat
-	wait()
-until not game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("LoadingScreen")
-repeat
-	wait()
-until game:IsLoaded() and (game.Players.LocalPlayer:FindFirstChild("DataLoaded"))
-function FireButton(b)
-	b.Selectable = true
-	game:GetService("GuiService").SelectedObject = b
-	game:GetService("VirtualInputManager"):SendKeyEvent(true, "Return", false, b)
-	game:GetService("VirtualInputManager"):SendKeyEvent(false, "Return", false, b)
-	b.Activated:Connect(function()
-		game:GetService("GuiService").SelectedObject = nil
-	end)
-end
-repeat
-	wait()
-until game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("Main (minimal)")
-	or (game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("Main"))
-local b = game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("Main (minimal)")
-	or (game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("Main"))
-repeat
-	wait()
-until b:FindFirstChild("ChooseTeam")
-repeat
-	task.wait()
-	pcall(function()
-		local pg = game:GetService("Players").LocalPlayer.PlayerGui
-		-- Phát hiện GUI đang dùng: "Main (minimal)" hoặc "Main"
-		local mainGui = pg:FindFirstChild("Main (minimal)") or pg:FindFirstChild("Main")
-		local chooseTeam = mainGui and mainGui:FindFirstChild("ChooseTeam")
-		if not chooseTeam or not chooseTeam.Visible then return end
 
-		local teamName = Settings["Select Team"] == "Pirate" and "Pirates" or "Marines"
-		local container = chooseTeam:FindFirstChild("Container")
-		local teamFrame = container and container:FindFirstChild(teamName)
-		local btn = teamFrame and teamFrame:FindFirstChild("Frame") and teamFrame.Frame:FindFirstChild("TextButton")
-		if btn then
-			FireButton(btn)
-			wait(1)
-		else
-			-- Fallback: dùng server remote
-			game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("ChooseTeam", teamName)
-			wait(1)
-		end
-	end)
-until game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("Main (minimal)")
-		and (game:GetService("Players").LocalPlayer.PlayerGui["Main (minimal)"]:FindFirstChild("ChooseTeam"))
-		and not game:GetService("Players").LocalPlayer.PlayerGui["Main (minimal)"]:WaitForChild("ChooseTeam").Visible
-	or game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("Main")
-		and (game:GetService("Players").LocalPlayer.PlayerGui.Main:FindFirstChild("ChooseTeam"))
-		and not game:GetService("Players").LocalPlayer.PlayerGui.Main:WaitForChild("ChooseTeam").Visible
+-- Wait for the important game objects, but do not block forever on transient UI.
+repeat
+	task.wait(0.05)
+until game:FindFirstChild("CoreGui") and _startupPlayer:FindFirstChild("PlayerGui")
+
+local _playerGui = _startupPlayer.PlayerGui
+local _loadingStarted = tick()
+while _playerGui:FindFirstChild("LoadingScreen") and tick() - _loadingStarted < 30 do
+	task.wait(0.1)
+end
+if not _startupPlayer:FindFirstChild("DataLoaded") then
+	_startupPlayer:WaitForChild("DataLoaded", 30)
+end
+
+-- Auto Join Team copied from the reliable kaiv4 flow and adapted to BNN settings.
+-- It uses SetTeam first, then GUI/UIController fallbacks, and never blocks loading forever.
+local function autoJoinTeam(forcedTeam)
+	local targetTeam = forcedTeam or Settings["Select Team"] or "Marines"
+
+	if forcedTeam == nil then
+		pcall(function()
+			local lp = PlayersService.LocalPlayer
+			local u = lp and lp.Name
+			if type(getgenv().AccountConfigs) == "table"
+				and u
+				and type(getgenv().AccountConfigs[u]) == "table"
+				and getgenv().AccountConfigs[u]["Select Team"]
+			then
+				targetTeam = getgenv().AccountConfigs[u]["Select Team"]
+			elseif type(getgenv().Config) == "table" then
+				if u and type(getgenv().Config[u]) == "table" and getgenv().Config[u]["Select Team"] then
+					targetTeam = getgenv().Config[u]["Select Team"]
+				elseif getgenv().Config["Select Team"] then
+					targetTeam = getgenv().Config["Select Team"]
+				elseif getgenv().Config["Team"] then
+					targetTeam = getgenv().Config["Team"]
+				end
+			end
+		end)
+	end
+
+	if targetTeam == "Marine" then targetTeam = "Marines" end
+	if targetTeam == "Pirate" then targetTeam = "Pirates" end
+	if targetTeam ~= "Marines" and targetTeam ~= "Pirates" then
+		targetTeam = "Marines"
+	end
+
+	local lp = PlayersService.LocalPlayer or PlayersService.PlayerAdded:Wait()
+	if lp and lp.Team and lp.Team.Name == targetTeam then
+		return true
+	end
+
+	local startTime = tick()
+	repeat
+		task.wait(0.25)
+		pcall(function()
+			ReplicatedStorageService.Remotes.CommF_:InvokeServer("SetTeam", targetTeam)
+		end)
+		pcall(function()
+			local pGui = lp:FindFirstChild("PlayerGui")
+			if pGui then
+				local chooseTeam = pGui:FindFirstChild("ChooseTeam", true)
+				if chooseTeam and chooseTeam.Visible then
+					local teamPart = chooseTeam:FindFirstChild(targetTeam, true)
+					if teamPart then
+						local btn = teamPart:FindFirstChildWhichIsA("TextButton", true)
+							or teamPart:FindFirstChildWhichIsA("ImageButton", true)
+						if btn and getconnections then
+							for _, conn in pairs(getconnections(btn.MouseButton1Click or btn.Activated)) do
+								if conn and conn.Function then
+									conn.Function()
+								end
+							end
+						end
+					end
+				end
+
+				local uiController = pGui:FindFirstChild("UIController", true)
+				if uiController and getgc and getconstants and getfenv then
+					for _, v in pairs(getgc(true)) do
+						if type(v) == "function" and getfenv(v).script == uiController then
+							local c = getconstants(v)
+							if (c[1] == "Pirates" or c[1] == "Marines") and #c == 1 and c[1] == targetTeam then
+								v(targetTeam)
+							end
+						end
+					end
+				end
+			end
+		end)
+	until (lp and lp.Team and lp.Team.Name == targetTeam) or (tick() - startTime > 12)
+
+	return lp and lp.Team and lp.Team.Name == targetTeam
+end
+
+-- Team selection is best-effort; even if Roblox UI/remotes change, continue loading the hub.
+pcall(autoJoinTeam)
 
 game:GetService("GuiService").SelectedObject = nil
-repeat
-	wait()
-until game:IsLoaded() and game.Players.LocalPlayer
-repeat
-	wait()
-until game:FindFirstChild("CoreGui")
-getgenv().ExploitReq = syn and syn.request
-	or identifyexecutor() == "Fluxus" and request
-	or http_request
-	or http.request
-	or requests
-if getgenv().LoadScript then
-	return print("Double UI")
+
+-- Resolve request function safely. The old expression could call a nil identifyexecutor()
+-- or index nil http.request, aborting the whole script before features were created.
+local _executorName = ""
+if type(identifyexecutor) == "function" then
+	pcall(function()
+		_executorName = identifyexecutor() or ""
+	end)
 end
+getgenv().ExploitReq = (syn and syn.request)
+	or (_executorName == "Fluxus" and request)
+	or http_request
+	or (http and http.request)
+	or requests
+	or request
+
 getgenv().CheckPlaceId = game.PlaceId == 100117331123089 and 100117331123089 or 7449423635
 getgenv().CheckPlaceId2 = game.PlaceId == 4442272183 and 4442272183 or 79091703265657
 getgenv().CheckPlaceId3 = game.PlaceId == 2753915549 and 2753915549 or 85211729168715
-getgenv().LoadScript = true
 local t = game.Players.LocalPlayer
-getgenv().getupvalue = debug.getupvalue
-getgenv().getupvalues = debug.getupvalues
+getgenv().getupvalue = (debug and debug.getupvalue) or getupvalue
+getgenv().getupvalues = (debug and debug.getupvalues) or getupvalues
 wOrigin = game.workspace._WorldOrigin
 CommF = game.ReplicatedStorage.Remotes.CommF_
 vu = game:GetService("VirtualUser")
@@ -154,9 +260,20 @@ game:GetService("Players").LocalPlayer.Idled:connect(function()
 	wait(1)
 	vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
 end)
-local A =
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua"))()
+local _uiOk, A = pcall(function()
+	local source = game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua")
+	local chunk, compileErr = loadstring(source)
+	if not chunk then
+		error(compileErr or "UI library compile failed")
+	end
+	return chunk()
+end)
+if not _uiOk or type(A) ~= "table" then
+	getgenv().LoadScript = nil
+	error("[Banana Cat Hub] Failed to load UI library: " .. tostring(A))
+end
 Main = A.CreateMain({ Title = "Blox Fruit", Desc = " - Blox Fruit" })
+getgenv().LoadScript = true
 PageShop = Main.CreatePage({ Page_Name = "Shop", Page_Title = "Shop" })
 getgenv().Options = A.Options
 SectionShopMisc = PageShop.CreateSection("Misc Shop")
@@ -170,13 +287,19 @@ end
 getgenv().tablefruitausea3 = {}
 whitelistedfruit = {}
 TableDevilFruit = {}
-local a, s, X = next, game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("GetFruits", false)
-for g, g in a, s, X do
-	if g.Price >= 1000000 then
-		table.insert(whitelistedfruit, string.split(g.Name, "-")[1] .. " Fruit")
-		getgenv().tablefruitausea3[g.Name] = g.Price
+local _fruitOk, _fruitList = pcall(function()
+	return game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("GetFruits", false)
+end)
+if _fruitOk and type(_fruitList) == "table" then
+	for _, fruitData in pairs(_fruitList) do
+		if type(fruitData) == "table" and fruitData.Name then
+			if tonumber(fruitData.Price) and fruitData.Price >= 1000000 then
+				table.insert(whitelistedfruit, string.split(fruitData.Name, "-")[1] .. " Fruit")
+				getgenv().tablefruitausea3[fruitData.Name] = fruitData.Price
+			end
+			TableDevilFruit[fruitData.Name] = false
+		end
 	end
-	TableDevilFruit[g.Name] = false
 end
 getgenv().tablefruitausea3["Dragon (East)-Dragon (East)"] = 15000000
 getgenv().tablefruitausea3["Dragon (West)-Dragon (West)"] = 15000000
@@ -2422,7 +2545,9 @@ SectionLocalPlayerMain.CreateDropdown(
 	{ Title = "Change Team", List = { "Pirates", "Marines" }, Search = true, Selected = false, Default = nil },
 	function(K)
 		if K then
-			game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer(unpack({ [1] = "SetTeam", [2] = K }))
+			task.spawn(function()
+				autoJoinTeam(K)
+			end)
 		end
 	end
 )
@@ -4424,7 +4549,7 @@ local Q, d =
 		end
 	)
 SettingFarmMainSection.CreateToggle(
-	{ Title = "Attack No Animation ", Desc = nil, Default = Settings["Attack No Animation "] or true },
+	{ Title = "Attack No Animation ", Desc = nil, Default = GetSettingDefault("Attack No Animation ", true) },
 	function(I)
 		SaveSettings("Attack No Animation ", I)
 	end
@@ -4502,7 +4627,7 @@ function FFCMatch(m, I)
 	return nil
 end
 SettingFarmMainSection.CreateToggle(
-	{ Title = "Auto Turn On Buso", Desc = nil, Default = Settings["Auto Turn On Buso"] or true },
+	{ Title = "Auto Turn On Buso", Desc = nil, Default = GetSettingDefault("Auto Turn On Buso", true) },
 	function(m)
 		if m then
 			spawn(function()
@@ -4679,7 +4804,7 @@ SettingFarmMainSection.CreateSlider(
 	end
 )
 SettingFarmMainSection.CreateToggle(
-	{ Title = "Bring Mob", Desc = nil, Default = Settings["Bring Mob"] or true },
+	{ Title = "Bring Mob", Desc = nil, Default = GetSettingDefault("Bring Mob", true) },
 	function(I)
 		SaveSettings("Bring Mob", I)
 	end
@@ -18855,7 +18980,7 @@ MISCPVPSection.CreateToggle(
 	end
 )
 MISCPVPSection.CreateToggle(
-	{ Title = "Walk On Water", Desc = nil, Default = Settings["Walk On Water "] or true },
+	{ Title = "Walk On Water", Desc = nil, Default = GetSettingDefault("Walk On Water ", true) },
 	function(b)
 		if b then
 			if not game.Workspace:FindFirstChild("WaterWalk") then
