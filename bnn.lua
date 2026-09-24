@@ -261,9 +261,72 @@ game:GetService("Players").LocalPlayer.Idled:connect(function()
 	vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
 end)
 -- ============================================================================
--- SKIDER HUB - FLUENT UI COMPATIBILITY LAYER
--- Replaces the old zzzz.lua UI only. All BNN feature callbacks below stay intact.
+-- SKIDER HUB - HYBRID LEGACY RUNTIME + FLUENT UI (zzzz kept + SetTeam/Tween fixes)
+-- zzzz.lua is still EXECUTED because the original BNN expects its runtime/API
+-- environment to exist. Its visual UI is not used; Fluent is the visible UI.
 -- ============================================================================
+local _LegacyZZZZ
+local _legacyOk, _legacyErr = pcall(function()
+    _LegacyZZZZ = loadstring(game:HttpGet(
+        "https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua"
+    ))()
+end)
+if not _legacyOk or type(_LegacyZZZZ) ~= "table" then
+    getgenv().LoadScript = nil
+    error("[Skider Hub] Failed to load required zzzz.lua runtime: " .. tostring(_legacyErr))
+end
+-- Keep an explicit reference so executor GC cannot discard the legacy runtime table.
+getgenv().__SKIDER_ZZZZ_RUNTIME = _LegacyZZZZ
+getgenv().__SKIDER_ZZZZ_OPTIONS = _LegacyZZZZ.Options
+
+-- The original BNN calls CreateMain immediately after loading zzzz.lua. Keep that
+-- initialization path too, but hide its visual ScreenGui so Fluent is the only UI shown.
+local _legacyContainers = { game:GetService("CoreGui") }
+pcall(function()
+    if gethui then
+        local h = gethui()
+        if h and h ~= _legacyContainers[1] then _legacyContainers[#_legacyContainers + 1] = h end
+    end
+end)
+local _legacyBefore = setmetatable({}, { __mode = "k" })
+for _, c in ipairs(_legacyContainers) do
+    for _, child in ipairs(c:GetChildren()) do _legacyBefore[child] = true end
+end
+local _LegacyMain
+local _legacyMainOk, _legacyMainErr = pcall(function()
+    _LegacyMain = _LegacyZZZZ.CreateMain({ Title = "Skider Hub", Desc = " - Blox Fruit" })
+end)
+if not _legacyMainOk then
+    getgenv().LoadScript = nil
+    error("[Skider Hub] zzzz.lua CreateMain initialization failed: " .. tostring(_legacyMainErr))
+end
+getgenv().__SKIDER_ZZZZ_MAIN = _LegacyMain
+local _legacyOwned = setmetatable({}, { __mode = "k" })
+for _, c in ipairs(_legacyContainers) do
+    for _, child in ipairs(c:GetChildren()) do
+        if not _legacyBefore[child] then _legacyOwned[child] = true end
+    end
+end
+
+local function _hideLegacyZZZZVisuals()
+    for _, c in ipairs(_legacyContainers) do
+        for _, child in ipairs(c:GetChildren()) do
+            local low = string.lower(child.Name or "")
+            if _legacyOwned[child]
+                or string.find(low, "nousigi", 1, true)
+                or string.find(low, "banana", 1, true)
+            then
+                if child:IsA("ScreenGui") then
+                    pcall(function() child.Enabled = false end)
+                end
+            end
+        end
+    end
+end
+_hideLegacyZZZZVisuals()
+task.delay(0.5, _hideLegacyZZZZVisuals)
+task.delay(2, _hideLegacyZZZZVisuals)
+
 local Fluent
 local _fluentOk, _fluentErr = pcall(function()
     Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
@@ -325,7 +388,7 @@ do
     end)
 end
 
-local _AdapterOptions = {}
+local _AdapterOptions = type(_LegacyZZZZ.Options) == "table" and _LegacyZZZZ.Options or {}
 local _adapterId = 0
 local function _nextId(prefix)
     _adapterId += 1
@@ -3201,27 +3264,63 @@ function DetectPrehistoricIsland()
 		end
 	end
 end
-function SetNoClip(l)
-	getgenv().noclip = l
-	local Q = t.Character
-	if not Q then
-		return
-	end
-	local S, L = Q:FindFirstChild("HumanoidRootPart"), Q:FindFirstChildOfClass("Humanoid")
-	if not l then
-		for l, l in ipairs(Q:GetDescendants()) do
-			if l:IsA("BasePart") then
-				l.CanCollide = true
+-- Stable noclip state. Preserve the original collision state of each character part.
+local _SkiderCollisionOriginal = setmetatable({}, { __mode = "k" })
+local _SkiderManualNoclip = false
+local _SkiderMovementNoclip = false
+local _SkiderNoclipWasActive = false
+
+local function _SkiderDisableCharacterCollision(character)
+	if not character then return end
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") then
+			if _SkiderCollisionOriginal[part] == nil then
+				_SkiderCollisionOriginal[part] = part.CanCollide
 			end
-		end
-		if L then
-			L.PlatformStand = false
-		end
-		if S and (S:FindFirstChild("FloatForce")) and not ToggleNoclip() then
-			S.FloatForce:Destroy()
+			if part.CanCollide then part.CanCollide = false end
 		end
 	end
 end
+
+local function _SkiderRestoreCharacterCollision(character)
+	if not character then return end
+	for part, oldValue in pairs(_SkiderCollisionOriginal) do
+		if part and part.Parent and part:IsDescendantOf(character) then
+			pcall(function() part.CanCollide = oldValue end)
+		end
+		_SkiderCollisionOriginal[part] = nil
+	end
+end
+
+local function _SkiderRemoveMovementForces(character)
+	if not character then return end
+	for _, obj in ipairs(character:GetDescendants()) do
+		if obj:IsA("BodyVelocity") and (obj.Name == "eltrul" or obj.Name == "FloatForce") then
+			pcall(function() obj:Destroy() end)
+		end
+	end
+end
+
+function SetNoClip(enabled)
+	_SkiderManualNoclip = enabled == true
+	getgenv().noclip = enabled == true
+	local character = t.Character
+	if not character then return end
+	if enabled then
+		_SkiderDisableCharacterCollision(character)
+	else
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid.PlatformStand = false end
+		local featureNoclip = false
+		pcall(function() featureNoclip = ToggleNoclip() == true end)
+		if not _SkiderMovementNoclip and not (Settings and Settings.Noclip) and not featureNoclip then
+			_SkiderRemoveMovementForces(character)
+			_SkiderRestoreCharacterCollision(character)
+			_SkiderNoclipWasActive = false
+		end
+	end
+end
+
 function ToggleNoclip()
 	if
 		Settings["Start Farm"]
@@ -3319,93 +3418,147 @@ function ToggleNoclip()
 		return true
 	end
 end
-local l = game:GetService("TweenService")
-getgenv().TweenManager = {
-	currentTween = nil,
-	currentPart = nil,
-	currentGoal = nil,
-	TweenRunning = false,
-	CancelTweenOnly = function()
-		local Q, S = TweenManager.currentTween, getgenv().Tween
-		if Q then
-			pcall(function()
-				Q:Cancel()
-				Q:Destroy()
-			end)
+local _SkiderTweenService = game:GetService("TweenService")
+local _SkiderRunService = game:GetService("RunService")
+
+local function _SkiderShouldNoclip()
+	local featureNoclip = false
+	pcall(function() featureNoclip = ToggleNoclip() == true end)
+	return _SkiderManualNoclip
+		or _SkiderMovementNoclip
+		or getgenv().noclip == true
+		or (Settings and Settings.Noclip == true)
+		or featureNoclip
+end
+
+if getgenv().__SKIDER_BNN_NOCLIP_CONNECTION then
+	pcall(function() getgenv().__SKIDER_BNN_NOCLIP_CONNECTION:Disconnect() end)
+end
+getgenv().__SKIDER_BNN_NOCLIP_CONNECTION = _SkiderRunService.Stepped:Connect(function()
+	local character = t.Character
+	if not character then return end
+	local active = _SkiderShouldNoclip()
+	if active then
+		_SkiderDisableCharacterCollision(character)
+		_SkiderNoclipWasActive = true
+	elseif _SkiderNoclipWasActive then
+		_SkiderRestoreCharacterCollision(character)
+		_SkiderNoclipWasActive = false
+	end
+end)
+
+if getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION then
+	pcall(function() getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION:Disconnect() end)
+end
+getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION = t.CharacterAdded:Connect(function(character)
+	_SkiderMovementNoclip = false
+	_SkiderNoclipWasActive = false
+	table.clear(_SkiderCollisionOriginal)
+	task.defer(function()
+		if character and _SkiderShouldNoclip() then
+			_SkiderDisableCharacterCollision(character)
+			_SkiderNoclipWasActive = true
 		end
-		if S and S ~= Q then
-			pcall(function()
-				S:Cancel()
-				S:Destroy()
-			end)
-		end
-		TweenManager.currentTween = nil
-		TweenManager.currentPart = nil
-		TweenManager.currentGoal = nil
-		TweenManager.TweenRunning = false
-		getgenv().Tween = nil
-	end,
-	PlayTween = function(Q, S, L, d)
-		if not Q or not S or not L or not L.CFrame then
-			return
-		end
-		local I = (d or {}).TargetEpsilon or 12
-		if
-			TweenManager.currentTween
-			and TweenManager.currentPart == Q
-			and TweenManager.currentGoal
-			and I >= (TweenManager.currentGoal.Position - L.CFrame.Position).Magnitude
-		then
+	end)
+end)
+
+getgenv().TweenManager = getgenv().TweenManager or {}
+TweenManager = getgenv().TweenManager
+
+pcall(function()
+	local oldTween = TweenManager.currentTween or getgenv().Tween
+	if oldTween and oldTween.Cancel then oldTween:Cancel() end
+end)
+
+TweenManager.currentTween = nil
+TweenManager.currentPart = nil
+TweenManager.currentGoal = nil
+TweenManager.currentSpeed = nil
+TweenManager.TweenRunning = false
+TweenManager.lastRetarget = 0
+
+function TweenManager.CancelTweenOnly(keepNoclip)
+	local current = TweenManager.currentTween
+	local globalTween = getgenv().Tween
+	if current then
+		pcall(function() current:Cancel() end)
+		pcall(function() current:Destroy() end)
+	end
+	if globalTween and globalTween ~= current then
+		pcall(function() globalTween:Cancel() end)
+		pcall(function() globalTween:Destroy() end)
+	end
+	TweenManager.currentTween = nil
+	TweenManager.currentPart = nil
+	TweenManager.currentGoal = nil
+	TweenManager.currentSpeed = nil
+	TweenManager.TweenRunning = false
+	getgenv().Tween = nil
+	if not keepNoclip then _SkiderMovementNoclip = false end
+end
+
+function TweenManager.PlayTween(part, tweenInfo, properties, options)
+	if not part or not part.Parent or not tweenInfo or type(properties) ~= "table" then return nil end
+	local goal = properties.CFrame
+	if typeof(goal) ~= "CFrame" then return nil end
+	options = options or {}
+	local epsilon = tonumber(options.TargetEpsilon) or 5
+	local cooldown = tonumber(options.RetargetCooldown) or 0.10
+	local now = tick()
+
+	if TweenManager.currentTween and TweenManager.currentPart == part and TweenManager.currentGoal then
+		local goalShift = (TweenManager.currentGoal.Position - goal.Position).Magnitude
+		if goalShift <= epsilon then return TweenManager.currentTween end
+		if now - (TweenManager.lastRetarget or 0) < cooldown and goalShift < 35 then
 			return TweenManager.currentTween
 		end
-		TweenManager.CancelTweenOnly()
-		local d = l:Create(Q, S, L)
-		TweenManager.currentTween = d
-		TweenManager.currentPart = Q
-		TweenManager.currentGoal = L.CFrame
-		TweenManager.TweenRunning = true
-		getgenv().Tween = d
-		d.Completed:Connect(function()
-			if TweenManager.currentTween == d then
-				TweenManager.currentTween = nil
-				TweenManager.currentPart = nil
-				TweenManager.currentGoal = nil
-				TweenManager.TweenRunning = false
-				getgenv().Tween = nil
-				pcall(function()
-					d:Destroy()
-				end)
-			end
-		end)
-		d:Play()
-		return d
-	end,
-	CancelCurrent = function()
-		local l = t.Character
-		local Q = l and (l:FindFirstChild("HumanoidRootPart"))
-		if TweenManager.currentTween or getgenv().Tween or Q and (Q:FindFirstChild("FloatForce")) then
-			TweenManager.CancelTweenOnly()
-			pcall(function()
-				if not l then
-					return
-				end
-				for S, S in ipairs(l:GetDescendants()) do
-					if S:IsA("BasePart") then
-						S.CanCollide = true
-					end
-				end
-				local S = l:FindFirstChildOfClass("Humanoid")
-				if S then
-					S.PlatformStand = false
-				end
-				if Q and (Q:FindFirstChild("FloatForce")) then
-					Q.FloatForce:Destroy()
-				end
-			end)
+	end
+
+	TweenManager.CancelTweenOnly(true)
+	_SkiderMovementNoclip = true
+	_SkiderDisableCharacterCollision(t.Character)
+
+	local tween = _SkiderTweenService:Create(part, tweenInfo, properties)
+	TweenManager.currentTween = tween
+	TweenManager.currentPart = part
+	TweenManager.currentGoal = goal
+	TweenManager.currentSpeed = options.Speed
+	TweenManager.TweenRunning = true
+	TweenManager.lastRetarget = now
+	getgenv().Tween = tween
+
+	local completedConnection
+	completedConnection = tween.Completed:Connect(function()
+		if completedConnection then completedConnection:Disconnect() end
+		if TweenManager.currentTween == tween then
+			TweenManager.currentTween = nil
+			TweenManager.currentPart = nil
+			TweenManager.currentGoal = nil
+			TweenManager.currentSpeed = nil
+			TweenManager.TweenRunning = false
+			getgenv().Tween = nil
+			_SkiderMovementNoclip = false
 		end
-	end,
-}
-TweenManager = getgenv().TweenManager
+		pcall(function() tween:Destroy() end)
+	end)
+
+	tween:Play()
+	return tween
+end
+
+function TweenManager.CancelCurrent()
+	TweenManager.CancelTweenOnly(false)
+	local character = t.Character
+	if character then
+		_SkiderRemoveMovementForces(character)
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid.PlatformStand = false end
+		if not _SkiderShouldNoclip() then
+			_SkiderRestoreCharacterCollision(character)
+			_SkiderNoclipWasActive = false
+		end
+	end
+end
 local l, Q, S, L, d =
 	{
 		Sea1 = {
@@ -3936,132 +4089,61 @@ task.spawn(function()
 	travelFunctions.LoadBypassTPLocation()
 end)
 BypassTp = travelFunctions
-local function y(x)
-	if x:FindFirstChild("FloatForce") then
-		return
+local _SkiderDefaultTweenSpeed = 150
+local x = game:GetService("RunService")
+local k = { LastTP = 0, LastCF = nil, ActiveConnection = nil, LastCall = 0, LastRetarget = 0 }
+
+local function y(root)
+	local character = t.Character
+	if not character or not root then return end
+	local oldForce = root:FindFirstChild("FloatForce")
+	if oldForce then pcall(function() oldForce:Destroy() end) end
+	local holder = character:FindFirstChild("Head") or root
+	if not holder:FindFirstChild("eltrul") then
+		local bv = Instance.new("BodyVelocity")
+		bv.Name = "eltrul"
+		bv.MaxForce = Vector3.new(0, math.huge, 0)
+		bv.Velocity = Vector3.zero
+		bv.P = 10000
+		bv.Parent = holder
 	end
-	local k = Instance.new("BodyVelocity")
-	k.Name = "FloatForce"
-	k.Velocity = Vector3.new(0.0, 0.0, 0.0)
-	k.MaxForce = Vector3.new(100000, 100000, 100000)
-	k.P = 10000
-	k.Parent = x
 end
-local x, k, P, e, Y =
-	game:GetService("RunService"), { LastTP = 0, LastCF = nil, ActiveConnection = nil, LastCall = 0 }, 18, 120, 40
-local function H()
-	local B = getgenv().CharSpeed
-	if not B then
-		B = { cap = 1000, nextRaise = 0 }
-		getgenv().CharSpeed = B
+
+local function B(root, targetCFrame, speed, arrivalEpsilon)
+	if not root or typeof(targetCFrame) ~= "CFrame" then return nil end
+	local character = t.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not character or root.Parent ~= character or not humanoid or humanoid.Health <= 0 or root.Anchored then
+		return nil
 	end
-	return B
-end
-local function B(Z, C, J, F)
-	if not Z or typeof(C) ~= "CFrame" then
-		return
+
+	k.LastCall = tick()
+	speed = math.max(tonumber(speed) or tonumber(Settings["Speed Tween "]) or _SkiderDefaultTweenSpeed, 1)
+	arrivalEpsilon = tonumber(arrivalEpsilon) or 2.5
+	local distance = (targetCFrame.Position - root.Position).Magnitude
+
+	_SkiderMovementNoclip = true
+	_SkiderDisableCharacterCollision(character)
+	y(root)
+	I()
+
+	if distance <= arrivalEpsilon then
+		TweenManager.CancelTweenOnly(true)
+		root.CFrame = targetCFrame
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
+		return nil
 	end
-	local q = t.Character
-	local c = q and (q:FindFirstChildOfClass("Humanoid"))
-	if not q or Z.Parent ~= q or not c or c.Health <= 0 then
-		return
-	end
-	if tick() - k.LastTP < 1 and C == k.LastCF then
-		return
-	end
-	TweenManager.CancelTweenOnly()
-	if k.ActiveConnection and coroutine.status(k.ActiveConnection) == "suspended" then
-		pcall(coroutine.close, k.ActiveConnection)
-	end
-	J = math.max(tonumber(J) or 350, 1)
-	F = tonumber(F) or 2.5
-	k.LastTP = tick()
-	k.LastCF = C
-	local c, D = false
-	local r = {}
-	local function n()
-		if k.ActiveConnection == D then
-			k.ActiveConnection = nil
-		end
-		if TweenManager.currentTween == r then
-			TweenManager.currentTween = nil
-			TweenManager.currentPart = nil
-			TweenManager.currentGoal = nil
-			TweenManager.TweenRunning = false
-		end
-		if getgenv().Tween == r then
-			getgenv().Tween = nil
-		end
-	end
-	r.Pause = function(u)
-		c = true
-		if D and coroutine.status(D) == "suspended" then
-			pcall(coroutine.close, D)
-		end
-	end
-	r.Cancel = function(u)
-		u:Pause()
-		n()
-	end
-	r.Destroy = function(u)
-		u:Cancel()
-	end
-	D = coroutine.create(function()
-		local u, W = Z.Position, C.Position
-		local O, z, U, h, p, w = (W - u).Magnitude, 1 / 0, (tick()), true
-		while not c do
-			local M = t.Character
-			local j = M and (M:FindFirstChildOfClass("Humanoid"))
-			if M ~= q or Z.Parent ~= M or not j or j.Health <= 0 or Z.Anchored or O <= F then
-				break
-			end
-			local q, v0, T0 = x.Heartbeat:Wait(), H(), Z.Position
-			M = (W - T0).Magnitude
-			if M < z - 5 then
-				z, U = M, (tick())
-			else
-				h = if tick() - U > 2.5 then false else h
-			end
-			if h and p and w and M > w + Y then
-				v0.cap = math.max(v0.cap * 0.7, e)
-				v0.nextRaise = tick() + 3
-				u = T0
-			else
-				u = if h and p and (T0 - p).Magnitude > Y then T0 else u
-			end
-			j = W - u
-			local e, Y = j.Magnitude, math.min(math.min(J, v0.cap) * q, P)
-			if e > Y and tick() >= v0.nextRaise then
-				v0.cap = math.min(v0.cap * 1.08, J)
-				v0.nextRaise = tick() + 1.5
-			end
-			u = if e <= Y or e <= 0.05 then W else u + j / e * Y
-			O = (W - u).Magnitude
-			I()
-			getgenv().noclip = true
-			Z.CFrame = CFrame.new(u)
-			Z.AssemblyLinearVelocity = Vector3.new(0.0, 0.0, 0.0)
-			Z.AssemblyAngularVelocity = Vector3.new(0.0, 0.0, 0.0)
-			p, w = u, M
-		end
-		if not c and Z.Parent == t.Character and (W - Z.Position).Magnitude <= F then
-			Z.CFrame = C
-			Z.AssemblyLinearVelocity = Vector3.new(0.0, 0.0, 0.0)
-			Z.AssemblyAngularVelocity = Vector3.new(0.0, 0.0, 0.0)
-		end
-		n()
-	end)
-	k.ActiveConnection = D
-	TweenManager.currentTween = r
-	TweenManager.currentPart = Z
-	TweenManager.currentGoal = C
-	TweenManager.TweenRunning = true
-	getgenv().Tween = r
-	if not coroutine.resume(D) then
-		r:Cancel()
-		return
-	end
-	return r
+
+	root.AssemblyLinearVelocity = Vector3.zero
+	root.AssemblyAngularVelocity = Vector3.zero
+	local duration = distance / speed
+	local info = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+	return TweenManager.PlayTween(root, info, { CFrame = targetCFrame }, {
+		TargetEpsilon = math.max(5, arrivalEpsilon * 2),
+		RetargetCooldown = 0.10,
+		Speed = speed,
+	})
 end
 
 function toTarget(P, e)
