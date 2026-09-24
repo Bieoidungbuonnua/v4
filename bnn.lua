@@ -4,103 +4,41 @@ end
 
 Settings = {}
 HttpService = game:GetService("HttpService")
-local PlayersService = game:GetService("Players")
-local ReplicatedStorageService = game:GetService("ReplicatedStorage")
-
--- Startup guard: wait for the player before touching PlayerGui/config filenames.
-repeat
-	task.wait(0.05)
-until game:IsLoaded() and PlayersService.LocalPlayer
-
-local _startupPlayer = PlayersService.LocalPlayer
-FolderName = "Skider Hub"
+FolderName = "Banana Cat Hub"
 SaveFileNameGame = "-BloxFruitBNNC.json"
-SaveFileName = _startupPlayer.Name .. SaveFileNameGame
-
-local function _ensureSettingsFolder()
-	if type(isfolder) == "function" and type(makefolder) == "function" then
-		local ok, exists = pcall(isfolder, FolderName)
-		if ok and not exists then
-			pcall(makefolder, FolderName)
-		end
-	end
-end
-
+SaveFileName = game.Players.LocalPlayer.Name .. SaveFileNameGame
 function SaveSettings(b, t, A)
 	if A ~= nil then
-		Settings[b] = type(Settings[b]) == "table" and Settings[b] or {}
+		Settings[b] = Settings[b] or {}
 		Settings[b][t] = A
 	elseif b ~= nil then
 		Settings[b] = t
 	end
-
-	if type(writefile) ~= "function" then
-		return false
+	if not isfolder(FolderName) then
+		makefolder(FolderName)
 	end
-
-	_ensureSettingsFolder()
-	local ok = pcall(function()
-		writefile(FolderName .. "/" .. SaveFileName, HttpService:JSONEncode(Settings))
-	end)
-	return ok
+	writefile(FolderName .. "/" .. SaveFileName, HttpService:JSONEncode(Settings))
 end
-
-function ReadSetting()
-	if type(readfile) ~= "function" then
-		return {}
-	end
-
-	_ensureSettingsFolder()
-	local ok, data = pcall(function()
-		local raw = readfile(FolderName .. "/" .. SaveFileName)
-		return HttpService:JSONDecode(raw)
-	end)
-
-	if ok and type(data) == "table" then
-		return data
-	end
-
-	-- Old code recursively called ReadSetting() forever if read/write failed.
-	-- Fall back to a clean table and try to recreate the file once instead.
-	Settings = {}
+if getgenv().Config then
+	Settings = getgenv().Config
 	SaveSettings()
-	return Settings
 end
-
-Settings = ReadSetting()
-
--- Apply external config after the saved file, compatible with kaiv4's
--- AccountConfigs / per-user Config / flat Config formats.
-do
-	local username = _startupPlayer.Name
-	local external = nil
-	if type(getgenv().AccountConfigs) == "table" and type(getgenv().AccountConfigs[username]) == "table" then
-		external = getgenv().AccountConfigs[username]
-	elseif type(getgenv().Config) == "table" then
-		if type(getgenv().Config[username]) == "table" then
-			external = getgenv().Config[username]
-		else
-			external = getgenv().Config
+function ReadSetting()
+	local b, t = pcall(function()
+		if not isfolder(FolderName) then
+			makefolder(FolderName)
 		end
-	end
-	if type(external) == "table" then
-		for key, value in pairs(external) do
-			Settings[key] = value
-		end
+		return HttpService:JSONDecode(readfile(FolderName .. "/" .. SaveFileName))
+	end)
+	if b then
+		return t
+	else
 		SaveSettings()
+		return ReadSetting()
 	end
 end
-
+Settings = ReadSetting()
 getgenv().Settings = Settings
-
-function GetSettingDefault(key, defaultValue)
-	local value = Settings[key]
-	if value == nil then
-		return defaultValue
-	end
-	return value
-end
-
 function PrepareMultiSelectList(b, t, A)
 	local a = {}
 	for s in pairs(b) do
@@ -130,128 +68,105 @@ function EnsureAllTrueDefaults(b, t)
 		end
 	end
 end
-
--- Wait for the important game objects, but do not block forever on transient UI.
 repeat
-	task.wait(0.05)
-until game:FindFirstChild("CoreGui") and _startupPlayer:FindFirstChild("PlayerGui")
-
-local _playerGui = _startupPlayer.PlayerGui
-local _loadingStarted = tick()
-while _playerGui:FindFirstChild("LoadingScreen") and tick() - _loadingStarted < 30 do
-	task.wait(0.1)
+	wait()
+until game:FindFirstChild("CoreGui")
+repeat
+	wait()
+until not game:GetService("Players").LocalPlayer.PlayerGui:FindFirstChild("LoadingScreen")
+repeat
+	wait()
+until game:IsLoaded() and (game.Players.LocalPlayer:FindFirstChild("DataLoaded"))
+function FireButton(b)
+	if not b then return end
+	pcall(function()
+		b.Selectable = true
+		game:GetService("GuiService").SelectedObject = b
+		local vim = game:GetService("VirtualInputManager")
+		vim:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+		vim:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+	end)
+	task.defer(function()
+		pcall(function() game:GetService("GuiService").SelectedObject = nil end)
+	end)
 end
-if not _startupPlayer:FindFirstChild("DataLoaded") then
-	_startupPlayer:WaitForChild("DataLoaded", 30)
+local function NormalizeTeamName(value)
+	value = tostring(value or "Marine")
+	if value == "Pirate" or value == "Pirates" then
+		return "Pirates"
+	end
+	return "Marines"
 end
 
--- Auto Join Team copied from the reliable kaiv4 flow and adapted to BNN settings.
--- It uses SetTeam first, then GUI/UIController fallbacks, and never blocks loading forever.
-local function autoJoinTeam(forcedTeam)
-	local targetTeam = forcedTeam or Settings["Select Team"] or "Marines"
+local function SetTeamSafe(value, timeoutSeconds)
+	local Players = game:GetService("Players")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local lp = Players.LocalPlayer or Players.PlayerAdded:Wait()
+	local targetTeam = NormalizeTeamName(value)
+	timeoutSeconds = tonumber(timeoutSeconds) or 12
 
-	if forcedTeam == nil then
-		pcall(function()
-			local lp = PlayersService.LocalPlayer
-			local u = lp and lp.Name
-			if type(getgenv().AccountConfigs) == "table"
-				and u
-				and type(getgenv().AccountConfigs[u]) == "table"
-				and getgenv().AccountConfigs[u]["Select Team"]
-			then
-				targetTeam = getgenv().AccountConfigs[u]["Select Team"]
-			elseif type(getgenv().Config) == "table" then
-				if u and type(getgenv().Config[u]) == "table" and getgenv().Config[u]["Select Team"] then
-					targetTeam = getgenv().Config[u]["Select Team"]
-				elseif getgenv().Config["Select Team"] then
-					targetTeam = getgenv().Config["Select Team"]
-				elseif getgenv().Config["Team"] then
-					targetTeam = getgenv().Config["Team"]
-				end
-			end
-		end)
-	end
-
-	if targetTeam == "Marine" then targetTeam = "Marines" end
-	if targetTeam == "Pirate" then targetTeam = "Pirates" end
-	if targetTeam ~= "Marines" and targetTeam ~= "Pirates" then
-		targetTeam = "Marines"
-	end
-
-	local lp = PlayersService.LocalPlayer or PlayersService.PlayerAdded:Wait()
-	if lp and lp.Team and lp.Team.Name == targetTeam then
+	if lp.Team and lp.Team.Name == targetTeam then
 		return true
 	end
 
-	local startTime = tick()
+	local started = tick()
 	repeat
-		task.wait(0.25)
+		-- Primary path: current Blox Fruits remote. This avoids waiting forever for ChooseTeam GUI.
 		pcall(function()
-			ReplicatedStorageService.Remotes.CommF_:InvokeServer("SetTeam", targetTeam)
+			ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", targetTeam)
 		end)
-		pcall(function()
-			local pGui = lp:FindFirstChild("PlayerGui")
-			if pGui then
-				local chooseTeam = pGui:FindFirstChild("ChooseTeam", true)
-				if chooseTeam and chooseTeam.Visible then
-					local teamPart = chooseTeam:FindFirstChild(targetTeam, true)
-					if teamPart then
-						local btn = teamPart:FindFirstChildWhichIsA("TextButton", true)
-							or teamPart:FindFirstChildWhichIsA("ImageButton", true)
-						if btn and getconnections then
-							for _, conn in pairs(getconnections(btn.MouseButton1Click or btn.Activated)) do
-								if conn and conn.Function then
-									conn.Function()
-								end
-							end
-						end
-					end
-				end
 
-				local uiController = pGui:FindFirstChild("UIController", true)
-				if uiController and getgc and getconstants and getfenv then
-					for _, v in pairs(getgc(true)) do
-						if type(v) == "function" and getfenv(v).script == uiController then
-							local c = getconstants(v)
-							if (c[1] == "Pirates" or c[1] == "Marines") and #c == 1 and c[1] == targetTeam then
-								v(targetTeam)
-							end
-						end
-					end
-				end
+		-- GUI fallback for executors/versions where SetTeam does not immediately take effect.
+		pcall(function()
+			local pg = lp:FindFirstChild("PlayerGui")
+			if not pg then return end
+			local mainGui = pg:FindFirstChild("Main (minimal)") or pg:FindFirstChild("Main")
+			local chooseTeam = mainGui and mainGui:FindFirstChild("ChooseTeam", true)
+			if not chooseTeam or not chooseTeam.Visible then return end
+
+			local teamFrame = chooseTeam:FindFirstChild(targetTeam, true)
+			if not teamFrame then return end
+			local btn = teamFrame:FindFirstChildWhichIsA("TextButton", true)
+				or teamFrame:FindFirstChildWhichIsA("ImageButton", true)
+			if btn then
+				FireButton(btn)
 			end
 		end)
-	until (lp and lp.Team and lp.Team.Name == targetTeam) or (tick() - startTime > 12)
 
-	return lp and lp.Team and lp.Team.Name == targetTeam
+		if lp.Team and lp.Team.Name == targetTeam then
+			return true
+		end
+		task.wait(0.25)
+	until tick() - started >= timeoutSeconds
+
+	return lp.Team and lp.Team.Name == targetTeam or false
 end
+getgenv().SetTeamSafe = SetTeamSafe
 
--- Team selection is best-effort; even if Roblox UI/remotes change, continue loading the hub.
-pcall(autoJoinTeam)
+SetTeamSafe(Settings["Select Team"] or "Marine", 12)
 
 game:GetService("GuiService").SelectedObject = nil
-
--- Resolve request function safely. The old expression could call a nil identifyexecutor()
--- or index nil http.request, aborting the whole script before features were created.
-local _executorName = ""
-if type(identifyexecutor) == "function" then
-	pcall(function()
-		_executorName = identifyexecutor() or ""
-	end)
-end
-getgenv().ExploitReq = (syn and syn.request)
-	or (_executorName == "Fluxus" and request)
+repeat
+	wait()
+until game:IsLoaded() and game.Players.LocalPlayer
+repeat
+	wait()
+until game:FindFirstChild("CoreGui")
+getgenv().ExploitReq = syn and syn.request
+	or identifyexecutor() == "Fluxus" and request
 	or http_request
-	or (http and http.request)
+	or http.request
 	or requests
-	or request
-
+if getgenv().LoadScript then
+	return print("Double UI")
+end
 getgenv().CheckPlaceId = game.PlaceId == 100117331123089 and 100117331123089 or 7449423635
 getgenv().CheckPlaceId2 = game.PlaceId == 4442272183 and 4442272183 or 79091703265657
 getgenv().CheckPlaceId3 = game.PlaceId == 2753915549 and 2753915549 or 85211729168715
+getgenv().LoadScript = true
 local t = game.Players.LocalPlayer
-getgenv().getupvalue = (debug and debug.getupvalue) or getupvalue
-getgenv().getupvalues = (debug and debug.getupvalues) or getupvalues
+getgenv().getupvalue = debug.getupvalue
+getgenv().getupvalues = debug.getupvalues
 wOrigin = game.workspace._WorldOrigin
 CommF = game.ReplicatedStorage.Remotes.CommF_
 vu = game:GetService("VirtualUser")
@@ -260,557 +175,9 @@ game:GetService("Players").LocalPlayer.Idled:connect(function()
 	wait(1)
 	vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
 end)
--- ============================================================================
--- SKIDER HUB - HYBRID LEGACY RUNTIME + FLUENT UI (zzzz kept + SetTeam/Tween fixes)
--- zzzz.lua is still EXECUTED because the original BNN expects its runtime/API
--- environment to exist. Its visual UI is not used; Fluent is the visible UI.
--- ============================================================================
-local _LegacyZZZZ
-local _legacyOk, _legacyErr = pcall(function()
-    _LegacyZZZZ = loadstring(game:HttpGet(
-        "https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua"
-    ))()
-end)
-if not _legacyOk or type(_LegacyZZZZ) ~= "table" then
-    getgenv().LoadScript = nil
-    error("[Skider Hub] Failed to load required zzzz.lua runtime: " .. tostring(_legacyErr))
-end
--- Keep an explicit reference so executor GC cannot discard the legacy runtime table.
-getgenv().__SKIDER_ZZZZ_RUNTIME = _LegacyZZZZ
-getgenv().__SKIDER_ZZZZ_OPTIONS = _LegacyZZZZ.Options
-
--- The original BNN calls CreateMain immediately after loading zzzz.lua. Keep that
--- initialization path too, but hide its visual ScreenGui so Fluent is the only UI shown.
-local _legacyContainers = { game:GetService("CoreGui") }
-pcall(function()
-    if gethui then
-        local h = gethui()
-        if h and h ~= _legacyContainers[1] then _legacyContainers[#_legacyContainers + 1] = h end
-    end
-end)
-local _legacyBefore = setmetatable({}, { __mode = "k" })
-for _, c in ipairs(_legacyContainers) do
-    for _, child in ipairs(c:GetChildren()) do _legacyBefore[child] = true end
-end
-local _LegacyMain
-local _legacyMainOk, _legacyMainErr = pcall(function()
-    _LegacyMain = _LegacyZZZZ.CreateMain({ Title = "Skider Hub", Desc = " - Blox Fruit" })
-end)
-if not _legacyMainOk then
-    getgenv().LoadScript = nil
-    error("[Skider Hub] zzzz.lua CreateMain initialization failed: " .. tostring(_legacyMainErr))
-end
-getgenv().__SKIDER_ZZZZ_MAIN = _LegacyMain
-local _legacyOwned = setmetatable({}, { __mode = "k" })
-for _, c in ipairs(_legacyContainers) do
-    for _, child in ipairs(c:GetChildren()) do
-        if not _legacyBefore[child] then _legacyOwned[child] = true end
-    end
-end
-
-local function _hideLegacyZZZZVisuals()
-    for _, c in ipairs(_legacyContainers) do
-        for _, child in ipairs(c:GetChildren()) do
-            local low = string.lower(child.Name or "")
-            if _legacyOwned[child]
-                or string.find(low, "nousigi", 1, true)
-                or string.find(low, "banana", 1, true)
-            then
-                if child:IsA("ScreenGui") then
-                    pcall(function() child.Enabled = false end)
-                end
-            end
-        end
-    end
-end
-_hideLegacyZZZZVisuals()
-task.delay(0.5, _hideLegacyZZZZVisuals)
-task.delay(2, _hideLegacyZZZZVisuals)
-
-local Fluent
-local _fluentOk, _fluentErr = pcall(function()
-    Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-end)
-if not _fluentOk or type(Fluent) ~= "table" then
-    getgenv().LoadScript = nil
-    error("[Skider Hub] Failed to load Fluent UI: " .. tostring(_fluentErr))
-end
-
-local SKIDER_HUB_LOGO = "rbxassetid://90412962524051"
-local _FluentWindow = Fluent:CreateWindow({
-    Title = "Skider Hub",
-    SubTitle = "Blox Fruit",
-    TabWidth = 170,
-    Size = UDim2.fromOffset(720, 520),
-    Acrylic = false, -- lighter than acrylic; better for multi-account use
-    Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.LeftControl,
-})
-
--- Asset logo is used by a lightweight floating Fluent toggle button.
-do
-    local parent = (gethui and gethui()) or game:GetService("CoreGui")
-    local old = parent:FindFirstChild("SkiderFluentToggle")
-    if old then pcall(function() old:Destroy() end) end
-
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "SkiderFluentToggle"
-    gui.ResetOnSpawn = false
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    gui.Parent = parent
-
-    local btn = Instance.new("ImageButton")
-    btn.Name = "SkiderLogoButton"
-    btn.AnchorPoint = Vector2.new(0, 1)
-    btn.Position = UDim2.new(0, 14, 1, -14)
-    btn.Size = UDim2.fromOffset(54, 54)
-    btn.BackgroundColor3 = Color3.fromRGB(12, 48, 30)
-    btn.BackgroundTransparency = 0.08
-    btn.BorderSizePixel = 0
-    btn.Image = SKIDER_HUB_LOGO
-    btn.ScaleType = Enum.ScaleType.Fit
-    btn.AutoButtonColor = true
-    btn.ZIndex = 100
-    btn.Parent = gui
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12)
-    corner.Parent = btn
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(30, 130, 75)
-    stroke.Thickness = 1
-    stroke.Transparency = 0.25
-    stroke.Parent = btn
-
-    btn.Activated:Connect(function()
-        pcall(function() _FluentWindow:Minimize() end)
-    end)
-end
-
-local _AdapterOptions = type(_LegacyZZZZ.Options) == "table" and _LegacyZZZZ.Options or {}
-local _adapterId = 0
-local function _nextId(prefix)
-    _adapterId += 1
-    prefix = tostring(prefix or "Option"):gsub("[^%w_]", "_")
-    return "Skider_" .. prefix .. "_" .. tostring(_adapterId)
-end
-
-local function _copyTable(v)
-    if type(v) ~= "table" then return v end
-    local out = {}
-    for k, x in pairs(v) do
-        out[k] = type(x) == "table" and _copyTable(x) or x
-    end
-    return out
-end
-
-local function _listValues(list)
-    local values = {}
-    if type(list) ~= "table" then return values end
-    if #list > 0 then
-        for _, v in ipairs(list) do
-            if type(v) == "string" or type(v) == "number" then values[#values + 1] = tostring(v) end
-        end
-    else
-        for k in pairs(list) do values[#values + 1] = tostring(k) end
-        table.sort(values)
-    end
-    return values
-end
-
-local function _multiState(list, default)
-    local state = {}
-    local values = _listValues(list)
-    for _, name in ipairs(values) do state[name] = false end
-    if type(list) == "table" and #list == 0 then
-        for k, v in pairs(list) do state[tostring(k)] = v == true end
-    end
-    if type(default) == "table" then
-        if #default > 0 then
-            for _, name in ipairs(default) do state[tostring(name)] = true end
-        else
-            for k, v in pairs(default) do state[tostring(k)] = v == true end
-        end
-    end
-    return state
-end
-
-local function _callSet(control, value)
-    if not control then return end
-    pcall(function()
-        if type(control.SetValue) == "function" then control:SetValue(value) end
-    end)
-end
-
-local function _methodValue(a, b)
-    return b ~= nil and b or a
-end
-
-local function _pageIcon(name)
-    local n = tostring(name or ""):lower()
-    if n:find("shop", 1, true) then return "shopping-cart" end
-    if n:find("status", 1, true) then return "activity" end
-    if n:find("local", 1, true) then return "user" end
-    if n:find("setting", 1, true) then return "settings" end
-    if n:find("farm", 1, true) then return "sprout" end
-    if n:find("fruit", 1, true) then return "cherry" end
-    if n:find("raid", 1, true) or n:find("dungeon", 1, true) then return "swords" end
-    if n:find("sea", 1, true) then return "waves" end
-    if n:find("race", 1, true) then return "sparkles" end
-    if n:find("item", 1, true) then return "package" end
-    if n:find("volcano", 1, true) then return "flame" end
-    if n:find("esp", 1, true) then return "eye" end
-    if n:find("pvp", 1, true) then return "crosshair" end
-    if n:find("webhook", 1, true) then return "send" end
-    return "circle"
-end
-
-local A = { Options = _AdapterOptions }
-
-function A.CreateNoti(params)
-    params = type(params) == "table" and params or {}
-    Fluent:Notify({
-        Title = "Skider Hub",
-        Content = tostring(params.Desc or params.Content or ""),
-        Duration = tonumber(params.ShowTime or params.Duration) or 5,
-    })
-end
-
-function A.CreateMain(_)
-    local main = {}
-
-    function main.CreatePage(cfg)
-        cfg = type(cfg) == "table" and cfg or {}
-        local pageName = tostring(cfg.Page_Name or cfg.Page_Title or "Page")
-        local tab = _FluentWindow:AddTab({
-            Title = pageName,
-            Icon = _pageIcon(pageName),
-        })
-        local page = { _tab = tab, _name = pageName }
-
-        function page.CreateSection(sectionName)
-            sectionName = tostring(sectionName or "Section")
-            pcall(function() tab:AddSection(sectionName) end)
-            local section = { _tab = tab, _page = pageName, _section = sectionName }
-
-            local function register(title, typ, meta, wrapper)
-                title = tostring(title or typ or "Option")
-                meta = meta or {}
-                meta.type = typ
-                meta.Page_Name = pageName
-                meta.Section_Name = sectionName
-                meta.FunctionCreate = wrapper
-                _AdapterOptions[title] = meta
-                return wrapper
-            end
-
-            function section.CreateButton(cfg2, callback)
-                cfg2 = type(cfg2) == "table" and cfg2 or {}
-                local title = tostring(cfg2.Title or "Button")
-                local wrapper = {}
-                tab:AddButton({
-                    Title = title,
-                    Description = cfg2.Desc or cfg2.Description,
-                    Callback = function()
-                        if callback then task.spawn(callback) end
-                    end,
-                })
-                return register(title, "button", { value = title }, wrapper)
-            end
-
-            function section.CreateToggle(cfg2, callback)
-                cfg2 = type(cfg2) == "table" and cfg2 or {}
-                local title = tostring(cfg2.Title or "Toggle")
-                local meta = { value = cfg2.Default == true }
-                local control
-                local wrapper = {}
-                control = tab:AddToggle(_nextId(title), {
-                    Title = title,
-                    Description = cfg2.Desc or cfg2.Description,
-                    Default = meta.value,
-                    Callback = function(v)
-                        meta.value = v == true
-                        if callback then callback(meta.value) end
-                    end,
-                })
-                function wrapper.SetStage(a, b)
-                    local v = _methodValue(a, b) == true
-                    meta.value = v
-                    _callSet(control, v)
-                end
-                wrapper.SetValue = wrapper.SetStage
-                return register(title, "toggle", meta, wrapper)
-            end
-
-            function section.CreateSlider(cfg2, callback)
-                cfg2 = type(cfg2) == "table" and cfg2 or {}
-                local title = tostring(cfg2.Title or "Slider")
-                local minv = tonumber(cfg2.Min) or 0
-                local maxv = tonumber(cfg2.Max) or 100
-                local def = tonumber(cfg2.Default)
-                if def == nil then def = minv end
-                local meta = { min = minv, max = maxv, step = cfg2.Precise and 0.1 or 1, value = def }
-                local wrapper, control = {}, nil
-                control = tab:AddSlider(_nextId(title), {
-                    Title = title,
-                    Description = cfg2.Desc or cfg2.Description,
-                    Default = def,
-                    Min = minv,
-                    Max = maxv,
-                    Rounding = cfg2.Precise and 1 or 0,
-                    Callback = function(v)
-                        meta.value = v
-                        if callback then callback(v) end
-                    end,
-                })
-                function wrapper.SetValue(a, b)
-                    local v = tonumber(_methodValue(a, b)) or meta.value
-                    meta.value = v
-                    _callSet(control, v)
-                end
-                return register(title, "slider", meta, wrapper)
-            end
-
-            function section.CreateBox(cfg2, callback)
-                cfg2 = type(cfg2) == "table" and cfg2 or {}
-                local title = tostring(cfg2.Title or "Input")
-                local def = cfg2.Default == nil and "" or tostring(cfg2.Default)
-                local meta = { value = def }
-                local wrapper, control = {}, nil
-                control = tab:AddInput(_nextId(title), {
-                    Title = title,
-                    Description = cfg2.Desc or cfg2.Description,
-                    Default = def,
-                    Placeholder = cfg2.Placeholder or "",
-                    Numeric = cfg2.Number == true,
-                    Finished = false,
-                    Callback = function(v)
-                        meta.value = tostring(v or "")
-                        if callback then callback(cfg2.Number and (tonumber(v) or v) or v) end
-                    end,
-                })
-                function wrapper.SetValue(a, b)
-                    local v = tostring(_methodValue(a, b) or "")
-                    meta.value = v
-                    _callSet(control, v)
-                end
-                return register(title, "box", meta, wrapper)
-            end
-
-            function section.CreateLabel(cfg2)
-                cfg2 = type(cfg2) == "table" and cfg2 or {}
-                local title = tostring(cfg2.Title or "")
-                local current = title
-                local paragraph = tab:AddParagraph({ Title = title ~= "" and title or "Status", Content = "" })
-                local wrapper = {}
-                function wrapper.SetText(a, b)
-                    local v = tostring(_methodValue(a, b) or "")
-                    current = v
-                    pcall(function() paragraph:SetDesc(v) end)
-                end
-                function wrapper.GetText() return current end
-                return register(title ~= "" and title or _nextId("Label"), "textlabel", { text = current }, wrapper)
-            end
-
-            function section.CreateDropdown(cfg2, callback)
-                cfg2 = type(cfg2) == "table" and cfg2 or {}
-                local title = tostring(cfg2.Title or "Dropdown")
-
-                -- Old BNN "Slider dropdown": Fluent renders each sub-slider directly.
-                if cfg2.Slider == true and type(cfg2.List) == "table" then
-                    local meta = { list = _copyTable(cfg2.List), value = {} }
-                    local wrapper = { _controls = {} }
-                    local keys = {}
-                    for k in pairs(cfg2.List) do keys[#keys + 1] = k end
-                    table.sort(keys, function(a,b) return tostring(a) < tostring(b) end)
-                    for _, key in ipairs(keys) do
-                        local spec = cfg2.List[key]
-                        if type(spec) == "table" then
-                            local subTitle = tostring(spec.Title or key)
-                            local def = tonumber(spec.Default) or tonumber(spec.Min) or 0
-                            meta.value[key] = def
-                            local c
-                            c = tab:AddSlider(_nextId(title .. "_" .. tostring(key)), {
-                                Title = title .. " - " .. subTitle,
-                                Default = def,
-                                Min = tonumber(spec.Min) or 0,
-                                Max = tonumber(spec.Max) or 100,
-                                Rounding = spec.Precise and 1 or 0,
-                                Callback = function(v)
-                                    meta.value[key] = v
-                                    spec.Default = v
-                                    if callback then callback(spec, v) end
-                                end,
-                            })
-                            wrapper._controls[key] = c
-                        end
-                    end
-                    function wrapper.SetSubValue(a, b, c)
-                        local key, val
-                        if c ~= nil then key, val = b, c else key, val = a, b end
-                        if key == wrapper then return end
-                        if val == nil then return end
-                        meta.value[key] = val
-                        local control = wrapper._controls[key]
-                        _callSet(control, val)
-                    end
-                    function wrapper.SetValue(a, b)
-                        local tbl = _methodValue(a, b)
-                        if type(tbl) == "table" then
-                            for k, v in pairs(tbl) do wrapper:SetSubValue(k, v) end
-                        end
-                    end
-                    return register(title, "slider_dropdown", meta, wrapper)
-                end
-
-                local values = _listValues(cfg2.List)
-
-                -- Priority dropdown: Fluent multi-select, preserving selection order.
-                if cfg2.Priority == true then
-                    local order = {}
-                    if type(cfg2.Default) == "table" then
-                        for _, v in ipairs(cfg2.Default) do order[#order + 1] = tostring(v) end
-                    end
-                    local selected = {}
-                    for _, v in ipairs(order) do selected[v] = true end
-                    local meta = { list = _copyTable(values), value = _copyTable(order) }
-                    local wrapper, control = {}, nil
-                    control = tab:AddDropdown(_nextId(title), {
-                        Title = title,
-                        Description = cfg2.Desc or cfg2.Description,
-                        Values = values,
-                        Multi = true,
-                        Default = selected,
-                        Callback = function(v)
-                            v = type(v) == "table" and v or {}
-                            local present = {}
-                            for k, on in pairs(v) do if on then present[tostring(k)] = true end end
-                            local newOrder = {}
-                            for _, old in ipairs(order) do if present[old] then newOrder[#newOrder + 1] = old; present[old] = nil end end
-                            for _, option in ipairs(values) do if present[option] then newOrder[#newOrder + 1] = option; present[option] = nil end end
-                            order = newOrder
-                            meta.value = _copyTable(order)
-                            if callback then callback(_copyTable(order)) end
-                        end,
-                    })
-                    function wrapper.SetValue(a, b)
-                        local tbl = _methodValue(a, b)
-                        if type(tbl) ~= "table" then return end
-                        order = {}
-                        local map = {}
-                        if #tbl > 0 then
-                            for _, v in ipairs(tbl) do local x=tostring(v); order[#order+1]=x; map[x]=true end
-                        else
-                            for k, on in pairs(tbl) do if on then local x=tostring(k); order[#order+1]=x; map[x]=true end end
-                        end
-                        meta.value = _copyTable(order)
-                        _callSet(control, map)
-                    end
-                    function wrapper.GetNewList(a, b)
-                        local list = _methodValue(a, b)
-                        values = _listValues(list)
-                        meta.list = _copyTable(values)
-                        pcall(function() control:SetValues(values) end)
-                    end
-                    return register(title, "priority_dropdown", meta, wrapper)
-                end
-
-                -- Old Selected=true means multi-select and callback(key, bool).
-                if cfg2.Selected == true then
-                    local state = _multiState(cfg2.List, cfg2.Default)
-                    local meta = { list = _copyTable(values), value = _copyTable(state) }
-                    local wrapper, control = {}, nil
-                    control = tab:AddDropdown(_nextId(title), {
-                        Title = title,
-                        Description = cfg2.Desc or cfg2.Description,
-                        Values = values,
-                        Multi = true,
-                        Default = _copyTable(state),
-                        Callback = function(v)
-                            v = type(v) == "table" and v or {}
-                            local nextState = {}
-                            for _, option in ipairs(values) do nextState[option] = v[option] == true end
-                            for key, newValue in pairs(nextState) do
-                                if state[key] ~= newValue and callback then callback(key, newValue) end
-                            end
-                            state = nextState
-                            meta.value = _copyTable(state)
-                        end,
-                    })
-                    function wrapper.SetValue(a, b)
-                        local tbl = _methodValue(a, b)
-                        if type(tbl) ~= "table" then return end
-                        state = _multiState(values, tbl)
-                        meta.value = _copyTable(state)
-                        _callSet(control, _copyTable(state))
-                    end
-                    function wrapper.GetNewList(a, b)
-                        local list = _methodValue(a, b)
-                        values = _listValues(list)
-                        local newState = {}
-                        for _, option in ipairs(values) do newState[option] = state[option] == true end
-                        state = newState
-                        meta.list = _copyTable(values)
-                        meta.value = _copyTable(state)
-                        pcall(function() control:SetValues(values) end)
-                        _callSet(control, _copyTable(state))
-                    end
-                    return register(title, "multi_toggle", meta, wrapper)
-                end
-
-                -- Standard single dropdown.
-                local def = cfg2.Default
-                if def == nil and #values > 0 then def = values[1] end
-                local meta = { list = _copyTable(values), value = def }
-                local wrapper, control = {}, nil
-                control = tab:AddDropdown(_nextId(title), {
-                    Title = title,
-                    Description = cfg2.Desc or cfg2.Description,
-                    Values = values,
-                    Multi = false,
-                    Default = def,
-                    Callback = function(v)
-                        meta.value = v
-                        if callback then callback(v) end
-                    end,
-                })
-                function wrapper.SetValue(a, b)
-                    local v = _methodValue(a, b)
-                    meta.value = v
-                    _callSet(control, v)
-                end
-                function wrapper.GetNewList(a, b)
-                    local list = _methodValue(a, b)
-                    values = _listValues(list)
-                    meta.list = _copyTable(values)
-                    pcall(function() control:SetValues(values) end)
-                end
-                return register(title, "dropdown", meta, wrapper)
-            end
-
-            function section.CreateBind(cfg2, callback)
-                cfg2 = type(cfg2) == "table" and cfg2 or {}
-                local title = tostring(cfg2.Title or "Toggle GUI")
-                -- Fluent already owns LeftControl through MinimizeKey. Add a lightweight note only.
-                local wrapper = {}
-                pcall(function()
-                    tab:AddParagraph({ Title = title, Content = "Key: " .. tostring(cfg2.Key or Enum.KeyCode.LeftControl) })
-                end)
-                return register(title, "bind", { value = cfg2.Key }, wrapper)
-            end
-
-            return section
-        end
-
-        return page
-    end
-
-    return main
-end
-
-Main = A.CreateMain({ Title = "Skider Hub", Desc = " - Blox Fruit", Image = SKIDER_HUB_LOGO })
-getgenv().LoadScript = true
+local A =
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua"))()
+Main = A.CreateMain({ Title = "Blox Fruit", Desc = " - Blox Fruit" })
 PageShop = Main.CreatePage({ Page_Name = "Shop", Page_Title = "Shop" })
 getgenv().Options = A.Options
 SectionShopMisc = PageShop.CreateSection("Misc Shop")
@@ -824,19 +191,13 @@ end
 getgenv().tablefruitausea3 = {}
 whitelistedfruit = {}
 TableDevilFruit = {}
-local _fruitOk, _fruitList = pcall(function()
-	return game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("GetFruits", false)
-end)
-if _fruitOk and type(_fruitList) == "table" then
-	for _, fruitData in pairs(_fruitList) do
-		if type(fruitData) == "table" and fruitData.Name then
-			if tonumber(fruitData.Price) and fruitData.Price >= 1000000 then
-				table.insert(whitelistedfruit, string.split(fruitData.Name, "-")[1] .. " Fruit")
-				getgenv().tablefruitausea3[fruitData.Name] = fruitData.Price
-			end
-			TableDevilFruit[fruitData.Name] = false
-		end
+local a, s, X = next, game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("GetFruits", false)
+for g, g in a, s, X do
+	if g.Price >= 1000000 then
+		table.insert(whitelistedfruit, string.split(g.Name, "-")[1] .. " Fruit")
+		getgenv().tablefruitausea3[g.Name] = g.Price
 	end
+	TableDevilFruit[g.Name] = false
 end
 getgenv().tablefruitausea3["Dragon (East)-Dragon (East)"] = 15000000
 getgenv().tablefruitausea3["Dragon (West)-Dragon (West)"] = 15000000
@@ -2186,17 +1547,17 @@ SectionServer.CreateButton({ Title = "Copy JobId" }, function()
 end)
 local G, K = {}, {}
 if not pcall(function()
-	readfile("Skider Hub/Jobid.json")
+	readfile("Banana Cat Hub/Jobid.json")
 end) then
-	writefile("Skider Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(G))
+	writefile("Banana Cat Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(G))
 end
 if not pcall(function()
-	readfile("Skider Hub/NotSameServers.json")
+	readfile("Banana Cat Hub/NotSameServers.json")
 end) then
-	writefile("Skider Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(G))
+	writefile("Banana Cat Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(G))
 end
 function CheckJobIdServer()
-	local R, m, E, l = {}, next, game:GetService("HttpService"):JSONDecode(readfile("Skider Hub/Jobid.json"))
+	local R, m, E, l = {}, next, game:GetService("HttpService"):JSONDecode(readfile("Banana Cat Hub/Jobid.json"))
 	for Q, S in m, E, l do
 		table.insert(R, Q)
 	end
@@ -2208,7 +1569,7 @@ function HopServer(R)
 			for l, Q in pairs((game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer(E))) do
 				if l ~= game.JobId and not table.find(CheckJobIdServer(), l) then
 					game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer("teleport", l)
-					writefile("Skider Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(K))
+					writefile("Banana Cat Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(K))
 					getgenv().limit_type("clearAll")
 				end
 			end
@@ -2216,11 +1577,11 @@ function HopServer(R)
 	end
 	local K = R or (Settings["Time Hop Server"] or 5)
 	require(game:GetService("ReplicatedStorage").Notification)
-		.new("<Color=Red>Skider Hub : Wait " .. K .. "s [Hop Server]<Color=/>")
+		.new("<Color=Red>Banana Cat Hub : Wait " .. K .. "s [Hop Server]<Color=/>")
 		:Display()
 	while wait(K) do
 		require(game:GetService("ReplicatedStorage").Notification)
-			.new("<Color=Red>Skider Hub : Hop Server<Color=/>")
+			.new("<Color=Red>Banana Cat Hub : Hop Server<Color=/>")
 			:Display()
 		m()
 	end
@@ -2235,11 +1596,11 @@ function HopLessAll()
 	local K, R, m, E = game.PlaceId, {}, "", os.date("!*t").hour
 	if
 		not pcall(function()
-			R = game:GetService("HttpService"):JSONDecode(readfile("Skider Hub/NotSameServers.json"))
+			R = game:GetService("HttpService"):JSONDecode(readfile("Banana Cat Hub/NotSameServers.json"))
 		end)
 	then
 		table.insert(R, E)
-		writefile("Skider Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
+		writefile("Banana Cat Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
 	end
 	function HopServerLess()
 		local l, Q =
@@ -2270,7 +1631,7 @@ function HopLessAll()
 						m = if Q == tostring(l) then false else m
 					elseif tonumber(E) ~= tonumber(l) then
 						pcall(function()
-							delfile("Skider Hub/NotSameServers.json")
+							delfile("Banana Cat Hub/NotSameServers.json")
 							R = {}
 							table.insert(R, E)
 						end)
@@ -2281,7 +1642,7 @@ function HopLessAll()
 					table.insert(R, Q)
 					wait()
 					pcall(function()
-						writefile("Skider Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
+						writefile("Banana Cat Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
 						wait()
 						game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer("teleport", Q)
 						getgenv().limit_type("clearAll")
@@ -3082,9 +2443,7 @@ SectionLocalPlayerMain.CreateDropdown(
 	{ Title = "Change Team", List = { "Pirates", "Marines" }, Search = true, Selected = false, Default = nil },
 	function(K)
 		if K then
-			task.spawn(function()
-				autoJoinTeam(K)
-			end)
+			SetTeamSafe(K, 6)
 		end
 	end
 )
@@ -3264,63 +2623,27 @@ function DetectPrehistoricIsland()
 		end
 	end
 end
--- Stable noclip state. Preserve the original collision state of each character part.
-local _SkiderCollisionOriginal = setmetatable({}, { __mode = "k" })
-local _SkiderManualNoclip = false
-local _SkiderMovementNoclip = false
-local _SkiderNoclipWasActive = false
-
-local function _SkiderDisableCharacterCollision(character)
-	if not character then return end
-	for _, part in ipairs(character:GetDescendants()) do
-		if part:IsA("BasePart") then
-			if _SkiderCollisionOriginal[part] == nil then
-				_SkiderCollisionOriginal[part] = part.CanCollide
+function SetNoClip(l)
+	getgenv().noclip = l
+	local Q = t.Character
+	if not Q then
+		return
+	end
+	local S, L = Q:FindFirstChild("HumanoidRootPart"), Q:FindFirstChildOfClass("Humanoid")
+	if not l then
+		for l, l in ipairs(Q:GetDescendants()) do
+			if l:IsA("BasePart") then
+				l.CanCollide = true
 			end
-			if part.CanCollide then part.CanCollide = false end
+		end
+		if L then
+			L.PlatformStand = false
+		end
+		if S and (S:FindFirstChild("FloatForce")) and not ToggleNoclip() then
+			S.FloatForce:Destroy()
 		end
 	end
 end
-
-local function _SkiderRestoreCharacterCollision(character)
-	if not character then return end
-	for part, oldValue in pairs(_SkiderCollisionOriginal) do
-		if part and part.Parent and part:IsDescendantOf(character) then
-			pcall(function() part.CanCollide = oldValue end)
-		end
-		_SkiderCollisionOriginal[part] = nil
-	end
-end
-
-local function _SkiderRemoveMovementForces(character)
-	if not character then return end
-	for _, obj in ipairs(character:GetDescendants()) do
-		if obj:IsA("BodyVelocity") and (obj.Name == "eltrul" or obj.Name == "FloatForce") then
-			pcall(function() obj:Destroy() end)
-		end
-	end
-end
-
-function SetNoClip(enabled)
-	_SkiderManualNoclip = enabled == true
-	getgenv().noclip = enabled == true
-	local character = t.Character
-	if not character then return end
-	if enabled then
-		_SkiderDisableCharacterCollision(character)
-	else
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if humanoid then humanoid.PlatformStand = false end
-		local featureNoclip = false
-		pcall(function() featureNoclip = ToggleNoclip() == true end)
-		if not _SkiderMovementNoclip and not (Settings and Settings.Noclip) and not featureNoclip then
-			_SkiderRemoveMovementForces(character)
-			_SkiderRestoreCharacterCollision(character)
-			_SkiderNoclipWasActive = false
-		end
-	end
-end
-
 function ToggleNoclip()
 	if
 		Settings["Start Farm"]
@@ -3418,56 +2741,16 @@ function ToggleNoclip()
 		return true
 	end
 end
-local _SkiderTweenService = game:GetService("TweenService")
-local _SkiderRunService = game:GetService("RunService")
-
-local function _SkiderShouldNoclip()
-	local featureNoclip = false
-	pcall(function() featureNoclip = ToggleNoclip() == true end)
-	return _SkiderManualNoclip
-		or _SkiderMovementNoclip
-		or getgenv().noclip == true
-		or (Settings and Settings.Noclip == true)
-		or featureNoclip
-end
-
-if getgenv().__SKIDER_BNN_NOCLIP_CONNECTION then
-	pcall(function() getgenv().__SKIDER_BNN_NOCLIP_CONNECTION:Disconnect() end)
-end
-getgenv().__SKIDER_BNN_NOCLIP_CONNECTION = _SkiderRunService.Stepped:Connect(function()
-	local character = t.Character
-	if not character then return end
-	local active = _SkiderShouldNoclip()
-	if active then
-		_SkiderDisableCharacterCollision(character)
-		_SkiderNoclipWasActive = true
-	elseif _SkiderNoclipWasActive then
-		_SkiderRestoreCharacterCollision(character)
-		_SkiderNoclipWasActive = false
-	end
-end)
-
-if getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION then
-	pcall(function() getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION:Disconnect() end)
-end
-getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION = t.CharacterAdded:Connect(function(character)
-	_SkiderMovementNoclip = false
-	_SkiderNoclipWasActive = false
-	table.clear(_SkiderCollisionOriginal)
-	task.defer(function()
-		if character and _SkiderShouldNoclip() then
-			_SkiderDisableCharacterCollision(character)
-			_SkiderNoclipWasActive = true
-		end
-	end)
-end)
-
+local l = game:GetService("TweenService")
 getgenv().TweenManager = getgenv().TweenManager or {}
 TweenManager = getgenv().TweenManager
 
+-- Stable TweenService manager: avoids cancel/recreate spam when toTarget is called every frame.
 pcall(function()
 	local oldTween = TweenManager.currentTween or getgenv().Tween
-	if oldTween and oldTween.Cancel then oldTween:Cancel() end
+	if oldTween and oldTween.Cancel then
+		oldTween:Cancel()
+	end
 end)
 
 TweenManager.currentTween = nil
@@ -3477,7 +2760,7 @@ TweenManager.currentSpeed = nil
 TweenManager.TweenRunning = false
 TweenManager.lastRetarget = 0
 
-function TweenManager.CancelTweenOnly(keepNoclip)
+function TweenManager.CancelTweenOnly()
 	local current = TweenManager.currentTween
 	local globalTween = getgenv().Tween
 	if current then
@@ -3494,31 +2777,35 @@ function TweenManager.CancelTweenOnly(keepNoclip)
 	TweenManager.currentSpeed = nil
 	TweenManager.TweenRunning = false
 	getgenv().Tween = nil
-	if not keepNoclip then _SkiderMovementNoclip = false end
 end
 
 function TweenManager.PlayTween(part, tweenInfo, properties, options)
-	if not part or not part.Parent or not tweenInfo or type(properties) ~= "table" then return nil end
+	if not part or not part.Parent or not tweenInfo or type(properties) ~= "table" then
+		return nil
+	end
 	local goal = properties.CFrame
-	if typeof(goal) ~= "CFrame" then return nil end
+	if typeof(goal) ~= "CFrame" then
+		return nil
+	end
+
 	options = options or {}
-	local epsilon = tonumber(options.TargetEpsilon) or 5
+	local epsilon = tonumber(options.TargetEpsilon) or 6
 	local cooldown = tonumber(options.RetargetCooldown) or 0.10
 	local now = tick()
 
 	if TweenManager.currentTween and TweenManager.currentPart == part and TweenManager.currentGoal then
 		local goalShift = (TweenManager.currentGoal.Position - goal.Position).Magnitude
-		if goalShift <= epsilon then return TweenManager.currentTween end
+		if goalShift <= epsilon then
+			return TweenManager.currentTween
+		end
+		-- Moving mobs can update their CFrame every frame. Do not restart the tween that often.
 		if now - (TweenManager.lastRetarget or 0) < cooldown and goalShift < 35 then
 			return TweenManager.currentTween
 		end
 	end
 
-	TweenManager.CancelTweenOnly(true)
-	_SkiderMovementNoclip = true
-	_SkiderDisableCharacterCollision(t.Character)
-
-	local tween = _SkiderTweenService:Create(part, tweenInfo, properties)
+	TweenManager.CancelTweenOnly()
+	local tween = l:Create(part, tweenInfo, properties)
 	TweenManager.currentTween = tween
 	TweenManager.currentPart = part
 	TweenManager.currentGoal = goal
@@ -3529,7 +2816,9 @@ function TweenManager.PlayTween(part, tweenInfo, properties, options)
 
 	local completedConnection
 	completedConnection = tween.Completed:Connect(function()
-		if completedConnection then completedConnection:Disconnect() end
+		if completedConnection then
+			completedConnection:Disconnect()
+		end
 		if TweenManager.currentTween == tween then
 			TweenManager.currentTween = nil
 			TweenManager.currentPart = nil
@@ -3537,7 +2826,6 @@ function TweenManager.PlayTween(part, tweenInfo, properties, options)
 			TweenManager.currentSpeed = nil
 			TweenManager.TweenRunning = false
 			getgenv().Tween = nil
-			_SkiderMovementNoclip = false
 		end
 		pcall(function() tween:Destroy() end)
 	end)
@@ -3547,16 +2835,17 @@ function TweenManager.PlayTween(part, tweenInfo, properties, options)
 end
 
 function TweenManager.CancelCurrent()
-	TweenManager.CancelTweenOnly(false)
+	TweenManager.CancelTweenOnly()
 	local character = t.Character
-	if character then
-		_SkiderRemoveMovementForces(character)
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if humanoid then humanoid.PlatformStand = false end
-		if not _SkiderShouldNoclip() then
-			_SkiderRestoreCharacterCollision(character)
-			_SkiderNoclipWasActive = false
+	if not character then return end
+	for _, obj in ipairs(character:GetDescendants()) do
+		if obj:IsA("BodyVelocity") and (obj.Name == "eltrul" or obj.Name == "FloatForce") then
+			pcall(function() obj:Destroy() end)
 		end
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.PlatformStand = false
 	end
 end
 local l, Q, S, L, d =
@@ -4089,16 +3378,18 @@ task.spawn(function()
 	travelFunctions.LoadBypassTPLocation()
 end)
 BypassTp = travelFunctions
-local _SkiderDefaultTweenSpeed = 150
+local DEFAULT_TWEEN_SPEED = 150
 local x = game:GetService("RunService")
 local k = { LastTP = 0, LastCF = nil, ActiveConnection = nil, LastCall = 0, LastRetarget = 0 }
 
 local function y(root)
-	local character = t.Character
-	if not character or not root then return end
+	if not root then return end
 	local oldForce = root:FindFirstChild("FloatForce")
-	if oldForce then pcall(function() oldForce:Destroy() end) end
-	local holder = character:FindFirstChild("Head") or root
+	if oldForce then
+		pcall(function() oldForce:Destroy() end)
+	end
+	local character = t.Character
+	local holder = character and (character:FindFirstChild("Head") or root) or root
 	if not holder:FindFirstChild("eltrul") then
 		local bv = Instance.new("BodyVelocity")
 		bv.Name = "eltrul"
@@ -4110,7 +3401,9 @@ local function y(root)
 end
 
 local function B(root, targetCFrame, speed, arrivalEpsilon)
-	if not root or typeof(targetCFrame) ~= "CFrame" then return nil end
+	if not root or typeof(targetCFrame) ~= "CFrame" then
+		return nil
+	end
 	local character = t.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	if not character or root.Parent ~= character or not humanoid or humanoid.Health <= 0 or root.Anchored then
@@ -4118,17 +3411,16 @@ local function B(root, targetCFrame, speed, arrivalEpsilon)
 	end
 
 	k.LastCall = tick()
-	speed = math.max(tonumber(speed) or tonumber(Settings["Speed Tween "]) or _SkiderDefaultTweenSpeed, 1)
+	speed = math.max(tonumber(speed) or tonumber(Settings["Speed Tween "]) or DEFAULT_TWEEN_SPEED, 1)
 	arrivalEpsilon = tonumber(arrivalEpsilon) or 2.5
 	local distance = (targetCFrame.Position - root.Position).Magnitude
 
-	_SkiderMovementNoclip = true
-	_SkiderDisableCharacterCollision(character)
 	y(root)
 	I()
+	getgenv().noclip = true
 
 	if distance <= arrivalEpsilon then
-		TweenManager.CancelTweenOnly(true)
+		TweenManager.CancelTweenOnly()
 		root.CFrame = targetCFrame
 		root.AssemblyLinearVelocity = Vector3.zero
 		root.AssemblyAngularVelocity = Vector3.zero
@@ -4140,7 +3432,7 @@ local function B(root, targetCFrame, speed, arrivalEpsilon)
 	local duration = distance / speed
 	local info = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
 	return TweenManager.PlayTween(root, info, { CFrame = targetCFrame }, {
-		TargetEpsilon = math.max(5, arrivalEpsilon * 2),
+		TargetEpsilon = math.max(6, arrivalEpsilon * 2),
 		RetargetCooldown = 0.10,
 		Speed = speed,
 	})
@@ -4176,9 +3468,7 @@ function toTarget(P, e)
 		H.CFrame = H.CFrame * CFrame.new(0, 10, 0)
 		return
 	end
-	if not H:FindFirstChild("FloatForce") then
-		y(H)
-	end
+	y(H)
 	Y = (P.Position - H.Position).Magnitude
 	if Settings["Teleport Y"] then
 		local d, y = Settings["% Health Player"] or 40, Z.Health / Z.MaxHealth
@@ -5105,7 +4395,7 @@ local Q, d =
 		end
 	)
 SettingFarmMainSection.CreateToggle(
-	{ Title = "Attack No Animation ", Desc = nil, Default = GetSettingDefault("Attack No Animation ", true) },
+	{ Title = "Attack No Animation ", Desc = nil, Default = Settings["Attack No Animation "] or true },
 	function(I)
 		SaveSettings("Attack No Animation ", I)
 	end
@@ -5183,7 +4473,7 @@ function FFCMatch(m, I)
 	return nil
 end
 SettingFarmMainSection.CreateToggle(
-	{ Title = "Auto Turn On Buso", Desc = nil, Default = GetSettingDefault("Auto Turn On Buso", true) },
+	{ Title = "Auto Turn On Buso", Desc = nil, Default = Settings["Auto Turn On Buso"] or true },
 	function(m)
 		if m then
 			spawn(function()
@@ -5360,7 +4650,7 @@ SettingFarmMainSection.CreateSlider(
 	end
 )
 SettingFarmMainSection.CreateToggle(
-	{ Title = "Bring Mob", Desc = nil, Default = GetSettingDefault("Bring Mob", true) },
+	{ Title = "Bring Mob", Desc = nil, Default = Settings["Bring Mob"] or true },
 	function(I)
 		SaveSettings("Bring Mob", I)
 	end
@@ -5508,7 +4798,7 @@ MasteryFarmSection.CreateToggle(
 	function(V)
 		SaveSettings("Farm Mastery", V)
 		if V and not Settings["Start Farm"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
 		end
 	end
 )
@@ -5530,7 +4820,7 @@ FarmingMaterialSection.CreateToggle(
 	function(V)
 		SaveSettings("Farm Material", V)
 		if V and not Settings["Start Farm"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
 		end
 	end
 )
@@ -6515,7 +5805,7 @@ BossSoulReaperSection.CreateToggle(
 	{ Title = "Summon Soul Reaper", Desc = nil, Default = Settings["Summon Soul Reaper"] or false },
 	function(f)
 		if f and not Settings["Attack Soul Reaper"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Soul Reaper Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Soul Reaper Plz", ShowTime = 5 })
 		end
 		SaveSettings("Summon Soul Reaper", f)
 	end
@@ -6531,7 +5821,7 @@ BossDoughKingSection.CreateToggle(
 	{ Title = "Summon Dough King", Desc = nil, Default = Settings["Summon Dough King"] or false },
 	function(f)
 		if f and not Settings["Attack Dough King"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
 		end
 		if f then
 			spawn(function()
@@ -6549,7 +5839,7 @@ BossDoughKingSection.CreateToggle(
 	{ Title = "Hop Find Dough King", Desc = nil, Default = Settings["Hop Find Dough King"] or false },
 	function(f)
 		if f and not Settings["Attack Dough King"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
 		end
 		SaveSettings("Hop Find Dough King", f)
 	end
@@ -6565,7 +5855,7 @@ BossDarkbeardSection.CreateToggle(
 	{ Title = "Summon Darkbeard", Desc = nil, Default = Settings["Summon Darkbeard"] or false },
 	function(f)
 		if f and not Settings["Attack Darkbeard"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
 		end
 		SaveSettings("Summon Darkbeard", f)
 	end
@@ -6574,7 +5864,7 @@ BossDarkbeardSection.CreateToggle(
 	{ Title = "Hop Find Darkbeard", Desc = nil, Default = Settings["Hop Find Darkbeard"] or false },
 	function(f)
 		if f and not Settings["Attack Darkbeard"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
 		end
 		SaveSettings("Hop Find Darkbeard", f)
 	end
@@ -7405,7 +6695,7 @@ task.spawn(function()
 										return
 									else
 										A.CreateNoti({
-											Title = "Skider Hub",
+											Title = "Banana Cat Hub",
 											Desc = "Waiting Elite Hunter",
 											ShowTime = 5,
 										})
@@ -8257,7 +7547,7 @@ function AutoQuestDojo()
 				getgenv().QuestTrainer = { BeltName = "Red", CountKillMob = 0 }
 			else
 				A.CreateNoti({
-					Title = "Skider Hub",
+					Title = "Banana Cat Hub",
 					Desc = "That's enough training for today... Come back tomorrow and we can continue.\10 or dont support Belt Currently",
 					ShowTime = 5,
 				})
@@ -8801,7 +8091,7 @@ BerrySection.CreateToggle(
 								end
 							end
 						else
-							A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Berry spawn", ShowTime = 5 })
+							A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Berry spawn", ShowTime = 5 })
 							if Settings["Hop Find Berry"] then
 								HopServer()
 							end
@@ -9084,7 +8374,7 @@ function ObservationV2()
 					equiptool(NameWeapon(Settings["Select Weapon"]))
 				until not IsMobAlive(y) or not Settings["Auto UP Observation V2"]
 			else
-				A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Boss Captain Elephant", ShowTime = 5 })
+				A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Boss Captain Elephant", ShowTime = 5 })
 				wait(5)
 			end
 		elseif t:DistanceFromCharacter(Vector3.new(-12441.5908203125, 331.4884948730469, -7676.197265625)) < 10 then
@@ -9119,7 +8409,7 @@ function ObservationV2()
 								0
 							)
 						else
-							A.CreateNoti({ Title = "Skider Hub", Desc = "Wating Fruit", ShowTime = 5 })
+							A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Wating Fruit", ShowTime = 5 })
 							wait(3)
 						end
 					end
@@ -9193,7 +8483,7 @@ FarmObservationSection.CreateToggle(
 	},
 	function(y)
 		if y and not Settings["Farm Observation"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Farm Observation plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Farm Observation plz", ShowTime = 5 })
 		end
 		SaveSettings("Farm Observation [ Hop Server ]", y)
 	end
@@ -9425,7 +8715,7 @@ AutoKillBossSection.CreateToggle(
 	{ Title = "Kill All Boss", Desc = nil, Default = Settings["Kill All Boss"] or false },
 	function(y)
 		if y and not Settings["Kill Boss"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Kill Boss plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Kill Boss plz", ShowTime = 5 })
 		end
 		SaveSettings("Kill All Boss", y)
 	end
@@ -9753,7 +9043,7 @@ RaidsSection.CreateToggle(
 	{ Title = "Hop Sever Raid", Desc = nil, Default = Settings["Hop Sever Raid"] or false },
 	function(b)
 		if b and not Settings["Auto Raid"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Auto Raid Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Auto Raid Plz", ShowTime = 5 })
 		end
 		SaveSettings("Hop Sever Raid", b)
 	end
@@ -11081,7 +10371,7 @@ function WarnOnce(b, l)
 	end
 	getgenv().__BFWarned[b] = tick()
 	pcall(function()
-		A.CreateNoti({ Title = "Skider Hub", Desc = l, ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = l, ShowTime = 5 })
 	end)
 end
 function DetectSeaEvents(b)
@@ -11524,7 +10814,7 @@ ToggleFindMirage = FarmingSeaEventSection.CreateToggle(
 							getgenv().TweenBoat:Pause()
 							getgenv().TweenBoat:Cancel()
 						end
-						A.CreateNoti({ Title = "Skider Hub", Desc = "Mirage Island Spawned", ShowTime = 5 })
+						A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Mirage Island Spawned", ShowTime = 5 })
 						ToggleFindMirage:SetStage(false)
 						wait(5)
 					end
@@ -11556,7 +10846,7 @@ KitsuneEventSection.CreateToggle(
 	function(y)
 		if y then
 			A.CreateNoti({
-				Title = "Skider Hub",
+				Title = "Banana Cat Hub",
 				Desc = "Turn On after Status Full Moon|( Will Full Moon In >= 0 Minutes )",
 				ShowTime = 5,
 			})
@@ -12007,7 +11297,7 @@ function AutoFindLeviathan()
 			getgenv().TweenBoatBack:Pause()
 			getgenv().TweenBoatBack:Cancel()
 		end
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Frozen Dimension Spawned", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Frozen Dimension Spawned", ShowTime = 5 })
 		if getgenv().RespawnLeviathan and Settings["Webhook Find Leviathan"] then
 			getgenv().RespawnLeviathan = false
 			WebhookFindLeviathan()
@@ -12261,7 +11551,7 @@ LeviathanEventSection.CreateToggle(
 	},
 	function(s)
 		if s and not Settings["Auto Attack Leviathan"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Auto Attack Leviathan, plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Auto Attack Leviathan, plz", ShowTime = 5 })
 		end
 		SaveSettings("Attack Multi Segments Leviathan", s)
 	end
@@ -12606,7 +11896,7 @@ function ShootHeartLeviathan()
 				toTarget(b.Harpoon.Seat.CFrame)
 			end
 		else
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Successfully Fire Shoot Heart Leviathan", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Successfully Fire Shoot Heart Leviathan", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -13177,11 +12467,11 @@ end
 local b = { "V2InProgress", "V3InProgress", "V2TurnInReady", "V3TurnInReady" }
 function AutoUpgradeRaceDraco()
 	if game.Players.LocalPlayer.Data.Race.Value ~= "Draco" then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Change Race Draco plz", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Change Race Draco plz", ShowTime = 5 })
 		wait(5)
 		return
 	elseif DetectItemPlr("Primordial Reign") then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Done V3 Draco", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done V3 Draco", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -13441,7 +12731,7 @@ ToggleAutoTrialDraco = RaceDracoSection.CreateToggle(
 							end
 						else
 							if getgenv().DoneTrialDraco then
-								A.CreateNoti({ Title = "Skider Hub", Desc = "Done Trial", ShowTime = 5 })
+								A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Trial", ShowTime = 5 })
 								getgenv().DoneTrialDraco = false
 								ToggleAutoTrialDraco:SetStage(false)
 								return
@@ -13458,7 +12748,7 @@ ToggleAutoTrialDraco = RaceDracoSection.CreateToggle(
 								end
 							else
 								A.CreateNoti({
-									Title = "Skider Hub",
+									Title = "Banana Cat Hub",
 									Desc = "Not have Prehistoric Island",
 									ShowTime = 5,
 								})
@@ -14430,7 +13720,7 @@ end
 function UpgradeRaceV2AndV3()
 	local m = CheckRace()
 	if m == " V3" then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Done V3", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done V3", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -14440,7 +13730,7 @@ function UpgradeRaceV2AndV3()
 	end
 	if m == " V1" then
 		if t.Data.Beli.Value < 500000 then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Beli >= 500k", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Beli >= 500k", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -14522,7 +13812,7 @@ function UpgradeRaceV2AndV3()
 			game.ReplicatedStorage.Remotes.CommF_:InvokeServer("Wenlocktoad", "3")
 			return
 		elseif l == -1 then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Beli >= 2m", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Beli >= 2m", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -14550,7 +13840,7 @@ function UpgradeRaceV2AndV3()
 					end
 				end
 			else
-				A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
+				A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
 				wait(5)
 			end
 		elseif l == "Mink V2" then
@@ -14691,7 +13981,7 @@ ToggleAutoGetFullyCyborg = RaceNormalSection.CreateToggle(
 	function(l)
 		SaveSettings("Auto Get Fully Cyborg", l)
 		if l and not Settings["Auto Get Cyborg"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Auto Get Cyborg plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Auto Get Cyborg plz", ShowTime = 5 })
 		end
 	end
 )
@@ -14707,7 +13997,7 @@ RaceNormalSection.CreateToggle(
 )
 function GetCyborg()
 	if game.ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Check") == 2 then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Plz Turn Off", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Plz Turn Off", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -14863,7 +14153,7 @@ function GetRaceGhoul()
 		or game.ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true) == 2
 		or game.ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4, true) == 1
 	then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Plz Turn Off", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Plz Turn Off", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -14973,7 +14263,7 @@ function GetRaceGhoul()
 			if Settings["Hop Server Get Ghoul"] then
 				SpecialHop("Cursed Captain")
 			end
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Wating Boss Spawn", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Wating Boss Spawn", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -15140,7 +14430,7 @@ function CollectBlueGear()
 end
 function PullLeverV4()
 	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -15209,7 +14499,7 @@ function PullLeverV4()
 				fireproximityprompt(l.Lever.Prompt.ProximityPrompt, 1)
 			end
 		else
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Done Pull Lever", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Pull Lever", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -15688,7 +14978,7 @@ function AutoTrialV4()
 	-- Kiểm tra vị trí trước (giống kaiv4.lua)
 	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
 		if TeleportTempleOfTime() == "locked" then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Temple of Time is locked", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Temple of Time is locked", ShowTime = 5 })
 			task.wait(5)
 		end
 		return
@@ -16032,7 +15322,7 @@ function DetectQuestRainBowHaki(R)
 end
 function GetRainBowHaki()
 	if game.ReplicatedStorage.Remotes.CommF_:InvokeServer("HornedMan") == 1 then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Done Get Rainbow Haki", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Get Rainbow Haki", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -16061,7 +15351,7 @@ function GetRainBowHaki()
 				UsedualFlock()
 			until not IsMobAlive(g) or not Settings["Auto Get Rainbow Haki"]
 		else
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -16131,7 +15421,7 @@ function GuitarPuzzleProgress()
 			CommF:InvokeServer("gravestoneEvent", 2, true)
 			task.wait(1)
 		else
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Hop Full Moon", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Hop Full Moon", ShowTime = 5 })
 			SpecialHop("FullMoon")
 		end
 	else
@@ -16247,12 +15537,12 @@ function AutoSoulGuitar()
 		game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("soulGuitarBuy", true)
 		== "[You already own this item.]"
 	then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "[You already own this item.]", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "[You already own this item.]", ShowTime = 5 })
 		task.wait(5)
 		return
 	end
 	if t.Data.Fragments.Value < 5000 then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Frag >= 5k", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Frag >= 5k", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -16484,7 +15774,7 @@ function QuestGood4()
 				(Settings["Select Method Hop CDK1"] or {})["Hop Raid Castle [ Delay 20s Hop Because check Raids Castle ]"]
 			then
 				A.CreateNoti({
-					Title = "Skider Hub",
+					Title = "Banana Cat Hub",
 					Desc = "Waiting 20s for check raid castle if dont have will Server",
 					ShowTime = 5,
 				})
@@ -16496,7 +15786,7 @@ function QuestGood4()
 					SpecialHop("Raid Castle")
 				end
 			else
-				A.CreateNoti({ Title = "Skider Hub", Desc = "Waint Raid Castle", ShowTime = 5 })
+				A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waint Raid Castle", ShowTime = 5 })
 			end
 			wait(5)
 		end
@@ -16600,10 +15890,10 @@ function Questgood5()
 		TweenManager.CancelCurrent()
 	else
 		if Settings["Select Method Hop CDK1"] and Settings["Select Method Hop CDK1"]["Find Cake Queen"] then
-			A.CreateNoti({ Title = "Skider Hub", Desc = 'Hop Server Find Cake Queen"', ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = 'Hop Server Find Cake Queen"', ShowTime = 5 })
 			HopServer()
 		else
-			A.CreateNoti({ Title = "Skider Hub", Desc = 'Wating Cake Queen"', ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = 'Wating Cake Queen"', ShowTime = 5 })
 		end
 		wait(5)
 	end
@@ -16819,13 +16109,13 @@ function CheckMasterSword(g, R)
 end
 function GetCDK()
 	if not CheckItemInventory("Tushita") or not CheckItemInventory("Yama") then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Get Tushita and Yama", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Get Tushita and Yama", ShowTime = 5 })
 		wait(5)
 		return
 	end
 	if CheckItemInventory("Tushita") and (CheckItemInventory("Yama")) then
 		if not CheckMasterSword("Yama", 350) or not CheckMasterSword("Tushita", 350) then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Mastery >= 350", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Mastery >= 350", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -17088,7 +16378,7 @@ function GetTushita()
 				end
 			end
 		else
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Rip Indra Dont Spawn", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Rip Indra Dont Spawn", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -17484,7 +16774,7 @@ GetItemsSection.CreateToggle(
 )
 function autoCraftSharkAnchor()
 	if CheckItemInventory("Shark Anchor") then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Done Shark Anchor", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Shark Anchor", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -17538,7 +16828,7 @@ GetItemsSection.CreateToggle(
 )
 function AutoYorumini()
 	if CheckItemInventory("Dark Dagger") then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "u haved Yoru Mini", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "u haved Yoru Mini", ShowTime = 5 })
 		return
 	end
 	local g = CheckNameBoss("rip_indra True Form")
@@ -17939,7 +17229,7 @@ function AutoUpgradeWeapon(R)
 	if m then
 		R = NameMaterials[m]
 		if not R then
-			A.CreateNoti({ Title = "Skider Hub", Desc = "Not Support Material" .. m .. "Sorry", ShowTime = 5 })
+			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Not Support Material" .. m .. "Sorry", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -18256,7 +17546,7 @@ function AutoCraftinMagnetVol()
 			wait(2)
 		end
 	else
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Done Craft Volcanic Magnet", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Craft Volcanic Magnet", ShowTime = 5 })
 		ToggleAutoCraftingVolcanicMagnet:SetStage(false)
 	end
 end
@@ -18351,7 +17641,7 @@ function AutoFindPrehistoric()
 			getgenv().TweenBoat:Pause()
 			getgenv().TweenBoat:Cancel()
 		end
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Prehistoric Island Spawned", ShowTime = 5 })
+		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Prehistoric Island Spawned", ShowTime = 5 })
 		ToggleAutoFindPrehistoricIsland:SetStage(false)
 		wait(5)
 	end
@@ -19536,7 +18826,7 @@ MISCPVPSection.CreateToggle(
 	end
 )
 MISCPVPSection.CreateToggle(
-	{ Title = "Walk On Water", Desc = nil, Default = GetSettingDefault("Walk On Water ", true) },
+	{ Title = "Walk On Water", Desc = nil, Default = Settings["Walk On Water "] or true },
 	function(b)
 		if b then
 			if not game.Workspace:FindFirstChild("WaterWalk") then
@@ -19608,11 +18898,11 @@ SectionWebhook.CreateToggle(
 	end
 )
 local b = {
-	Username = "Skider Hub",
+	Username = "Binini Hub",
 	AvatarURL = "https://images-ext-1.discordapp.net/external/9LSZu__Uvs7I0N8MWag-JmwF2iT-pHCHSe2UdixGEXQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1262364141968949308/a_0c5fb64e2cbb35d029d73b44576c6a60.gif",
 	BannerURL = "https://cdn.discordapp.com/attachments/1017024488665264218/1262729537578471504/banner_server.jpg",
-	Title = "Skider Hub Notification",
-	FooterText = "Skider Hub",
+	Title = "Banana Hub Notification",
+	FooterText = "Binini Hub",
 	Color = 16776960,
 }
 function safe_str(s)
@@ -19710,9 +19000,9 @@ function Webhookprofile()
 			Color = 16776960,
 			BannerURL = "https://cdn.discordapp.com/attachments/1017024488665264218/1262729537578471504/banner_server.jpg",
 			AvatarURL = "https://images-ext-1.discordapp.net/external/9LSZu__Uvs7I0N8MWag-JmwF2iT-pHCHSe2UdixGEXQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1262364141968949308/a_0c5fb64e2cbb35d029d73b44576c6a60.gif",
-			Username = "Skider Hub",
-			Title = "<:bananacon:1261744974534541352> Skider Hub Notification <:bananacon:1261744974534541352>",
-			FooterText = "Skider Hub",
+			Username = "Binini Hub",
+			Title = "<:bananacon:1261744974534541352> Banana Hub Notification <:bananacon:1261744974534541352>",
+			FooterText = "Binini Hub",
 			FruitMinValue = 1000000,
 			ItemMinRarity = 3,
 			MaxFieldLen = 1024,
@@ -20222,52 +19512,9 @@ spawn(function()
 		end
 	end)
 end)
-local function _skiderSerializeLua(value, depth)
-	depth = depth or 0
-	local tv = type(value)
-	if tv == "string" then return string.format("%q", value) end
-	if tv == "number" or tv == "boolean" then return tostring(value) end
-	if tv ~= "table" then return "nil" end
-	if depth > 8 then return "{}" end
-	local keys = {}
-	for k in pairs(value) do keys[#keys + 1] = k end
-	table.sort(keys, function(a,b) return tostring(a) < tostring(b) end)
-	local out = {"{"}
-	for _, k in ipairs(keys) do
-		local key = type(k) == "string" and ("[" .. string.format("%q", k) .. "]") or ("[" .. tostring(k) .. "]")
-		out[#out + 1] = key .. "=" .. _skiderSerializeLua(value[k], depth + 1) .. ","
-	end
-	out[#out + 1] = "}"
-	return table.concat(out)
-end
-
-local function _skiderCopyText(text)
-	local funcs = {}
-	if type(setclipboard) == "function" then funcs[#funcs + 1] = setclipboard end
-	if type(toclipboard) == "function" then funcs[#funcs + 1] = toclipboard end
-	if type(set_clipboard) == "function" then funcs[#funcs + 1] = set_clipboard end
-	for _, fn in ipairs(funcs) do
-		local ok = pcall(fn, text)
-		if ok then return true end
-	end
-	if type(Clipboard) == "table" and type(Clipboard.set) == "function" then
-		local ok = pcall(Clipboard.set, text)
-		if ok then return true end
-	end
-	return false
-end
-
-a.CreateButton({ Title = "Copy Setting" }, function()
-	local text = "getgenv().Config = " .. _skiderSerializeLua(Settings)
-	if _skiderCopyText(text) then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Successfully copied settings", ShowTime = 5 })
-	elseif type(writefile) == "function" then
-		_ensureSettingsFolder()
-		local ok = pcall(function() writefile(FolderName .. "/CopiedSetting.lua", text) end)
-		A.CreateNoti({ Title = "Skider Hub", Desc = ok and "Clipboard unsupported - saved CopiedSetting.lua" or "Copy setting failed", ShowTime = 6 })
-	else
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Executor does not support clipboard", ShowTime = 6 })
-	end
+a.CreateButton({ Title = "Copy Config" }, function()
+	setclipboard(b((HttpService:JSONDecode(readfile(FolderName .. "/" .. SaveFileName)))))
+	A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Successfully Copy Config", ShowTime = 5 })
 end)
 a.CreateBind({ Title = "Toggle GUI", Key = Enum.KeyCode.LeftControl }, function()
 	getgenv().UIToggled = not getgenv().UIToggled
@@ -20306,8 +19553,8 @@ runAsync = require(game.ReplicatedStorage.Util.runAsync)
 Spinner = require(game:GetService("ReplicatedStorage").Controllers.UI.Spinner)
 SharedGachaUtil = require(game.ReplicatedStorage.Modules.Gacha.SharedGachaUtil)
 TextUtil = require(game.ReplicatedStorage.Modules.Util.TextUtil)
-if not getgenv().SkiderMainLoop then
-	getgenv().SkiderMainLoop = true
+if not getgenv().BananaCatMainLoop then
+	getgenv().BananaCatMainLoop = true
 	lastHopTick = tick()
 	lastFruitTick = tick()
 	x.RenderStepped:Connect(function()
@@ -20317,7 +19564,7 @@ if not getgenv().SkiderMainLoop then
 		if tick() - lastHopTick >= 500 then
 			lastHopTick = tick()
 			pcall(function()
-				writefile("Skider Hub/Jobid.json", HttpService:JSONEncode({}))
+				writefile("Banana Cat Hub/Jobid.json", HttpService:JSONEncode({}))
 			end)
 		end
 		pcall(function()
@@ -20395,7 +19642,7 @@ if not getgenv().SkiderMainLoop then
 						if b then
 							SpecialHop(b)
 						else
-							A.CreateNoti({ Title = "Skider Hub", Desc = "Full Sword Legendary", ShowTime = 5 })
+							A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Full Sword Legendary", ShowTime = 5 })
 						end
 					end
 				end
