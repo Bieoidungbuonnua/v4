@@ -1,405 +1,5 @@
--- Skider Hub library-chrome patch V2.
--- Targets ONLY the external hub library's help notification + its own toggle button.
--- PlayerGui/Blox Fruits HUD/hotbar are intentionally never scanned.
-if not getgenv().__SKIDER_LIBRARY_CHROME_PATCH_V2 then
-    getgenv().__SKIDER_LIBRARY_CHROME_PATCH_V2 = true
-    task.spawn(function()
-        local CoreGui = game:GetService("CoreGui")
-        local Players = game:GetService("Players")
-        local LOGO = "rbxassetid://90412962524051"
-        local GREEN = Color3.fromRGB(18, 105, 58)
-        local WHITE = Color3.fromRGB(245, 247, 250)
-        local watched = setmetatable({}, { __mode = "k" })
-
-        local function lower(v)
-            return type(v) == "string" and string.lower(v) or ""
-        end
-
-        local function replaceBrand(v)
-            if type(v) ~= "string" then return v end
-            v = v:gsub("Banana Cat Hub", "Skider Hub")
-            v = v:gsub("BANANA CAT HUB", "Skider Hub")
-            v = v:gsub("banana cat hub", "Skider Hub")
-            v = v:gsub("Banana Hub", "Skider Hub")
-            v = v:gsub("BANANA HUB", "Skider Hub")
-            v = v:gsub("Binini Hub", "Skider Hub")
-            return v
-        end
-
-        local function isLibraryHelpText(v)
-            local t = lower(v)
-            return string.find(t, "ui library", 1, true) ~= nil
-                or string.find(t, "automatically hides", 1, true) ~= nil
-                or string.find(t, "bottom-left", 1, true) ~= nil
-                or string.find(t, "press the button", 1, true) ~= nil
-        end
-
-        local function screenAncestor(o)
-            while o do
-                if o:IsA("ScreenGui") then return o end
-                o = o.Parent
-            end
-            return nil
-        end
-
-        local function setLogo(img)
-            if not img or not (img:IsA("ImageLabel") or img:IsA("ImageButton")) then return end
-            pcall(function()
-                img.Image = LOGO
-                img.ImageRectOffset = Vector2.new(0, 0)
-                img.ImageRectSize = Vector2.new(0, 0)
-                img.ImageColor3 = Color3.new(1, 1, 1)
-            end)
-        end
-
-        local function rootHasLibraryHelp(root)
-            if not root or not root:IsA("ScreenGui") then return false end
-            for _, o in ipairs(root:GetDescendants()) do
-                if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and isLibraryHelpText(o.Text) then
-                    return true
-                end
-            end
-            return false
-        end
-
-        local function patchHelpIcon(root)
-            if not rootHasLibraryHelp(root) then return end
-
-            local helpLabels = {}
-            for _, o in ipairs(root:GetDescendants()) do
-                if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                    local nt = replaceBrand(o.Text)
-                    if nt ~= o.Text then pcall(function() o.Text = nt end) end
-                    if isLibraryHelpText(nt) then
-                        helpLabels[#helpLabels + 1] = o
-                        pcall(function()
-                            if string.find(lower(nt), "ui library", 1, true) then
-                                o.TextColor3 = GREEN
-                            else
-                                o.TextColor3 = WHITE
-                            end
-                        end)
-                    end
-                end
-            end
-
-            -- The old Banana icon is a small square image immediately beside the
-            -- library-help title/body. Patch only images geometrically tied to this popup.
-            for _, img in ipairs(root:GetDescendants()) do
-                if img:IsA("ImageLabel") or img:IsA("ImageButton") then
-                    pcall(function()
-                        local sz = img.AbsoluteSize
-                        if img.Image == "" or sz.X < 14 or sz.Y < 14 or sz.X > 90 or sz.Y > 90 then return end
-                        if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.40 then return end
-                        local ic = img.AbsolutePosition + sz / 2
-                        for _, label in ipairs(helpLabels) do
-                            local lc = label.AbsolutePosition + label.AbsoluteSize / 2
-                            if math.abs(ic.Y - lc.Y) <= 55 and ic.X <= lc.X + 35 and ic.X >= lc.X - 150 then
-                                setLogo(img)
-                                break
-                            end
-                        end
-                    end)
-                end
-            end
-
-            -- The library's own old floating toggle is also a small square ImageButton
-            -- at the bottom-left. This scan is safe because it runs only inside a
-            -- ScreenGui already proven to contain the hub library help popup.
-            local cam = workspace.CurrentCamera
-            local viewport = cam and cam.ViewportSize or Vector2.new(1920, 1080)
-            for _, img in ipairs(root:GetDescendants()) do
-                if img:IsA("ImageButton") then
-                    pcall(function()
-                        local sz, pos = img.AbsoluteSize, img.AbsolutePosition
-                        if sz.X >= 32 and sz.X <= 110 and sz.Y >= 32 and sz.Y <= 110
-                            and math.abs(sz.X - sz.Y) <= 24
-                            and pos.X <= math.max(180, viewport.X * 0.20)
-                            and pos.Y >= viewport.Y * 0.45
-                        then
-                            setLogo(img)
-                        end
-                    end)
-                end
-            end
-        end
-
-        local containers = { CoreGui }
-        pcall(function()
-            if gethui then
-                local h = gethui()
-                if h and h ~= CoreGui then containers[#containers + 1] = h end
-            end
-        end)
-
-        local function watchRoot(root)
-            if watched[root] then return end
-            if not rootHasLibraryHelp(root) then return end
-            watched[root] = true
-            patchHelpIcon(root)
-            root.DescendantAdded:Connect(function(o)
-                task.delay(0.03, function()
-                    if root.Parent and o.Parent then patchHelpIcon(root) end
-                end)
-            end)
-        end
-
-        for _, container in ipairs(containers) do
-            pcall(function()
-                container.DescendantAdded:Connect(function(o)
-                    if o:IsA("ScreenGui") then
-                        task.delay(0.08, function()
-                            if o.Parent and rootHasLibraryHelp(o) then watchRoot(o) end
-                        end)
-                    elseif o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                        task.delay(0.03, function()
-                            if o.Parent and isLibraryHelpText(o.Text) then
-                                local root = screenAncestor(o)
-                                if root then watchRoot(root); patchHelpIcon(root) end
-                            end
-                        end)
-                    end
-                end)
-            end)
-        end
-
-        while task.wait(0.20) do
-            for _, container in ipairs(containers) do
-                if container and container.Parent then
-                    for _, root in ipairs(container:GetChildren()) do
-                        if root:IsA("ScreenGui") and rootHasLibraryHelp(root) then
-                            watchRoot(root)
-                            patchHelpIcon(root)
-                        end
-                    end
-                end
-            end
-        end
-    end)
-end
-
--- Skider Hub SAFE UI hotpatch.
--- IMPORTANT: branding/theme changes are scoped to the hub UI only.
--- PlayerGui/Main, HUD, hotbar, tools and Devil Fruit icons are never scanned or modified.
 if getgenv().__BF_LOADED then
-    -- Stop the old V3 global sweep if an older build is still running in this server.
-    -- Its PropertyChanged connections cannot be detached, so a fresh rejoin is still the
-    -- cleanest way to remove hooks installed by that old build.
-    local _loadedResult = getgenv().__BF_RESULT
-    getgenv().__BF_LOADED = false
-    task.wait(0.18)
-    getgenv().__BF_LOADED = true
-
-    if not getgenv().__SKIDER_SAFE_UI_HOTPATCH then
-        getgenv().__SKIDER_SAFE_UI_HOTPATCH = true
-        task.spawn(function()
-            local CoreGui = game:GetService("CoreGui")
-            local LOGO = "rbxassetid://90412962524051"
-            local GREEN = Color3.fromRGB(18, 105, 58)
-            local GREEN_HOVER = Color3.fromRGB(24, 130, 72)
-            local GREEN_DEEP = Color3.fromRGB(8, 42, 24)
-            local WHITE = Color3.fromRGB(245, 247, 250)
-            local TEXT_DIM = Color3.fromRGB(205, 212, 218)
-            local OLD_BRAND = "Banana" .. " Cat" .. " Hub"
-            local watchedRoots = setmetatable({}, { __mode = "k" })
-
-            local function lower(v)
-                return type(v) == "string" and string.lower(v) or ""
-            end
-
-            local function replaceBrand(v)
-                if type(v) ~= "string" then return v end
-                v = v:gsub(OLD_BRAND, "Skider Hub")
-                v = v:gsub(string.upper(OLD_BRAND), "Skider Hub")
-                v = v:gsub(string.lower(OLD_BRAND), "Skider Hub")
-                return v
-            end
-
-            local function hasBrand(v)
-                local s = lower(v)
-                return string.find(s, "banana cat hub", 1, true) ~= nil
-                    or string.find(s, "skider hub", 1, true) ~= nil
-            end
-
-            local function isHubRoot(root)
-                if not root or not root:IsA("ScreenGui") then return false end
-                local n = lower(root.Name)
-                if string.find(n, "nousigi", 1, true)
-                    or string.find(n, "skider", 1, true)
-                    or string.find(n, "banana", 1, true)
-                then
-                    return true
-                end
-                for _, o in ipairs(root:GetDescendants()) do
-                    if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and hasBrand(o.Text) then
-                        return true
-                    end
-                end
-                return false
-            end
-
-            local function greenColor(c)
-                if typeof(c) ~= "Color3" then return c end
-                local _, sat, val = c:ToHSV()
-                if sat < 0.12 or val < 0.10 then return c end
-                if val < 0.32 then return GREEN_DEEP end
-                if val < 0.72 then return GREEN end
-                return GREEN_HOVER
-            end
-
-            local function greenSequence(seq)
-                if typeof(seq) ~= "ColorSequence" then return seq end
-                local pts = {}
-                for _, kp in ipairs(seq.Keypoints) do
-                    pts[#pts + 1] = ColorSequenceKeypoint.new(kp.Time, greenColor(kp.Value))
-                end
-                return ColorSequence.new(pts)
-            end
-
-            local function isButtonText(o)
-                if o:IsA("TextButton") then return true end
-                local p = o.Parent
-                for _ = 1, 4 do
-                    if not p then break end
-                    if p:IsA("TextButton") or p:IsA("ImageButton") then return true end
-                    local n = lower(p.Name)
-                    if string.find(n, "button", 1, true) then return true end
-                    p = p.Parent
-                end
-                return false
-            end
-
-            local function isExplicitLogo(o)
-                if not (o:IsA("ImageLabel") or o:IsA("ImageButton")) then return false end
-                local n = lower(o.Name)
-                local pn = o.Parent and lower(o.Parent.Name) or ""
-                return string.find(n, "logo", 1, true) ~= nil
-                    or string.find(n, "brand", 1, true) ~= nil
-                    or string.find(n, "hubicon", 1, true) ~= nil
-                    or string.find(n, "toggleuibtn", 1, true) ~= nil
-                    or string.find(pn, "logo", 1, true) ~= nil
-                    or string.find(pn, "brand", 1, true) ~= nil
-            end
-
-            local function patchHeaderLogo(root)
-                local labels, images = {}, {}
-                for _, o in ipairs(root:GetDescendants()) do
-                    if (o:IsA("TextLabel") or o:IsA("TextButton")) and hasBrand(o.Text) then
-                        labels[#labels + 1] = o
-                    elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
-                        images[#images + 1] = o
-                    end
-                end
-                for _, img in ipairs(images) do
-                    if isExplicitLogo(img) then
-                        pcall(function()
-                            img.Image = LOGO
-                            img.ImageRectOffset = Vector2.new(0, 0)
-                            img.ImageRectSize = Vector2.new(0, 0)
-                            img.ImageColor3 = Color3.new(1, 1, 1)
-                        end)
-                    else
-                        pcall(function()
-                            local sz = img.AbsoluteSize
-                            if img.Image == "" or sz.X < 20 or sz.Y < 20 or sz.X > 120 or sz.Y > 120 then return end
-                            if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.35 then return end
-                            local ic = img.AbsolutePosition + sz / 2
-                            for _, label in ipairs(labels) do
-                                local lc = label.AbsolutePosition + label.AbsoluteSize / 2
-                                if math.abs(ic.Y - lc.Y) <= 48 and math.abs(ic.X - lc.X) <= 150 then
-                                    img.Image = LOGO
-                                    img.ImageRectOffset = Vector2.new(0, 0)
-                                    img.ImageRectSize = Vector2.new(0, 0)
-                                    img.ImageColor3 = Color3.new(1, 1, 1)
-                                    break
-                                end
-                            end
-                        end)
-                    end
-                end
-            end
-
-            local function patchObject(o)
-                if not o or not o.Parent then return end
-                pcall(function()
-                    if o:IsA("GuiObject") then
-                        o.BackgroundColor3 = greenColor(o.BackgroundColor3)
-                        o.BorderColor3 = greenColor(o.BorderColor3)
-                    end
-                    if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                        local txt = replaceBrand(o.Text)
-                        if hasBrand(txt) then
-                            txt = txt:gsub("<.->", "")
-                            o.RichText = false
-                            o.TextColor3 = GREEN
-                            pcall(function() o.TextStrokeColor3 = GREEN_DEEP end)
-                        elseif isButtonText(o) then
-                            -- Buttons must stay highly readable on dark-green surfaces.
-                            o.TextColor3 = WHITE
-                            pcall(function() o.TextStrokeColor3 = Color3.fromRGB(0, 0, 0) end)
-                        else
-                            local _, sat, val = o.TextColor3:ToHSV()
-                            if sat >= 0.12 then
-                                o.TextColor3 = TEXT_DIM
-                            elseif val < 0.55 then
-                                o.TextColor3 = TEXT_DIM
-                            end
-                        end
-                        if txt ~= o.Text then o.Text = txt end
-                    end
-                    if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-                        if isExplicitLogo(o) then
-                            o.Image = LOGO
-                            o.ImageRectOffset = Vector2.new(0, 0)
-                            o.ImageRectSize = Vector2.new(0, 0)
-                            o.ImageColor3 = Color3.new(1, 1, 1)
-                        else
-                            o.ImageColor3 = greenColor(o.ImageColor3)
-                        end
-                    end
-                    if o:IsA("ScrollingFrame") then o.ScrollBarImageColor3 = GREEN end
-                    if o:IsA("UIStroke") then o.Color = greenColor(o.Color) end
-                    if o:IsA("UIGradient") then o.Color = greenSequence(o.Color) end
-                end)
-            end
-
-            local function patchRoot(root)
-                if not isHubRoot(root) then return end
-                patchHeaderLogo(root)
-                patchObject(root)
-                for _, o in ipairs(root:GetDescendants()) do patchObject(o) end
-                if not watchedRoots[root] then
-                    watchedRoots[root] = true
-                    root.DescendantAdded:Connect(function(o)
-                        task.defer(function()
-                            if root.Parent and o.Parent then patchObject(o); patchHeaderLogo(root) end
-                        end)
-                    end)
-                end
-            end
-
-            local containers = { CoreGui }
-            pcall(function()
-                if gethui then
-                    local h = gethui()
-                    if h and h ~= CoreGui then containers[#containers + 1] = h end
-                end
-            end)
-
-            while getgenv().__BF_LOADED do
-                for _, container in ipairs(containers) do
-                    if container and container.Parent then
-                        for _, root in ipairs(container:GetChildren()) do
-                            if root:IsA("ScreenGui") and isHubRoot(root) then patchRoot(root) end
-                        end
-                    end
-                end
-                task.wait(0.20)
-            end
-            getgenv().__SKIDER_SAFE_UI_HOTPATCH = nil
-        end)
-    end
-    return _loadedResult
+	return getgenv().__BF_RESULT
 end
 
 Settings = {}
@@ -662,7 +262,7 @@ game:GetService("Players").LocalPlayer.Idled:connect(function()
 end)
 local _uiOk, A = pcall(function()
 	local source = game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua")
-	-- Rebrand any plain literals that the external library leaves unobfuscated.
+	-- Cheap, one-time rebrand for literals that are not hidden by the library obfuscator.
 	source = source:gsub("Banana Cat Hub", "Skider Hub")
 		:gsub("Banana Hub", "Skider Hub")
 		:gsub("Binini Hub", "Skider Hub")
@@ -676,6 +276,9 @@ if not _uiOk or type(A) ~= "table" then
 	getgenv().LoadScript = nil
 	error("[Skider Hub] Failed to load UI library: " .. tostring(A))
 end
+
+-- Lightweight Skider skin. IMPORTANT: no RenderStepped/Heartbeat theme loop,
+-- no per-object PropertyChanged hooks, and PlayerGui is never scanned.
 local SKIDER_HUB_LOGO = "rbxassetid://90412962524051"
 local SKIDER_GREEN = Color3.fromRGB(18, 105, 58)
 local SKIDER_GREEN_HOVER = Color3.fromRGB(24, 130, 72)
@@ -683,325 +286,208 @@ local SKIDER_GREEN_DEEP = Color3.fromRGB(8, 42, 24)
 local SKIDER_TEXT_WHITE = Color3.fromRGB(245, 247, 250)
 local SKIDER_TEXT_DIM = Color3.fromRGB(205, 212, 218)
 
--- Scoped Skider theme engine.
--- It NEVER scans PlayerGui, so Blox Fruits HUD/hotbar/Devil Fruit/skill icons cannot be changed.
-local _skiderRoots = setmetatable({}, { __mode = "k" })
-local _skiderWatched = setmetatable({}, { __mode = "k" })
-local _skiderCreatedDuringMain = setmetatable({}, { __mode = "k" })
-local _skiderCreatingMain = false
-local _SKIDER_OLD_BRAND = "Banana" .. " Cat" .. " Hub"
-
 local function _skiderLower(v)
-    return type(v) == "string" and string.lower(v) or ""
+	return type(v) == "string" and string.lower(v) or ""
 end
 
-local function _skiderReplaceBrandText(v)
-    if type(v) ~= "string" then return v end
-    v = v:gsub(_SKIDER_OLD_BRAND, "Skider Hub")
-    v = v:gsub(string.upper(_SKIDER_OLD_BRAND), "Skider Hub")
-    v = v:gsub(string.lower(_SKIDER_OLD_BRAND), "Skider Hub")
-    return v
+local function _skiderReplaceText(v)
+	if type(v) ~= "string" then return v end
+	v = v:gsub("Banana Cat Hub", "Skider Hub")
+	v = v:gsub("Banana Hub", "Skider Hub")
+	v = v:gsub("Binini Hub", "Skider Hub")
+	return v
 end
 
-local function _skiderHasBrandText(v)
-    local s = _skiderLower(v)
-    return string.find(s, "banana cat hub", 1, true) ~= nil
-        or string.find(s, "skider hub", 1, true) ~= nil
+local function _skiderIsHubText(v)
+	local x = _skiderLower(v)
+	return x:find("skider hub", 1, true) ~= nil
+		or x:find("banana cat hub", 1, true) ~= nil
+		or x:find("ui library", 1, true) ~= nil
+		or x:find("automatically hides", 1, true) ~= nil
 end
 
-local function _skiderGreenColor(c)
-    if typeof(c) ~= "Color3" then return c end
-    local _, sat, val = c:ToHSV()
-    if sat < 0.12 or val < 0.10 then return c end
-    if val < 0.32 then return SKIDER_GREEN_DEEP end
-    if val < 0.72 then return SKIDER_GREEN end
-    return SKIDER_GREEN_HOVER
+local function _skiderAccent(c, deep)
+	if typeof(c) ~= "Color3" then return c end
+	local _, sat, val = c:ToHSV()
+	if sat < 0.18 or val < 0.08 then return c end
+	return deep and SKIDER_GREEN_DEEP or (val > 0.72 and SKIDER_GREEN_HOVER or SKIDER_GREEN)
 end
 
 local function _skiderGreenSequence(seq)
-    if typeof(seq) ~= "ColorSequence" then return seq end
-    local points = {}
-    for _, kp in ipairs(seq.Keypoints) do
-        points[#points + 1] = ColorSequenceKeypoint.new(kp.Time, _skiderGreenColor(kp.Value))
-    end
-    return ColorSequence.new(points)
-end
-
-local function _skiderScreenAncestor(o)
-    while o do
-        if o:IsA("ScreenGui") then return o end
-        o = o.Parent
-    end
-    return nil
-end
-
-local function _skiderIsButtonText(o)
-    if o:IsA("TextButton") then return true end
-    local p = o.Parent
-    for _ = 1, 4 do
-        if not p then break end
-        if p:IsA("TextButton") or p:IsA("ImageButton") then return true end
-        if string.find(_skiderLower(p.Name), "button", 1, true) then return true end
-        p = p.Parent
-    end
-    return false
-end
-
-local function _skiderIsExplicitLogo(o)
-    if not (o:IsA("ImageLabel") or o:IsA("ImageButton")) then return false end
-    local n = _skiderLower(o.Name)
-    local p = o.Parent and _skiderLower(o.Parent.Name) or ""
-    return string.find(n, "logo", 1, true) ~= nil
-        or string.find(n, "brand", 1, true) ~= nil
-        or string.find(n, "hubicon", 1, true) ~= nil
-        or string.find(n, "toggleuibtn", 1, true) ~= nil
-        or string.find(p, "logo", 1, true) ~= nil
-        or string.find(p, "brand", 1, true) ~= nil
+	if typeof(seq) ~= "ColorSequence" then return seq end
+	local pts = {}
+	for _, kp in ipairs(seq.Keypoints) do
+		pts[#pts + 1] = ColorSequenceKeypoint.new(kp.Time, _skiderAccent(kp.Value, false))
+	end
+	return ColorSequence.new(pts)
 end
 
 local function _skiderIsHubRoot(root)
-    if not root or not root:IsA("ScreenGui") then return false end
-    if _skiderCreatedDuringMain[root] then return true end
-    local n = _skiderLower(root.Name)
-    if string.find(n, "nousigi", 1, true)
-        or string.find(n, "skider", 1, true)
-        or string.find(n, "banana", 1, true)
-    then
-        return true
-    end
-    for _, o in ipairs(root:GetDescendants()) do
-        if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and _skiderHasBrandText(o.Text) then
-            return true
-        end
-    end
-    return false
+	if not root or not root:IsA("ScreenGui") then return false end
+	local n = _skiderLower(root.Name)
+	if n:find("nousigi", 1, true) or n:find("skider", 1, true) or n:find("banana", 1, true) then
+		return true
+	end
+	for _, o in ipairs(root:GetDescendants()) do
+		if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and _skiderIsHubText(o.Text) then
+			return true
+		end
+	end
+	return false
 end
 
-local function _skiderPatchOwnFloatingToggle(root)
-    if not root or not root:IsA("ScreenGui") then return end
-    -- This function is only called for an already-verified hub root. It never scans PlayerGui.
-    local cam = workspace.CurrentCamera
-    local viewport = cam and cam.ViewportSize or Vector2.new(1920, 1080)
-    for _, img in ipairs(root:GetDescendants()) do
-        if img:IsA("ImageButton") then
-            pcall(function()
-                local sz, pos = img.AbsoluteSize, img.AbsolutePosition
-                if img.Image ~= ""
-                    and sz.X >= 32 and sz.X <= 110
-                    and sz.Y >= 32 and sz.Y <= 110
-                    and math.abs(sz.X - sz.Y) <= 24
-                    and pos.X <= math.max(180, viewport.X * 0.20)
-                    and pos.Y >= viewport.Y * 0.45
-                then
-                    img.Image = SKIDER_HUB_LOGO
-                    img.ImageRectOffset = Vector2.new(0, 0)
-                    img.ImageRectSize = Vector2.new(0, 0)
-                    img.ImageColor3 = Color3.new(1, 1, 1)
-                end
-            end)
-        end
-    end
+local function _skiderNearestButtonSurface(textObj)
+	local p = textObj
+	for _ = 1, 4 do
+		p = p and p.Parent
+		if not p then break end
+		if p:IsA("TextButton") or p:IsA("ImageButton") then return p end
+		if p:IsA("Frame") then
+			local ok, size = pcall(function() return p.AbsoluteSize end)
+			if ok and size.X <= 220 and size.Y <= 80 then return p end
+		end
+	end
+	return textObj:IsA("TextButton") and textObj or nil
 end
 
-local function _skiderPatchHeaderLogo(root)
-    local labels, images = {}, {}
-    for _, o in ipairs(root:GetDescendants()) do
-        if (o:IsA("TextLabel") or o:IsA("TextButton")) and _skiderHasBrandText(o.Text) then
-            labels[#labels + 1] = o
-        elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
-            images[#images + 1] = o
-        end
-    end
-    for _, img in ipairs(images) do
-        pcall(function()
-            if _skiderIsExplicitLogo(img) then
-                img.Image = SKIDER_HUB_LOGO
-                img.ImageRectOffset = Vector2.new(0, 0)
-                img.ImageRectSize = Vector2.new(0, 0)
-                img.ImageColor3 = Color3.new(1, 1, 1)
-                return
-            end
-            local sz = img.AbsoluteSize
-            if img.Image == "" or sz.X < 20 or sz.Y < 20 or sz.X > 120 or sz.Y > 120 then return end
-            if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.35 then return end
-            local ic = img.AbsolutePosition + sz / 2
-            for _, label in ipairs(labels) do
-                local lc = label.AbsolutePosition + label.AbsoluteSize / 2
-                if math.abs(ic.Y - lc.Y) <= 48 and math.abs(ic.X - lc.X) <= 150 then
-                    img.Image = SKIDER_HUB_LOGO
-                    img.ImageRectOffset = Vector2.new(0, 0)
-                    img.ImageRectSize = Vector2.new(0, 0)
-                    img.ImageColor3 = Color3.new(1, 1, 1)
-                    break
-                end
-            end
-        end)
-    end
+local function _skiderStyleClickButton(textObj)
+	if not textObj or _skiderLower((textObj.Text or ""):gsub("%s+", "")) ~= "click" then return end
+	pcall(function()
+		textObj.TextColor3 = SKIDER_TEXT_WHITE
+		textObj.TextStrokeTransparency = 1
+		textObj.Font = Enum.Font.GothamSemibold
+	end)
+	local surface = _skiderNearestButtonSurface(textObj)
+	if not surface then return end
+	pcall(function()
+		surface.BackgroundTransparency = 0
+		surface.BackgroundColor3 = SKIDER_GREEN
+		if surface:IsA("ImageButton") then
+			surface.ImageTransparency = 1
+			surface.ImageColor3 = Color3.new(1,1,1)
+		end
+	end)
+	for _, c in ipairs(surface:GetChildren()) do
+		if c:IsA("UIGradient") then
+			pcall(function() c.Enabled = false end)
+		elseif c:IsA("ImageLabel") then
+			pcall(function() c.ImageTransparency = 1 end)
+		end
+	end
+	local corner = surface:FindFirstChildOfClass("UICorner")
+	if not corner then corner = Instance.new("UICorner", surface) end
+	corner.CornerRadius = UDim.new(0, 8)
+	local stroke = surface:FindFirstChild("SkiderStroke") or Instance.new("UIStroke")
+	stroke.Name = "SkiderStroke"
+	stroke.Color = SKIDER_GREEN_HOVER
+	stroke.Transparency = 0.30
+	stroke.Thickness = 1
+	stroke.Parent = surface
 end
 
-local function _skiderApplyObject(o)
-    if not o or not o.Parent then return end
-    pcall(function()
-        if o:IsA("GuiObject") then
-            o.BackgroundColor3 = _skiderGreenColor(o.BackgroundColor3)
-            o.BorderColor3 = _skiderGreenColor(o.BorderColor3)
-        end
-
-        if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-            local newText = _skiderReplaceBrandText(o.Text)
-            if _skiderHasBrandText(newText) then
-                newText = newText:gsub("<.->", "")
-                o.RichText = false
-                o.TextColor3 = SKIDER_GREEN
-                pcall(function() o.TextStrokeColor3 = SKIDER_GREEN_DEEP end)
-            elseif _skiderIsButtonText(o) then
-                -- All button captions are white for clear contrast on dark-green buttons.
-                o.TextColor3 = SKIDER_TEXT_WHITE
-                pcall(function() o.TextStrokeColor3 = Color3.fromRGB(0, 0, 0) end)
-            else
-                local _, sat, val = o.TextColor3:ToHSV()
-                if sat >= 0.12 or val < 0.55 then o.TextColor3 = SKIDER_TEXT_DIM end
-            end
-            if newText ~= o.Text then o.Text = newText end
-        end
-
-        if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-            -- Never identify logos by image asset reuse or screen position.
-            -- Only explicit hub-logo objects are replaced here; the generic header logo
-            -- is handled by _skiderPatchHeaderLogo inside the already-verified hub root.
-            if _skiderIsExplicitLogo(o) then
-                o.Image = SKIDER_HUB_LOGO
-                o.ImageRectOffset = Vector2.new(0, 0)
-                o.ImageRectSize = Vector2.new(0, 0)
-                o.ImageColor3 = Color3.new(1, 1, 1)
-            else
-                o.ImageColor3 = _skiderGreenColor(o.ImageColor3)
-            end
-        end
-
-        if o:IsA("ScrollingFrame") then o.ScrollBarImageColor3 = SKIDER_GREEN end
-        if o:IsA("UIStroke") then o.Color = _skiderGreenColor(o.Color) end
-        if o:IsA("UIGradient") then o.Color = _skiderGreenSequence(o.Color) end
-    end)
+local function _skiderPatchLogos(root, brandLabels)
+	local images = {}
+	for _, o in ipairs(root:GetDescendants()) do
+		if o:IsA("ImageLabel") or o:IsA("ImageButton") then images[#images + 1] = o end
+	end
+	for _, img in ipairs(images) do
+		pcall(function()
+			local n = _skiderLower(img.Name)
+			local pn = img.Parent and _skiderLower(img.Parent.Name) or ""
+			local explicit = n:find("logo",1,true) or n:find("brand",1,true) or n:find("toggle",1,true)
+				or pn:find("logo",1,true) or pn:find("brand",1,true)
+			local nearBrand = false
+			if not explicit then
+				local sz = img.AbsoluteSize
+				if img.Image ~= "" and sz.X >= 20 and sz.Y >= 20 and sz.X <= 120 and sz.Y <= 120 then
+					local ic = img.AbsolutePosition + sz / 2
+					for _, label in ipairs(brandLabels) do
+						local lc = label.AbsolutePosition + label.AbsoluteSize / 2
+						if math.abs(ic.Y-lc.Y) <= 52 and math.abs(ic.X-lc.X) <= 160 then nearBrand = true break end
+					end
+				end
+			end
+			if explicit or nearBrand then
+				img.Image = SKIDER_HUB_LOGO
+				img.ImageRectOffset = Vector2.new(0,0)
+				img.ImageRectSize = Vector2.new(0,0)
+				img.ImageColor3 = Color3.new(1,1,1)
+			end
+		end)
+	end
 end
 
-local function _skiderWatchObject(o)
-    if _skiderWatched[o] then return end
-    _skiderWatched[o] = true
-    local props = {}
-    if o:IsA("GuiObject") then
-        props[#props + 1] = "BackgroundColor3"
-        props[#props + 1] = "BorderColor3"
-    end
-    if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-        props[#props + 1] = "Text"
-        props[#props + 1] = "TextColor3"
-        props[#props + 1] = "TextStrokeColor3"
-        props[#props + 1] = "RichText"
-    end
-    if o:IsA("ImageLabel") or o:IsA("ImageButton") then
-        props[#props + 1] = "ImageColor3"
-        if _skiderIsExplicitLogo(o) then props[#props + 1] = "Image" end
-    end
-    if o:IsA("ScrollingFrame") then props[#props + 1] = "ScrollBarImageColor3" end
-    if o:IsA("UIStroke") or o:IsA("UIGradient") then props[#props + 1] = "Color" end
-    for _, prop in ipairs(props) do
-        pcall(function()
-            o:GetPropertyChangedSignal(prop):Connect(function()
-                task.defer(_skiderApplyObject, o)
-            end)
-        end)
-    end
+local function _skiderPatchRootOnce(root)
+	if not _skiderIsHubRoot(root) then return end
+	local brandLabels = {}
+	for _, o in ipairs(root:GetDescendants()) do
+		pcall(function()
+			if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+				local nt = _skiderReplaceText(o.Text)
+				if nt ~= o.Text then o.Text = nt end
+				if _skiderIsHubText(o.Text) then
+					brandLabels[#brandLabels + 1] = o
+					o.RichText = false
+					o.TextColor3 = SKIDER_GREEN
+				elseif o:IsA("TextButton") then
+					o.TextColor3 = SKIDER_TEXT_WHITE
+				else
+					local _, sat, val = o.TextColor3:ToHSV()
+					if sat > 0.25 and val > 0.25 then o.TextColor3 = SKIDER_TEXT_DIM end
+				end
+				_skiderStyleClickButton(o)
+			elseif o:IsA("GuiObject") then
+				o.BackgroundColor3 = _skiderAccent(o.BackgroundColor3, false)
+				o.BorderColor3 = _skiderAccent(o.BorderColor3, true)
+			end
+			if o:IsA("UIStroke") then o.Color = _skiderAccent(o.Color, false) end
+			if o:IsA("UIGradient") and o.Enabled then o.Color = _skiderGreenSequence(o.Color) end
+			if o:IsA("ScrollingFrame") then o.ScrollBarImageColor3 = SKIDER_GREEN end
+		end)
+	end
+	_skiderPatchLogos(root, brandLabels)
 end
 
-local function _skiderRegisterRoot(root)
-    if not root or not root:IsA("ScreenGui") or not _skiderIsHubRoot(root) then return end
-    _skiderRoots[root] = true
-    if not root:GetAttribute("SkiderScopedThemeHooked") then
-        pcall(function() root:SetAttribute("SkiderScopedThemeHooked", true) end)
-        root.DescendantAdded:Connect(function(o)
-            task.delay(0.02, function()
-                if root.Parent and o.Parent then
-                    _skiderApplyObject(o)
-                    _skiderWatchObject(o)
-                    _skiderPatchOwnFloatingToggle(root)
-                    _skiderPatchHeaderLogo(root)
-                end
-            end)
-        end)
-    end
+local function _skiderPatchUIOnce()
+	local containers = { game:GetService("CoreGui") }
+	pcall(function()
+		if gethui then
+			local h = gethui()
+			if h and h ~= containers[1] then containers[#containers + 1] = h end
+		end
+	end)
+	for _, container in ipairs(containers) do
+		for _, root in ipairs(container:GetChildren()) do
+			if root:IsA("ScreenGui") then _skiderPatchRootOnce(root) end
+		end
+	end
 end
 
-local function _skiderPatchRoot(root)
-    if not root or not root.Parent or not _skiderIsHubRoot(root) then return end
-    _skiderPatchOwnFloatingToggle(root)
-    _skiderPatchHeaderLogo(root)
-    _skiderApplyObject(root)
-    _skiderWatchObject(root)
-    for _, o in ipairs(root:GetDescendants()) do
-        _skiderApplyObject(o)
-        _skiderWatchObject(o)
-    end
+-- Keep notifications branded without installing a permanent GUI watcher.
+if type(A.CreateNoti) == "function" then
+	local _skiderCreateNoti = A.CreateNoti
+	A.CreateNoti = function(params)
+		if type(params) == "table" then params.Title = "Skider Hub" end
+		local result = _skiderCreateNoti(params)
+		-- One delayed pass only; no persistent notification watcher.
+		task.delay(0.08, _skiderPatchUIOnce)
+		return result
+	end
 end
 
--- Only CoreGui/gethui are theme containers. PlayerGui is intentionally excluded.
-local _skiderContainers = { game:GetService("CoreGui") }
-pcall(function()
-    if gethui then
-        local h = gethui()
-        if h and h ~= _skiderContainers[1] then _skiderContainers[#_skiderContainers + 1] = h end
-    end
-end)
-
--- Capture only ScreenGuis created by the hub while CreateMain is running.
-for _, container in ipairs(_skiderContainers) do
-    pcall(function()
-        container.DescendantAdded:Connect(function(o)
-            if o:IsA("ScreenGui") and _skiderCreatingMain then
-                _skiderCreatedDuringMain[o] = true
-                task.defer(_skiderRegisterRoot, o)
-            elseif o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-                if _skiderHasBrandText(o.Text) then
-                    local root = _skiderScreenAncestor(o)
-                    if root then task.defer(_skiderRegisterRoot, root) end
-                end
-            end
-        end)
-    end)
-end
-
-_skiderCreatingMain = true
 Main = A.CreateMain({
-    Title = "Skider Hub",
-    Desc = " - Blox Fruit",
-    Image = SKIDER_HUB_LOGO,
-    Logo = SKIDER_HUB_LOGO,
-    Icon = SKIDER_HUB_LOGO,
+	Title = "Skider Hub",
+	Desc = " - Blox Fruit",
+	Image = SKIDER_HUB_LOGO,
+	Logo = SKIDER_HUB_LOGO,
+	Icon = SKIDER_HUB_LOGO,
 })
-_skiderCreatingMain = false
 
--- Initial discovery is restricted to hub-identifiable ScreenGuis in CoreGui/gethui.
-for _, container in ipairs(_skiderContainers) do
-    for _, root in ipairs(container:GetChildren()) do
-        if root:IsA("ScreenGui") and _skiderIsHubRoot(root) then _skiderRegisterRoot(root) end
-    end
-end
-
-task.spawn(function()
-    while getgenv().LoadScript ~= false do
-        for _, container in ipairs(_skiderContainers) do
-            if container and container.Parent then
-                for _, root in ipairs(container:GetChildren()) do
-                    if root:IsA("ScreenGui") and _skiderIsHubRoot(root) then
-                        _skiderRegisterRoot(root)
-                    end
-                end
-            end
-        end
-        for root in pairs(_skiderRoots) do _skiderPatchRoot(root) end
-        task.wait(0.15)
-    end
-end)
+-- A few finite passes are enough for the library's startup popup/toggle/pages.
+-- They terminate completely; there is no permanent theme polling loop.
+task.delay(0.10, _skiderPatchUIOnce)
+task.delay(1.5, _skiderPatchUIOnce)
+task.delay(4.0, _skiderPatchUIOnce)
 
 getgenv().LoadScript = true
 PageShop = Main.CreatePage({ Page_Name = "Shop", Page_Title = "Shop" })
@@ -1457,22 +943,22 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			RATE_COOLDOWN = 30,
 		},
 		{
-			BG = Color3.fromRGB(9, 13, 11),
-			SURFACE = Color3.fromRGB(11, 18, 14),
-			ROW = Color3.fromRGB(13, 24, 17),
-			ROW_HOVER = Color3.fromRGB(12, 42, 24),
-			ROW_TOP = Color3.fromRGB(10, 34, 21),
-			BORDER = Color3.fromRGB(22, 48, 31),
-			BORDER_HOV = Color3.fromRGB(18, 105, 58),
-			CYAN = Color3.fromRGB(18, 105, 58),
-			CYAN_DIM = Color3.fromRGB(12, 70, 38),
-			GREEN = Color3.fromRGB(18, 105, 58),
-			GREEN_GLOW = Color3.fromRGB(24, 130, 72),
-			DARK_GREEN = Color3.fromRGB(18, 105, 58),
-			RED = Color3.fromRGB(18, 105, 58),
-			TEXT_PRI = Color3.fromRGB(232, 240, 235),
-			TEXT_SEC = Color3.fromRGB(118, 148, 128),
-			TEXT_DIM = Color3.fromRGB(70, 96, 78),
+			BG = Color3.fromRGB(10, 11, 16),
+			SURFACE = Color3.fromRGB(13, 14, 20),
+			ROW = Color3.fromRGB(16, 17, 26),
+			ROW_HOVER = Color3.fromRGB(20, 22, 35),
+			ROW_TOP = Color3.fromRGB(10, 22, 34),
+			BORDER = Color3.fromRGB(28, 31, 48),
+			BORDER_HOV = Color3.fromRGB(0, 80, 120),
+			CYAN = Color3.fromRGB(0, 212, 255),
+			CYAN_DIM = Color3.fromRGB(0, 80, 120),
+			GREEN = Color3.fromRGB(0, 204, 102),
+			GREEN_GLOW = Color3.fromRGB(0, 255, 136),
+			AMBER = Color3.fromRGB(255, 170, 0),
+			RED = Color3.fromRGB(255, 68, 85),
+			TEXT_PRI = Color3.fromRGB(232, 234, 240),
+			TEXT_SEC = Color3.fromRGB(80, 90, 120),
+			TEXT_DIM = Color3.fromRGB(45, 52, 82),
 		}
 	local function S(L, d, I)
 		local _ = Instance.new(L)
@@ -1579,7 +1065,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		{
 			Size = UDim2.new(0, 28, 0, 28),
 			Position = UDim2.new(1, -42, 0, 12),
-			BackgroundColor3 = Color3.fromRGB(10, 38, 24),
+			BackgroundColor3 = Color3.fromRGB(26, 13, 13),
 			BorderSizePixel = 0,
 			Text = "X",
 			TextColor3 = Q.RED,
@@ -1589,7 +1075,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		f
 	)
 	L(3, N)
-	K(N, Color3.fromRGB(10, 38, 24), Color3.fromRGB(12, 70, 38))
+	K(N, Color3.fromRGB(26, 13, 13), Color3.fromRGB(60, 20, 20))
 	N.MouseButton1Click:Connect(function()
 		o:Destroy()
 	end)
@@ -1634,17 +1120,17 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			{
 				Size = UDim2.new(0, 82, 0, 26),
 				Position = UDim2.new(1, -270, 0.5, -13),
-				BackgroundColor3 = Color3.fromRGB(10, 38, 24),
+				BackgroundColor3 = Color3.fromRGB(14, 22, 40),
 				BorderSizePixel = 0,
 				Text = "REFRESH",
-				TextColor3 = Color3.fromRGB(24, 130, 72),
+				TextColor3 = Color3.fromRGB(100, 140, 200),
 				Font = Enum.Font.GothamBold,
 				TextSize = 10,
 			},
 			f
 		)
 	L(3, y)
-	K(y, Color3.fromRGB(10, 38, 24), Color3.fromRGB(12, 70, 38))
+	K(y, Color3.fromRGB(14, 22, 40), Color3.fromRGB(10, 30, 55))
 	local x = S(
 		"TextButton",
 		{
@@ -1666,7 +1152,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		{
 			Size = UDim2.new(0, 82, 0, 26),
 			Position = UDim2.new(1, -94, 0.5, -13),
-			BackgroundColor3 = Color3.fromRGB(10, 38, 24),
+			BackgroundColor3 = Color3.fromRGB(38, 18, 18),
 			BorderSizePixel = 0,
 			Text = "RESET",
 			TextColor3 = Q.RED,
@@ -1676,7 +1162,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		f
 	)
 	L(3, k)
-	K(k, Color3.fromRGB(10, 38, 24), Color3.fromRGB(12, 70, 38))
+	K(k, Color3.fromRGB(38, 18, 18), Color3.fromRGB(60, 20, 20))
 	local P = S(
 		"Frame",
 		{
@@ -1804,7 +1290,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			{
 				Size = UDim2.new(1, -8, 0, 28),
 				Position = UDim2.new(0, 4, 0, 118),
-				BackgroundColor3 = Color3.fromRGB(10, 38, 24),
+				BackgroundColor3 = Color3.fromRGB(38, 24, 6),
 				BorderSizePixel = 0,
 				ZIndex = 15,
 				Visible = false,
@@ -1812,7 +1298,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			V
 		)
 	L(3, Z)
-	d(1, Q.DARK_GREEN, 0.4, Z)
+	d(1, Q.AMBER, 0.4, Z)
 	local C = S(
 		"TextLabel",
 		{
@@ -1820,7 +1306,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			Position = UDim2.new(0, 6, 0, 0),
 			BackgroundTransparency = 1,
 			Text = "\226\143\179 429 RATE LIMITED \226\128\148 WAITING...",
-			TextColor3 = Q.DARK_GREEN,
+			TextColor3 = Q.AMBER,
 			Font = Enum.Font.GothamBold,
 			TextSize = 10,
 			TextXAlignment = Enum.TextXAlignment.Center,
@@ -1844,7 +1330,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		{
 			Size = UDim2.new(0, 360, 0, 36),
 			Position = UDim2.new(0.5, -180, 1, -50),
-			BackgroundColor3 = Color3.fromRGB(10, 38, 24),
+			BackgroundColor3 = Color3.fromRGB(10, 26, 40),
 			BorderSizePixel = 0,
 			ZIndex = 30,
 			Visible = false,
@@ -1927,8 +1413,8 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 					B.Visible = true
 					f.Text = _
 				end
-				V("RATE LIMITED \226\128\148 WAITING " .. math.floor(m) .. "s", Q.DARK_GREEN)
-				D(string.format("\226\143\179 429 \226\128\148 RETRYING IN %.0fs", m), Q.DARK_GREEN)
+				V("RATE LIMITED \226\128\148 WAITING " .. math.floor(m) .. "s", Q.AMBER)
+				D(string.format("\226\143\179 429 \226\128\148 RETRYING IN %.0fs", m), Q.AMBER)
 				warn(
 					string.format(
 						"[ServerBrowser] 429 \226\128\148 waiting %.1fs (attempt %d/%d)",
@@ -2006,7 +1492,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		if C < 100 then
 			return Q.GREEN_GLOW
 		elseif C < 200 then
-			return Q.DARK_GREEN
+			return Q.AMBER
 		else
 			return Q.RED
 		end
@@ -2015,7 +1501,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		if q > 0.8 then
 			return Q.RED
 		elseif q > 0.5 then
-			return Q.DARK_GREEN
+			return Q.AMBER
 		else
 			return Q.CYAN
 		end
@@ -2056,7 +1542,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 				Position = UDim2.new(0, 44, 0, 8),
 				BackgroundTransparency = 1,
 				Text = tostring(c.id):sub(1, 18) .. "...",
-				TextColor3 = Color3.fromRGB(70, 96, 78),
+				TextColor3 = Color3.fromRGB(60, 75, 110),
 				Font = Enum.Font.Code,
 				TextSize = 10,
 				TextXAlignment = Enum.TextXAlignment.Left,
@@ -2098,7 +1584,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			{
 				Size = UDim2.new(0, 50, 0, 2),
 				Position = UDim2.new(0, 210, 0, 28),
-				BackgroundColor3 = Color3.fromRGB(15, 31, 21),
+				BackgroundColor3 = Color3.fromRGB(22, 24, 36),
 				BorderSizePixel = 0,
 			},
 			W
@@ -2212,7 +1698,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 				B.Visible = true
 				f.Text = "SCANNING PAGE " .. E.pages .. "\226\128\166"
 			end
-			V("PAGE " .. E.pages .. " \226\128\148 " .. #E.servers .. " FOUND", Q.DARK_GREEN)
+			V("PAGE " .. E.pages .. " \226\128\148 " .. #E.servers .. " FOUND", Q.AMBER)
 			local e = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(R)
 			local R, Y = N(if E.cursor then e .. "&cursor=" .. G:UrlEncode(E.cursor) else e, I)
 			if not R then
@@ -2258,8 +1744,8 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		K()
 		if P then
 			if #E.servers > 0 then
-				D(o(P) .. " \226\128\148 SHOWING " .. #E.servers .. " CACHED", Q.DARK_GREEN)
-				V(o(P) .. " | PARTIAL " .. #E.servers, Q.DARK_GREEN)
+				D(o(P) .. " \226\128\148 SHOWING " .. #E.servers .. " CACHED", Q.AMBER)
+				V(o(P) .. " | PARTIAL " .. #E.servers, Q.AMBER)
 			else
 				V(o(P), Q.RED)
 			end
@@ -2290,8 +1776,8 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 	x.MouseButton1Click:Connect(function()
 		task.spawn(function()
 			if E.finished then
-				D("ALL PAGES LOADED \226\128\148 NO MORE SERVERS", Q.DARK_GREEN)
-				V("NO MORE PAGES", Q.DARK_GREEN)
+				D("ALL PAGES LOADED \226\128\148 NO MORE SERVERS", Q.AMBER)
+				V("NO MORE PAGES", Q.AMBER)
 				return
 			end
 			L(2, false)
@@ -2309,7 +1795,7 @@ end)
 StatusPlaceId = SectionServer.CreateLabel({ Title = "PlaceId: " .. game.PlaceId })
 local G = ""
 SectionServer.CreateBox(
-	{ Title = "Input JobId Normal And JobId Skider", Placeholder = "Type here", Number = false, Default = nil },
+	{ Title = "Input JobId Normal And JobId BananaCat", Placeholder = "Type here", Number = false, Default = nil },
 	function(f)
 		G = f
 	end
@@ -2409,11 +1895,11 @@ function HopServer(R)
 	end
 	local K = R or (Settings["Time Hop Server"] or 5)
 	require(game:GetService("ReplicatedStorage").Notification)
-		.new("<Color=Green>Skider Hub : Wait " .. K .. "s [Hop Server]<Color=/>")
+		.new("<Color=Red>Skider Hub : Wait " .. K .. "s [Hop Server]<Color=/>")
 		:Display()
 	while wait(K) do
 		require(game:GetService("ReplicatedStorage").Notification)
-			.new("<Color=Green>Skider Hub : Hop Server<Color=/>")
+			.new("<Color=Red>Skider Hub : Hop Server<Color=/>")
 			:Display()
 		m()
 	end
@@ -2423,7 +1909,7 @@ SectionServer.CreateButton({ Title = "Hop Server" }, function()
 end)
 function HopLessAll()
 	require(game:GetService("ReplicatedStorage").Notification)
-		.new("<Color=Green>Skider Hub : Hop Server<Color=/>")
+		.new("<Color=Red>Banana Hub : Hop Server<Color=/>")
 		:Display()
 	local K, R, m, E = game.PlaceId, {}, "", os.date("!*t").hour
 	if
@@ -3457,63 +2943,27 @@ function DetectPrehistoricIsland()
 		end
 	end
 end
--- Stable noclip state. Preserve the original collision state of each character part.
-local _SkiderCollisionOriginal = setmetatable({}, { __mode = "k" })
-local _SkiderManualNoclip = false
-local _SkiderMovementNoclip = false
-local _SkiderNoclipWasActive = false
-
-local function _SkiderDisableCharacterCollision(character)
-	if not character then return end
-	for _, part in ipairs(character:GetDescendants()) do
-		if part:IsA("BasePart") then
-			if _SkiderCollisionOriginal[part] == nil then
-				_SkiderCollisionOriginal[part] = part.CanCollide
+function SetNoClip(l)
+	getgenv().noclip = l
+	local Q = t.Character
+	if not Q then
+		return
+	end
+	local S, L = Q:FindFirstChild("HumanoidRootPart"), Q:FindFirstChildOfClass("Humanoid")
+	if not l then
+		for l, l in ipairs(Q:GetDescendants()) do
+			if l:IsA("BasePart") then
+				l.CanCollide = true
 			end
-			if part.CanCollide then part.CanCollide = false end
+		end
+		if L then
+			L.PlatformStand = false
+		end
+		if S and (S:FindFirstChild("FloatForce")) and not ToggleNoclip() then
+			S.FloatForce:Destroy()
 		end
 	end
 end
-
-local function _SkiderRestoreCharacterCollision(character)
-	if not character then return end
-	for part, oldValue in pairs(_SkiderCollisionOriginal) do
-		if part and part.Parent and part:IsDescendantOf(character) then
-			pcall(function() part.CanCollide = oldValue end)
-		end
-		_SkiderCollisionOriginal[part] = nil
-	end
-end
-
-local function _SkiderRemoveMovementForces(character)
-	if not character then return end
-	for _, obj in ipairs(character:GetDescendants()) do
-		if obj:IsA("BodyVelocity") and (obj.Name == "eltrul" or obj.Name == "FloatForce") then
-			pcall(function() obj:Destroy() end)
-		end
-	end
-end
-
-function SetNoClip(enabled)
-	_SkiderManualNoclip = enabled == true
-	getgenv().noclip = enabled == true
-	local character = t.Character
-	if not character then return end
-	if enabled then
-		_SkiderDisableCharacterCollision(character)
-	else
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if humanoid then humanoid.PlatformStand = false end
-		local featureNoclip = false
-		pcall(function() featureNoclip = ToggleNoclip() == true end)
-		if not _SkiderMovementNoclip and not (Settings and Settings.Noclip) and not featureNoclip then
-			_SkiderRemoveMovementForces(character)
-			_SkiderRestoreCharacterCollision(character)
-			_SkiderNoclipWasActive = false
-		end
-	end
-end
-
 function ToggleNoclip()
 	if
 		Settings["Start Farm"]
@@ -3611,147 +3061,93 @@ function ToggleNoclip()
 		return true
 	end
 end
-local _SkiderTweenService = game:GetService("TweenService")
-local _SkiderRunService = game:GetService("RunService")
-
-local function _SkiderShouldNoclip()
-	local featureNoclip = false
-	pcall(function() featureNoclip = ToggleNoclip() == true end)
-	return _SkiderManualNoclip
-		or _SkiderMovementNoclip
-		or getgenv().noclip == true
-		or (Settings and Settings.Noclip == true)
-		or featureNoclip
-end
-
-if getgenv().__SKIDER_BNN_NOCLIP_CONNECTION then
-	pcall(function() getgenv().__SKIDER_BNN_NOCLIP_CONNECTION:Disconnect() end)
-end
-getgenv().__SKIDER_BNN_NOCLIP_CONNECTION = _SkiderRunService.Stepped:Connect(function()
-	local character = t.Character
-	if not character then return end
-	local active = _SkiderShouldNoclip()
-	if active then
-		_SkiderDisableCharacterCollision(character)
-		_SkiderNoclipWasActive = true
-	elseif _SkiderNoclipWasActive then
-		_SkiderRestoreCharacterCollision(character)
-		_SkiderNoclipWasActive = false
-	end
-end)
-
-if getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION then
-	pcall(function() getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION:Disconnect() end)
-end
-getgenv().__SKIDER_BNN_CHAR_ADDED_CONNECTION = t.CharacterAdded:Connect(function(character)
-	_SkiderMovementNoclip = false
-	_SkiderNoclipWasActive = false
-	table.clear(_SkiderCollisionOriginal)
-	task.defer(function()
-		if character and _SkiderShouldNoclip() then
-			_SkiderDisableCharacterCollision(character)
-			_SkiderNoclipWasActive = true
+local l = game:GetService("TweenService")
+getgenv().TweenManager = {
+	currentTween = nil,
+	currentPart = nil,
+	currentGoal = nil,
+	TweenRunning = false,
+	CancelTweenOnly = function()
+		local Q, S = TweenManager.currentTween, getgenv().Tween
+		if Q then
+			pcall(function()
+				Q:Cancel()
+				Q:Destroy()
+			end)
 		end
-	end)
-end)
-
-getgenv().TweenManager = getgenv().TweenManager or {}
-TweenManager = getgenv().TweenManager
-
-pcall(function()
-	local oldTween = TweenManager.currentTween or getgenv().Tween
-	if oldTween and oldTween.Cancel then oldTween:Cancel() end
-end)
-
-TweenManager.currentTween = nil
-TweenManager.currentPart = nil
-TweenManager.currentGoal = nil
-TweenManager.currentSpeed = nil
-TweenManager.TweenRunning = false
-TweenManager.lastRetarget = 0
-
-function TweenManager.CancelTweenOnly(keepNoclip)
-	local current = TweenManager.currentTween
-	local globalTween = getgenv().Tween
-	if current then
-		pcall(function() current:Cancel() end)
-		pcall(function() current:Destroy() end)
-	end
-	if globalTween and globalTween ~= current then
-		pcall(function() globalTween:Cancel() end)
-		pcall(function() globalTween:Destroy() end)
-	end
-	TweenManager.currentTween = nil
-	TweenManager.currentPart = nil
-	TweenManager.currentGoal = nil
-	TweenManager.currentSpeed = nil
-	TweenManager.TweenRunning = false
-	getgenv().Tween = nil
-	if not keepNoclip then _SkiderMovementNoclip = false end
-end
-
-function TweenManager.PlayTween(part, tweenInfo, properties, options)
-	if not part or not part.Parent or not tweenInfo or type(properties) ~= "table" then return nil end
-	local goal = properties.CFrame
-	if typeof(goal) ~= "CFrame" then return nil end
-	options = options or {}
-	local epsilon = tonumber(options.TargetEpsilon) or 5
-	local cooldown = tonumber(options.RetargetCooldown) or 0.10
-	local now = tick()
-
-	if TweenManager.currentTween and TweenManager.currentPart == part and TweenManager.currentGoal then
-		local goalShift = (TweenManager.currentGoal.Position - goal.Position).Magnitude
-		if goalShift <= epsilon then return TweenManager.currentTween end
-		if now - (TweenManager.lastRetarget or 0) < cooldown and goalShift < 35 then
+		if S and S ~= Q then
+			pcall(function()
+				S:Cancel()
+				S:Destroy()
+			end)
+		end
+		TweenManager.currentTween = nil
+		TweenManager.currentPart = nil
+		TweenManager.currentGoal = nil
+		TweenManager.TweenRunning = false
+		getgenv().Tween = nil
+	end,
+	PlayTween = function(Q, S, L, d)
+		if not Q or not S or not L or not L.CFrame then
+			return
+		end
+		local I = (d or {}).TargetEpsilon or 12
+		if
+			TweenManager.currentTween
+			and TweenManager.currentPart == Q
+			and TweenManager.currentGoal
+			and I >= (TweenManager.currentGoal.Position - L.CFrame.Position).Magnitude
+		then
 			return TweenManager.currentTween
 		end
-	end
-
-	TweenManager.CancelTweenOnly(true)
-	_SkiderMovementNoclip = true
-	_SkiderDisableCharacterCollision(t.Character)
-
-	local tween = _SkiderTweenService:Create(part, tweenInfo, properties)
-	TweenManager.currentTween = tween
-	TweenManager.currentPart = part
-	TweenManager.currentGoal = goal
-	TweenManager.currentSpeed = options.Speed
-	TweenManager.TweenRunning = true
-	TweenManager.lastRetarget = now
-	getgenv().Tween = tween
-
-	local completedConnection
-	completedConnection = tween.Completed:Connect(function()
-		if completedConnection then completedConnection:Disconnect() end
-		if TweenManager.currentTween == tween then
-			TweenManager.currentTween = nil
-			TweenManager.currentPart = nil
-			TweenManager.currentGoal = nil
-			TweenManager.currentSpeed = nil
-			TweenManager.TweenRunning = false
-			getgenv().Tween = nil
-			_SkiderMovementNoclip = false
+		TweenManager.CancelTweenOnly()
+		local d = l:Create(Q, S, L)
+		TweenManager.currentTween = d
+		TweenManager.currentPart = Q
+		TweenManager.currentGoal = L.CFrame
+		TweenManager.TweenRunning = true
+		getgenv().Tween = d
+		d.Completed:Connect(function()
+			if TweenManager.currentTween == d then
+				TweenManager.currentTween = nil
+				TweenManager.currentPart = nil
+				TweenManager.currentGoal = nil
+				TweenManager.TweenRunning = false
+				getgenv().Tween = nil
+				pcall(function()
+					d:Destroy()
+				end)
+			end
+		end)
+		d:Play()
+		return d
+	end,
+	CancelCurrent = function()
+		local l = t.Character
+		local Q = l and (l:FindFirstChild("HumanoidRootPart"))
+		if TweenManager.currentTween or getgenv().Tween or Q and (Q:FindFirstChild("FloatForce")) then
+			TweenManager.CancelTweenOnly()
+			pcall(function()
+				if not l then
+					return
+				end
+				for S, S in ipairs(l:GetDescendants()) do
+					if S:IsA("BasePart") then
+						S.CanCollide = true
+					end
+				end
+				local S = l:FindFirstChildOfClass("Humanoid")
+				if S then
+					S.PlatformStand = false
+				end
+				if Q and (Q:FindFirstChild("FloatForce")) then
+					Q.FloatForce:Destroy()
+				end
+			end)
 		end
-		pcall(function() tween:Destroy() end)
-	end)
-
-	tween:Play()
-	return tween
-end
-
-function TweenManager.CancelCurrent()
-	TweenManager.CancelTweenOnly(false)
-	local character = t.Character
-	if character then
-		_SkiderRemoveMovementForces(character)
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if humanoid then humanoid.PlatformStand = false end
-		if not _SkiderShouldNoclip() then
-			_SkiderRestoreCharacterCollision(character)
-			_SkiderNoclipWasActive = false
-		end
-	end
-end
+	end,
+}
+TweenManager = getgenv().TweenManager
 local l, Q, S, L, d =
 	{
 		Sea1 = {
@@ -4282,61 +3678,132 @@ task.spawn(function()
 	travelFunctions.LoadBypassTPLocation()
 end)
 BypassTp = travelFunctions
-local _SkiderDefaultTweenSpeed = 150
-local x = game:GetService("RunService")
-local k = { LastTP = 0, LastCF = nil, ActiveConnection = nil, LastCall = 0, LastRetarget = 0 }
-
-local function y(root)
-	local character = t.Character
-	if not character or not root then return end
-	local oldForce = root:FindFirstChild("FloatForce")
-	if oldForce then pcall(function() oldForce:Destroy() end) end
-	local holder = character:FindFirstChild("Head") or root
-	if not holder:FindFirstChild("eltrul") then
-		local bv = Instance.new("BodyVelocity")
-		bv.Name = "eltrul"
-		bv.MaxForce = Vector3.new(0, math.huge, 0)
-		bv.Velocity = Vector3.zero
-		bv.P = 10000
-		bv.Parent = holder
+local function y(x)
+	if x:FindFirstChild("FloatForce") then
+		return
 	end
+	local k = Instance.new("BodyVelocity")
+	k.Name = "FloatForce"
+	k.Velocity = Vector3.new(0.0, 0.0, 0.0)
+	k.MaxForce = Vector3.new(100000, 100000, 100000)
+	k.P = 10000
+	k.Parent = x
 end
-
-local function B(root, targetCFrame, speed, arrivalEpsilon)
-	if not root or typeof(targetCFrame) ~= "CFrame" then return nil end
-	local character = t.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if not character or root.Parent ~= character or not humanoid or humanoid.Health <= 0 or root.Anchored then
-		return nil
+local x, k, P, e, Y =
+	game:GetService("RunService"), { LastTP = 0, LastCF = nil, ActiveConnection = nil, LastCall = 0 }, 18, 120, 40
+local function H()
+	local B = getgenv().CharSpeed
+	if not B then
+		B = { cap = 1000, nextRaise = 0 }
+		getgenv().CharSpeed = B
 	end
-
-	k.LastCall = tick()
-	speed = math.max(tonumber(speed) or tonumber(Settings["Speed Tween "]) or _SkiderDefaultTweenSpeed, 1)
-	arrivalEpsilon = tonumber(arrivalEpsilon) or 2.5
-	local distance = (targetCFrame.Position - root.Position).Magnitude
-
-	_SkiderMovementNoclip = true
-	_SkiderDisableCharacterCollision(character)
-	y(root)
-	I()
-
-	if distance <= arrivalEpsilon then
-		TweenManager.CancelTweenOnly(true)
-		root.CFrame = targetCFrame
-		root.AssemblyLinearVelocity = Vector3.zero
-		root.AssemblyAngularVelocity = Vector3.zero
-		return nil
+	return B
+end
+local function B(Z, C, J, F)
+	if not Z or typeof(C) ~= "CFrame" then
+		return
 	end
-
-	root.AssemblyLinearVelocity = Vector3.zero
-	root.AssemblyAngularVelocity = Vector3.zero
-	local duration = distance / speed
-	local info = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
-	return TweenManager.PlayTween(root, info, { CFrame = targetCFrame }, {
-		TargetEpsilon = math.max(5, arrivalEpsilon * 2),
-		RetargetCooldown = 0.10,
-		Speed = speed,
-	})
+	local q = t.Character
+	local c = q and (q:FindFirstChildOfClass("Humanoid"))
+	if not q or Z.Parent ~= q or not c or c.Health <= 0 then
+		return
+	end
+	if tick() - k.LastTP < 1 and C == k.LastCF then
+		return
+	end
+	TweenManager.CancelTweenOnly()
+	if k.ActiveConnection and coroutine.status(k.ActiveConnection) == "suspended" then
+		pcall(coroutine.close, k.ActiveConnection)
+	end
+	J = math.max(tonumber(J) or 350, 1)
+	F = tonumber(F) or 2.5
+	k.LastTP = tick()
+	k.LastCF = C
+	local c, D = false
+	local r = {}
+	local function n()
+		if k.ActiveConnection == D then
+			k.ActiveConnection = nil
+		end
+		if TweenManager.currentTween == r then
+			TweenManager.currentTween = nil
+			TweenManager.currentPart = nil
+			TweenManager.currentGoal = nil
+			TweenManager.TweenRunning = false
+		end
+		if getgenv().Tween == r then
+			getgenv().Tween = nil
+		end
+	end
+	r.Pause = function(u)
+		c = true
+		if D and coroutine.status(D) == "suspended" then
+			pcall(coroutine.close, D)
+		end
+	end
+	r.Cancel = function(u)
+		u:Pause()
+		n()
+	end
+	r.Destroy = function(u)
+		u:Cancel()
+	end
+	D = coroutine.create(function()
+		local u, W = Z.Position, C.Position
+		local O, z, U, h, p, w = (W - u).Magnitude, 1 / 0, (tick()), true
+		while not c do
+			local M = t.Character
+			local j = M and (M:FindFirstChildOfClass("Humanoid"))
+			if M ~= q or Z.Parent ~= M or not j or j.Health <= 0 or Z.Anchored or O <= F then
+				break
+			end
+			local q, v0, T0 = x.Heartbeat:Wait(), H(), Z.Position
+			M = (W - T0).Magnitude
+			if M < z - 5 then
+				z, U = M, (tick())
+			else
+				h = if tick() - U > 2.5 then false else h
+			end
+			if h and p and w and M > w + Y then
+				v0.cap = math.max(v0.cap * 0.7, e)
+				v0.nextRaise = tick() + 3
+				u = T0
+			else
+				u = if h and p and (T0 - p).Magnitude > Y then T0 else u
+			end
+			j = W - u
+			local e, Y = j.Magnitude, math.min(math.min(J, v0.cap) * q, P)
+			if e > Y and tick() >= v0.nextRaise then
+				v0.cap = math.min(v0.cap * 1.08, J)
+				v0.nextRaise = tick() + 1.5
+			end
+			u = if e <= Y or e <= 0.05 then W else u + j / e * Y
+			O = (W - u).Magnitude
+			I()
+			getgenv().noclip = true
+			Z.CFrame = CFrame.new(u)
+			Z.AssemblyLinearVelocity = Vector3.new(0.0, 0.0, 0.0)
+			Z.AssemblyAngularVelocity = Vector3.new(0.0, 0.0, 0.0)
+			p, w = u, M
+		end
+		if not c and Z.Parent == t.Character and (W - Z.Position).Magnitude <= F then
+			Z.CFrame = C
+			Z.AssemblyLinearVelocity = Vector3.new(0.0, 0.0, 0.0)
+			Z.AssemblyAngularVelocity = Vector3.new(0.0, 0.0, 0.0)
+		end
+		n()
+	end)
+	k.ActiveConnection = D
+	TweenManager.currentTween = r
+	TweenManager.currentPart = Z
+	TweenManager.currentGoal = C
+	TweenManager.TweenRunning = true
+	getgenv().Tween = r
+	if not coroutine.resume(D) then
+		r:Cancel()
+		return
+	end
+	return r
 end
 
 function toTarget(P, e)
@@ -4369,7 +3836,9 @@ function toTarget(P, e)
 		H.CFrame = H.CFrame * CFrame.new(0, 10, 0)
 		return
 	end
-	y(H)
+	if not H:FindFirstChild("FloatForce") then
+		y(H)
+	end
 	Y = (P.Position - H.Position).Magnitude
 	if Settings["Teleport Y"] then
 		local d, y = Settings["% Health Player"] or 40, Z.Health / Z.MaxHealth
@@ -4609,28 +4078,6 @@ function toTarget(P, e)
 	end
 	B(H, e, Y)
 end
-
-task.spawn(function()
-	while task.wait(0.20) do
-		if not TweenManager.TweenRunning and tick() - (k.LastCall or 0) > 0.45 then
-			_SkiderMovementNoclip = false
-			local featureNoclip = false
-			pcall(function() featureNoclip = ToggleNoclip() == true end)
-			if not _SkiderManualNoclip and not (Settings and Settings.Noclip) and not featureNoclip then
-				getgenv().noclip = false
-			end
-			local character = t.Character
-			if character then
-				_SkiderRemoveMovementForces(character)
-				if not _SkiderShouldNoclip() then
-					_SkiderRestoreCharacterCollision(character)
-					_SkiderNoclipWasActive = false
-				end
-			end
-		end
-	end
-end)
-
 getgenv().BackupTween = toTarget
 spawn(function()
 	while wait(0.25) do
@@ -19821,11 +19268,11 @@ SectionWebhook.CreateToggle(
 	end
 )
 local b = {
-	Username = "Binini Hub",
+	Username = "Skider Hub",
 	AvatarURL = "https://images-ext-1.discordapp.net/external/9LSZu__Uvs7I0N8MWag-JmwF2iT-pHCHSe2UdixGEXQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1262364141968949308/a_0c5fb64e2cbb35d029d73b44576c6a60.gif",
 	BannerURL = "https://cdn.discordapp.com/attachments/1017024488665264218/1262729537578471504/banner_server.jpg",
 	Title = "Skider Hub Notification",
-	FooterText = "Binini Hub",
+	FooterText = "Skider Hub",
 	Color = 16776960,
 }
 function safe_str(s)
@@ -19923,9 +19370,9 @@ function Webhookprofile()
 			Color = 16776960,
 			BannerURL = "https://cdn.discordapp.com/attachments/1017024488665264218/1262729537578471504/banner_server.jpg",
 			AvatarURL = "https://images-ext-1.discordapp.net/external/9LSZu__Uvs7I0N8MWag-JmwF2iT-pHCHSe2UdixGEXQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1262364141968949308/a_0c5fb64e2cbb35d029d73b44576c6a60.gif",
-			Username = "Binini Hub",
-			Title = "Skider Hub Notification",
-			FooterText = "Binini Hub",
+			Username = "Skider Hub",
+			Title = "<:bananacon:1261744974534541352> Skider Hub Notification <:bananacon:1261744974534541352>",
+			FooterText = "Skider Hub",
 			FruitMinValue = 1000000,
 			ItemMinRarity = 3,
 			MaxFieldLen = 1024,
@@ -20218,87 +19665,61 @@ a.CreateToggle({ Title = "Black Screen", Desc = nil, Default = Settings["Black S
 	end)
 	SaveSettings("Black Screen", b)
 end)
-local function SerializeSettingsForClipboard(value)
-	local visited = {}
-
-	local function serialize(v, depth)
-		local valueType = type(v)
-		if valueType == "nil" then
-			return "nil"
-		elseif valueType == "boolean" or valueType == "number" then
-			return tostring(v)
-		elseif valueType == "string" then
-			return string.format("%q", v)
-		elseif valueType ~= "table" then
-			return string.format("%q", tostring(v))
+local function b(s)
+	if type(s) ~= "table" then
+		return s
+	end
+	local X, g, f, K, R = {}, {}, {}, "{\10", 1
+	while true do
+		local m = 0
+		for E, E in pairs(s) do
+			m += 1
 		end
-
-		if visited[v] then
-			return "nil --[[ cyclic table omitted ]]"
-		end
-		visited[v] = true
-
-		local indent = string.rep("\t", depth)
-		local childIndent = string.rep("\t", depth + 1)
-		local keys = {}
-		for key in pairs(v) do
-			table.insert(keys, key)
-		end
-		table.sort(keys, function(a, b)
-			local ta, tb = type(a), type(b)
-			if ta == tb then
-				if ta == "number" then return a < b end
-				return tostring(a) < tostring(b)
+		local E = 1
+		for l, Q in pairs(s) do
+			if X[s] == nil or E >= X[s] then
+				local S, d = string.find, T[24](K:len())
+				table.insert(
+					f,
+					if S(K, "}", T:d5(d))
+						then K .. ",\10"
+						else if not string.find(K, "\10", K:len()) then K .. "\10" else K
+				)
+				K = ""
+				d, S =
+					if type(l) == "number" or type(l) == "boolean"
+						then "[" .. tostring(l) .. "]"
+						else '["' .. tostring(l) .. '"]',
+					type(Q) == "number" or type(Q) == "boolean"
+				if S then
+					K ..= string.rep("\9", R) .. d .. " = " .. tostring(Q)
+				elseif type(Q) == "table" then
+					K ..= string.rep("\9", R) .. d .. " = {\10"
+					table.insert(g, s)
+					table.insert(g, Q)
+					X[s] = E + 1
+					break
+				else
+					K ..= string.rep("\9", R) .. d .. ' = "' .. tostring(Q) .. '"'
+				end
+				K = if E == m then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K .. ","
+			else
+				K = if E == m then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K
 			end
-			return ta < tb
-		end)
-
-		local out = { "{" }
-		for _, key in ipairs(keys) do
-			-- Always use bracket keys so spaces and Lua keywords are copied safely.
-			local keyText = "[" .. serialize(key, depth + 1) .. "]"
-			table.insert(out, "\n" .. childIndent .. keyText .. " = " .. serialize(v[key], depth + 1) .. ",")
+			E += 1
 		end
-		if #keys > 0 then
-			table.insert(out, "\n" .. indent)
+		K = if m == 0 then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K
+		if #g > 0 then
+			s = g[#g]
+			g[#g] = nil
+			R = X[s] == nil and R + 1 or R - 1
+		else
+			break
 		end
-		table.insert(out, "}")
-
-		visited[v] = nil
-		return table.concat(out)
 	end
-
-	return "getgenv().Config = " .. serialize(value, 0)
+	table.insert(f, K)
+	return "getgenv().Config = " .. table.concat(f)
 end
-
-local function CopyTextToClipboard(text)
-	local clipboardFn = nil
-	if type(setclipboard) == "function" then
-		clipboardFn = setclipboard
-	elseif type(toclipboard) == "function" then
-		clipboardFn = toclipboard
-	elseif type(set_clipboard) == "function" then
-		clipboardFn = set_clipboard
-	elseif type(Clipboard) == "table" and type(Clipboard.set) == "function" then
-		clipboardFn = function(value)
-			return Clipboard.set(value)
-		end
-	end
-
-	if not clipboardFn then
-		return false, "Executor does not support clipboard API"
-	end
-
-	local ok, result = pcall(clipboardFn, text)
-	if not ok then
-		return false, tostring(result)
-	end
-	if result == false then
-		return false, "Clipboard API returned false"
-	end
-	return true
-end
-
 a.CreateToggle(
 	{ Title = "Remove Notifications", Desc = nil, Default = Settings["Remove Notifications"] or false },
 	function(T)
@@ -20461,45 +19882,59 @@ spawn(function()
 		end
 	end)
 end)
+local function _skiderSerializeLua(value, depth)
+	depth = depth or 0
+	local tv = type(value)
+	if tv == "string" then return string.format("%q", value) end
+	if tv == "number" or tv == "boolean" then return tostring(value) end
+	if tv ~= "table" then return "nil" end
+	if depth > 8 then return "{}" end
+	local keys = {}
+	for k in pairs(value) do keys[#keys + 1] = k end
+	table.sort(keys, function(a,b) return tostring(a) < tostring(b) end)
+	local out = {"{"}
+	for _, k in ipairs(keys) do
+		local key = type(k) == "string" and ("[" .. string.format("%q", k) .. "]") or ("[" .. tostring(k) .. "]")
+		out[#out + 1] = key .. "=" .. _skiderSerializeLua(value[k], depth + 1) .. ","
+	end
+	out[#out + 1] = "}"
+	return table.concat(out)
+end
+
+local function _skiderCopyText(text)
+	local funcs = {}
+	if type(setclipboard) == "function" then funcs[#funcs + 1] = setclipboard end
+	if type(toclipboard) == "function" then funcs[#funcs + 1] = toclipboard end
+	if type(set_clipboard) == "function" then funcs[#funcs + 1] = set_clipboard end
+	for _, fn in ipairs(funcs) do
+		local ok = pcall(fn, text)
+		if ok then return true end
+	end
+	if type(Clipboard) == "table" and type(Clipboard.set) == "function" then
+		local ok = pcall(Clipboard.set, text)
+		if ok then return true end
+	end
+	return false
+end
+
 a.CreateButton({ Title = "Copy Setting" }, function()
-	local configText = SerializeSettingsForClipboard(Settings)
-	local ok, err = CopyTextToClipboard(configText)
-	if ok then
-		A.CreateNoti({ Title = "Skider Hub", Desc = "Successfully copied settings to clipboard", ShowTime = 5 })
+	local text = "getgenv().Config = " .. _skiderSerializeLua(Settings)
+	if _skiderCopyText(text) then
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Successfully copied settings", ShowTime = 5 })
+	elseif type(writefile) == "function" then
+		_ensureSettingsFolder()
+		local ok = pcall(function() writefile(FolderName .. "/CopiedSetting.lua", text) end)
+		A.CreateNoti({ Title = "Skider Hub", Desc = ok and "Clipboard unsupported - saved CopiedSetting.lua" or "Copy setting failed", ShowTime = 6 })
 	else
-		-- Fallback: save the exact copy text so unsupported executors still get the config.
-		local saved = false
-		if type(writefile) == "function" then
-			_ensureSettingsFolder()
-			saved = pcall(function()
-				writefile(FolderName .. "/CopiedSetting.lua", configText)
-			end)
-		end
-		A.CreateNoti({
-			Title = "Skider Hub",
-			Desc = saved and "Clipboard unsupported - saved as Skider Hub/CopiedSetting.lua" or ("Copy failed: " .. tostring(err)),
-			ShowTime = 7,
-		})
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Executor does not support clipboard", ShowTime = 6 })
 	end
 end)
 a.CreateBind({ Title = "Toggle GUI", Key = Enum.KeyCode.LeftControl }, function()
 	getgenv().UIToggled = not getgenv().UIToggled
-	local containers = { game:GetService("CoreGui") }
-	pcall(function()
-		if gethui then
-			local h = gethui()
-			if h and h ~= containers[1] then table.insert(containers, h) end
-		end
-	end)
-	for _, container in ipairs(containers) do
-		if container then
-			for _, gui in ipairs(container:GetChildren()) do
-				if gui:IsA("ScreenGui") then
-					local n = string.lower(gui.Name)
-					if string.find(n, "nousigi", 1, true) or string.find(n, "skider", 1, true) then
-						gui.Enabled = getgenv().UIToggled
-					end
-				end
+	if game.CoreGui:FindFirstChild("Nousigi Hub GUI") then
+		for T, T in ipairs(game.CoreGui:GetChildren()) do
+			if T.Name == "Nousigi Hub GUI" then
+				T.Enabled = getgenv().UIToggled
 			end
 		end
 	end
@@ -20531,8 +19966,8 @@ runAsync = require(game.ReplicatedStorage.Util.runAsync)
 Spinner = require(game:GetService("ReplicatedStorage").Controllers.UI.Spinner)
 SharedGachaUtil = require(game.ReplicatedStorage.Modules.Gacha.SharedGachaUtil)
 TextUtil = require(game.ReplicatedStorage.Modules.Util.TextUtil)
-if not getgenv().SkiderHubMainLoop then
-	getgenv().SkiderHubMainLoop = true
+if not getgenv().SkiderMainLoop then
+	getgenv().SkiderMainLoop = true
 	lastHopTick = tick()
 	lastFruitTick = tick()
 	x.RenderStepped:Connect(function()
