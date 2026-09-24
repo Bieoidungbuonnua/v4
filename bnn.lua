@@ -13,7 +13,7 @@ repeat
 until game:IsLoaded() and PlayersService.LocalPlayer
 
 local _startupPlayer = PlayersService.LocalPlayer
-FolderName = "Banana Cat Hub"
+FolderName = "Skider Hub"
 SaveFileNameGame = "-BloxFruitBNNC.json"
 SaveFileName = _startupPlayer.Name .. SaveFileNameGame
 
@@ -270,9 +270,77 @@ local _uiOk, A = pcall(function()
 end)
 if not _uiOk or type(A) ~= "table" then
 	getgenv().LoadScript = nil
-	error("[Banana Cat Hub] Failed to load UI library: " .. tostring(A))
+	error("[Skider Hub] Failed to load UI library: " .. tostring(A))
 end
-Main = A.CreateMain({ Title = "Blox Fruit", Desc = " - Blox Fruit" })
+local SKIDER_HUB_LOGO = "rbxassetid://90412962524051"
+local SKIDER_DARK_GREEN = Color3.fromRGB(18, 105, 58)
+Main = A.CreateMain({
+	Title = "Skider Hub",
+	Desc = " - Blox Fruit",
+	Image = SKIDER_HUB_LOGO,
+	Logo = SKIDER_HUB_LOGO,
+	Icon = SKIDER_HUB_LOGO,
+})
+
+-- Apply branding to the external UI library after it creates Nousigi Hub GUI.
+-- This only touches the hub UI, never Roblox/Blox Fruits UI.
+local function _isYellowUIColor(color)
+	if typeof(color) ~= "Color3" then
+		return false
+	end
+	local r, g, b = color.R, color.G, color.B
+	return r >= 0.55 and g >= 0.40 and b <= 0.30 and r >= g * 0.85
+end
+
+local function _applySkiderBrandingToObject(obj)
+	pcall(function()
+		if obj:IsA("GuiObject") then
+			if _isYellowUIColor(obj.BackgroundColor3) then obj.BackgroundColor3 = SKIDER_DARK_GREEN end
+			if _isYellowUIColor(obj.BorderColor3) then obj.BorderColor3 = SKIDER_DARK_GREEN end
+		end
+		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+			if _isYellowUIColor(obj.TextColor3) then obj.TextColor3 = SKIDER_DARK_GREEN end
+		end
+		if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+			if _isYellowUIColor(obj.ImageColor3) then obj.ImageColor3 = SKIDER_DARK_GREEN end
+			local objectName = string.lower(obj.Name or "")
+			if string.find(objectName, "logo", 1, true) or string.find(objectName, "brand", 1, true) then
+				obj.Image = SKIDER_HUB_LOGO
+				obj.ImageRectOffset = Vector2.new(0, 0)
+				obj.ImageRectSize = Vector2.new(0, 0)
+			end
+		end
+		if obj:IsA("UIStroke") and _isYellowUIColor(obj.Color) then
+			obj.Color = SKIDER_DARK_GREEN
+		end
+	end)
+end
+
+local function _applySkiderHubBranding()
+	local coreGui = game:GetService("CoreGui")
+	local root = coreGui:FindFirstChild("Nousigi Hub GUI")
+	if not root then return false end
+
+	_applySkiderBrandingToObject(root)
+	for _, obj in ipairs(root:GetDescendants()) do
+		_applySkiderBrandingToObject(obj)
+	end
+
+	if not root:GetAttribute("SkiderBrandHooked") then
+		root:SetAttribute("SkiderBrandHooked", true)
+		root.DescendantAdded:Connect(function(obj)
+			task.defer(_applySkiderBrandingToObject, obj)
+		end)
+	end
+	return true
+end
+
+task.spawn(function()
+	for _ = 1, 40 do
+		if _applySkiderHubBranding() then break end
+		task.wait(0.25)
+	end
+end)
 getgenv().LoadScript = true
 PageShop = Main.CreatePage({ Page_Name = "Shop", Page_Title = "Shop" })
 getgenv().Options = A.Options
@@ -738,7 +806,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			CYAN_DIM = Color3.fromRGB(0, 80, 120),
 			GREEN = Color3.fromRGB(0, 204, 102),
 			GREEN_GLOW = Color3.fromRGB(0, 255, 136),
-			AMBER = Color3.fromRGB(255, 170, 0),
+			DARK_GREEN = Color3.fromRGB(18, 105, 58),
 			RED = Color3.fromRGB(255, 68, 85),
 			TEXT_PRI = Color3.fromRGB(232, 234, 240),
 			TEXT_SEC = Color3.fromRGB(80, 90, 120),
@@ -1074,7 +1142,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			{
 				Size = UDim2.new(1, -8, 0, 28),
 				Position = UDim2.new(0, 4, 0, 118),
-				BackgroundColor3 = Color3.fromRGB(38, 24, 6),
+				BackgroundColor3 = Color3.fromRGB(10, 38, 24),
 				BorderSizePixel = 0,
 				ZIndex = 15,
 				Visible = false,
@@ -1082,7 +1150,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			V
 		)
 	L(3, Z)
-	d(1, Q.AMBER, 0.4, Z)
+	d(1, Q.DARK_GREEN, 0.4, Z)
 	local C = S(
 		"TextLabel",
 		{
@@ -1090,7 +1158,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			Position = UDim2.new(0, 6, 0, 0),
 			BackgroundTransparency = 1,
 			Text = "\226\143\179 429 RATE LIMITED \226\128\148 WAITING...",
-			TextColor3 = Q.AMBER,
+			TextColor3 = Q.DARK_GREEN,
 			Font = Enum.Font.GothamBold,
 			TextSize = 10,
 			TextXAlignment = Enum.TextXAlignment.Center,
@@ -1197,8 +1265,8 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 					B.Visible = true
 					f.Text = _
 				end
-				V("RATE LIMITED \226\128\148 WAITING " .. math.floor(m) .. "s", Q.AMBER)
-				D(string.format("\226\143\179 429 \226\128\148 RETRYING IN %.0fs", m), Q.AMBER)
+				V("RATE LIMITED \226\128\148 WAITING " .. math.floor(m) .. "s", Q.DARK_GREEN)
+				D(string.format("\226\143\179 429 \226\128\148 RETRYING IN %.0fs", m), Q.DARK_GREEN)
 				warn(
 					string.format(
 						"[ServerBrowser] 429 \226\128\148 waiting %.1fs (attempt %d/%d)",
@@ -1276,7 +1344,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		if C < 100 then
 			return Q.GREEN_GLOW
 		elseif C < 200 then
-			return Q.AMBER
+			return Q.DARK_GREEN
 		else
 			return Q.RED
 		end
@@ -1285,7 +1353,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		if q > 0.8 then
 			return Q.RED
 		elseif q > 0.5 then
-			return Q.AMBER
+			return Q.DARK_GREEN
 		else
 			return Q.CYAN
 		end
@@ -1482,7 +1550,7 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 				B.Visible = true
 				f.Text = "SCANNING PAGE " .. E.pages .. "\226\128\166"
 			end
-			V("PAGE " .. E.pages .. " \226\128\148 " .. #E.servers .. " FOUND", Q.AMBER)
+			V("PAGE " .. E.pages .. " \226\128\148 " .. #E.servers .. " FOUND", Q.DARK_GREEN)
 			local e = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(R)
 			local R, Y = N(if E.cursor then e .. "&cursor=" .. G:UrlEncode(E.cursor) else e, I)
 			if not R then
@@ -1528,8 +1596,8 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 		K()
 		if P then
 			if #E.servers > 0 then
-				D(o(P) .. " \226\128\148 SHOWING " .. #E.servers .. " CACHED", Q.AMBER)
-				V(o(P) .. " | PARTIAL " .. #E.servers, Q.AMBER)
+				D(o(P) .. " \226\128\148 SHOWING " .. #E.servers .. " CACHED", Q.DARK_GREEN)
+				V(o(P) .. " | PARTIAL " .. #E.servers, Q.DARK_GREEN)
 			else
 				V(o(P), Q.RED)
 			end
@@ -1560,8 +1628,8 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 	x.MouseButton1Click:Connect(function()
 		task.spawn(function()
 			if E.finished then
-				D("ALL PAGES LOADED \226\128\148 NO MORE SERVERS", Q.AMBER)
-				V("NO MORE PAGES", Q.AMBER)
+				D("ALL PAGES LOADED \226\128\148 NO MORE SERVERS", Q.DARK_GREEN)
+				V("NO MORE PAGES", Q.DARK_GREEN)
 				return
 			end
 			L(2, false)
@@ -1579,7 +1647,7 @@ end)
 StatusPlaceId = SectionServer.CreateLabel({ Title = "PlaceId: " .. game.PlaceId })
 local G = ""
 SectionServer.CreateBox(
-	{ Title = "Input JobId Normal And JobId BananaCat", Placeholder = "Type here", Number = false, Default = nil },
+	{ Title = "Input JobId Normal And JobId Skider", Placeholder = "Type here", Number = false, Default = nil },
 	function(f)
 		G = f
 	end
@@ -1649,17 +1717,17 @@ SectionServer.CreateButton({ Title = "Copy JobId" }, function()
 end)
 local G, K = {}, {}
 if not pcall(function()
-	readfile("Banana Cat Hub/Jobid.json")
+	readfile("Skider Hub/Jobid.json")
 end) then
-	writefile("Banana Cat Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(G))
+	writefile("Skider Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(G))
 end
 if not pcall(function()
-	readfile("Banana Cat Hub/NotSameServers.json")
+	readfile("Skider Hub/NotSameServers.json")
 end) then
-	writefile("Banana Cat Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(G))
+	writefile("Skider Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(G))
 end
 function CheckJobIdServer()
-	local R, m, E, l = {}, next, game:GetService("HttpService"):JSONDecode(readfile("Banana Cat Hub/Jobid.json"))
+	local R, m, E, l = {}, next, game:GetService("HttpService"):JSONDecode(readfile("Skider Hub/Jobid.json"))
 	for Q, S in m, E, l do
 		table.insert(R, Q)
 	end
@@ -1671,7 +1739,7 @@ function HopServer(R)
 			for l, Q in pairs((game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer(E))) do
 				if l ~= game.JobId and not table.find(CheckJobIdServer(), l) then
 					game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer("teleport", l)
-					writefile("Banana Cat Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(K))
+					writefile("Skider Hub/Jobid.json", game:GetService("HttpService"):JSONEncode(K))
 					getgenv().limit_type("clearAll")
 				end
 			end
@@ -1679,11 +1747,11 @@ function HopServer(R)
 	end
 	local K = R or (Settings["Time Hop Server"] or 5)
 	require(game:GetService("ReplicatedStorage").Notification)
-		.new("<Color=Red>Banana Cat Hub : Wait " .. K .. "s [Hop Server]<Color=/>")
+		.new("<Color=Red>Skider Hub : Wait " .. K .. "s [Hop Server]<Color=/>")
 		:Display()
 	while wait(K) do
 		require(game:GetService("ReplicatedStorage").Notification)
-			.new("<Color=Red>Banana Cat Hub : Hop Server<Color=/>")
+			.new("<Color=Red>Skider Hub : Hop Server<Color=/>")
 			:Display()
 		m()
 	end
@@ -1693,16 +1761,16 @@ SectionServer.CreateButton({ Title = "Hop Server" }, function()
 end)
 function HopLessAll()
 	require(game:GetService("ReplicatedStorage").Notification)
-		.new("<Color=Red>Banana Hub : Hop Server<Color=/>")
+		.new("<Color=Red>Skider Hub : Hop Server<Color=/>")
 		:Display()
 	local K, R, m, E = game.PlaceId, {}, "", os.date("!*t").hour
 	if
 		not pcall(function()
-			R = game:GetService("HttpService"):JSONDecode(readfile("Banana Cat Hub/NotSameServers.json"))
+			R = game:GetService("HttpService"):JSONDecode(readfile("Skider Hub/NotSameServers.json"))
 		end)
 	then
 		table.insert(R, E)
-		writefile("Banana Cat Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
+		writefile("Skider Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
 	end
 	function HopServerLess()
 		local l, Q =
@@ -1733,7 +1801,7 @@ function HopLessAll()
 						m = if Q == tostring(l) then false else m
 					elseif tonumber(E) ~= tonumber(l) then
 						pcall(function()
-							delfile("Banana Cat Hub/NotSameServers.json")
+							delfile("Skider Hub/NotSameServers.json")
 							R = {}
 							table.insert(R, E)
 						end)
@@ -1744,7 +1812,7 @@ function HopLessAll()
 					table.insert(R, Q)
 					wait()
 					pcall(function()
-						writefile("Banana Cat Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
+						writefile("Skider Hub/NotSameServers.json", game:GetService("HttpService"):JSONEncode(R))
 						wait()
 						game:GetService("ReplicatedStorage").__ServerBrowser:InvokeServer("teleport", Q)
 						getgenv().limit_type("clearAll")
@@ -4952,7 +5020,7 @@ MasteryFarmSection.CreateToggle(
 	function(V)
 		SaveSettings("Farm Mastery", V)
 		if V and not Settings["Start Farm"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
 		end
 	end
 )
@@ -4974,7 +5042,7 @@ FarmingMaterialSection.CreateToggle(
 	function(V)
 		SaveSettings("Farm Material", V)
 		if V and not Settings["Start Farm"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Start Farm Plz", ShowTime = 5 })
 		end
 	end
 )
@@ -5959,7 +6027,7 @@ BossSoulReaperSection.CreateToggle(
 	{ Title = "Summon Soul Reaper", Desc = nil, Default = Settings["Summon Soul Reaper"] or false },
 	function(f)
 		if f and not Settings["Attack Soul Reaper"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Soul Reaper Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Soul Reaper Plz", ShowTime = 5 })
 		end
 		SaveSettings("Summon Soul Reaper", f)
 	end
@@ -5975,7 +6043,7 @@ BossDoughKingSection.CreateToggle(
 	{ Title = "Summon Dough King", Desc = nil, Default = Settings["Summon Dough King"] or false },
 	function(f)
 		if f and not Settings["Attack Dough King"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
 		end
 		if f then
 			spawn(function()
@@ -5993,7 +6061,7 @@ BossDoughKingSection.CreateToggle(
 	{ Title = "Hop Find Dough King", Desc = nil, Default = Settings["Hop Find Dough King"] or false },
 	function(f)
 		if f and not Settings["Attack Dough King"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Dough King Plz", ShowTime = 5 })
 		end
 		SaveSettings("Hop Find Dough King", f)
 	end
@@ -6009,7 +6077,7 @@ BossDarkbeardSection.CreateToggle(
 	{ Title = "Summon Darkbeard", Desc = nil, Default = Settings["Summon Darkbeard"] or false },
 	function(f)
 		if f and not Settings["Attack Darkbeard"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
 		end
 		SaveSettings("Summon Darkbeard", f)
 	end
@@ -6018,7 +6086,7 @@ BossDarkbeardSection.CreateToggle(
 	{ Title = "Hop Find Darkbeard", Desc = nil, Default = Settings["Hop Find Darkbeard"] or false },
 	function(f)
 		if f and not Settings["Attack Darkbeard"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Attack Darkbeard Plz", ShowTime = 5 })
 		end
 		SaveSettings("Hop Find Darkbeard", f)
 	end
@@ -6849,7 +6917,7 @@ task.spawn(function()
 										return
 									else
 										A.CreateNoti({
-											Title = "Banana Cat Hub",
+											Title = "Skider Hub",
 											Desc = "Waiting Elite Hunter",
 											ShowTime = 5,
 										})
@@ -7701,7 +7769,7 @@ function AutoQuestDojo()
 				getgenv().QuestTrainer = { BeltName = "Red", CountKillMob = 0 }
 			else
 				A.CreateNoti({
-					Title = "Banana Cat Hub",
+					Title = "Skider Hub",
 					Desc = "That's enough training for today... Come back tomorrow and we can continue.\10 or dont support Belt Currently",
 					ShowTime = 5,
 				})
@@ -8245,7 +8313,7 @@ BerrySection.CreateToggle(
 								end
 							end
 						else
-							A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Berry spawn", ShowTime = 5 })
+							A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Berry spawn", ShowTime = 5 })
 							if Settings["Hop Find Berry"] then
 								HopServer()
 							end
@@ -8528,7 +8596,7 @@ function ObservationV2()
 					equiptool(NameWeapon(Settings["Select Weapon"]))
 				until not IsMobAlive(y) or not Settings["Auto UP Observation V2"]
 			else
-				A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Boss Captain Elephant", ShowTime = 5 })
+				A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Boss Captain Elephant", ShowTime = 5 })
 				wait(5)
 			end
 		elseif t:DistanceFromCharacter(Vector3.new(-12441.5908203125, 331.4884948730469, -7676.197265625)) < 10 then
@@ -8563,7 +8631,7 @@ function ObservationV2()
 								0
 							)
 						else
-							A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Wating Fruit", ShowTime = 5 })
+							A.CreateNoti({ Title = "Skider Hub", Desc = "Wating Fruit", ShowTime = 5 })
 							wait(3)
 						end
 					end
@@ -8637,7 +8705,7 @@ FarmObservationSection.CreateToggle(
 	},
 	function(y)
 		if y and not Settings["Farm Observation"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Farm Observation plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Farm Observation plz", ShowTime = 5 })
 		end
 		SaveSettings("Farm Observation [ Hop Server ]", y)
 	end
@@ -8869,7 +8937,7 @@ AutoKillBossSection.CreateToggle(
 	{ Title = "Kill All Boss", Desc = nil, Default = Settings["Kill All Boss"] or false },
 	function(y)
 		if y and not Settings["Kill Boss"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Kill Boss plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Kill Boss plz", ShowTime = 5 })
 		end
 		SaveSettings("Kill All Boss", y)
 	end
@@ -9197,7 +9265,7 @@ RaidsSection.CreateToggle(
 	{ Title = "Hop Sever Raid", Desc = nil, Default = Settings["Hop Sever Raid"] or false },
 	function(b)
 		if b and not Settings["Auto Raid"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Auto Raid Plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Auto Raid Plz", ShowTime = 5 })
 		end
 		SaveSettings("Hop Sever Raid", b)
 	end
@@ -10525,7 +10593,7 @@ function WarnOnce(b, l)
 	end
 	getgenv().__BFWarned[b] = tick()
 	pcall(function()
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = l, ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = l, ShowTime = 5 })
 	end)
 end
 function DetectSeaEvents(b)
@@ -10968,7 +11036,7 @@ ToggleFindMirage = FarmingSeaEventSection.CreateToggle(
 							getgenv().TweenBoat:Pause()
 							getgenv().TweenBoat:Cancel()
 						end
-						A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Mirage Island Spawned", ShowTime = 5 })
+						A.CreateNoti({ Title = "Skider Hub", Desc = "Mirage Island Spawned", ShowTime = 5 })
 						ToggleFindMirage:SetStage(false)
 						wait(5)
 					end
@@ -11000,7 +11068,7 @@ KitsuneEventSection.CreateToggle(
 	function(y)
 		if y then
 			A.CreateNoti({
-				Title = "Banana Cat Hub",
+				Title = "Skider Hub",
 				Desc = "Turn On after Status Full Moon|( Will Full Moon In >= 0 Minutes )",
 				ShowTime = 5,
 			})
@@ -11451,7 +11519,7 @@ function AutoFindLeviathan()
 			getgenv().TweenBoatBack:Pause()
 			getgenv().TweenBoatBack:Cancel()
 		end
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Frozen Dimension Spawned", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Frozen Dimension Spawned", ShowTime = 5 })
 		if getgenv().RespawnLeviathan and Settings["Webhook Find Leviathan"] then
 			getgenv().RespawnLeviathan = false
 			WebhookFindLeviathan()
@@ -11705,7 +11773,7 @@ LeviathanEventSection.CreateToggle(
 	},
 	function(s)
 		if s and not Settings["Auto Attack Leviathan"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Auto Attack Leviathan, plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Auto Attack Leviathan, plz", ShowTime = 5 })
 		end
 		SaveSettings("Attack Multi Segments Leviathan", s)
 	end
@@ -12050,7 +12118,7 @@ function ShootHeartLeviathan()
 				toTarget(b.Harpoon.Seat.CFrame)
 			end
 		else
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Successfully Fire Shoot Heart Leviathan", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Successfully Fire Shoot Heart Leviathan", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -12621,11 +12689,11 @@ end
 local b = { "V2InProgress", "V3InProgress", "V2TurnInReady", "V3TurnInReady" }
 function AutoUpgradeRaceDraco()
 	if game.Players.LocalPlayer.Data.Race.Value ~= "Draco" then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Change Race Draco plz", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Change Race Draco plz", ShowTime = 5 })
 		wait(5)
 		return
 	elseif DetectItemPlr("Primordial Reign") then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done V3 Draco", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Done V3 Draco", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -12885,7 +12953,7 @@ ToggleAutoTrialDraco = RaceDracoSection.CreateToggle(
 							end
 						else
 							if getgenv().DoneTrialDraco then
-								A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Trial", ShowTime = 5 })
+								A.CreateNoti({ Title = "Skider Hub", Desc = "Done Trial", ShowTime = 5 })
 								getgenv().DoneTrialDraco = false
 								ToggleAutoTrialDraco:SetStage(false)
 								return
@@ -12902,7 +12970,7 @@ ToggleAutoTrialDraco = RaceDracoSection.CreateToggle(
 								end
 							else
 								A.CreateNoti({
-									Title = "Banana Cat Hub",
+									Title = "Skider Hub",
 									Desc = "Not have Prehistoric Island",
 									ShowTime = 5,
 								})
@@ -13874,7 +13942,7 @@ end
 function UpgradeRaceV2AndV3()
 	local m = CheckRace()
 	if m == " V3" then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done V3", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Done V3", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -13884,7 +13952,7 @@ function UpgradeRaceV2AndV3()
 	end
 	if m == " V1" then
 		if t.Data.Beli.Value < 500000 then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Beli >= 500k", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Beli >= 500k", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -13966,7 +14034,7 @@ function UpgradeRaceV2AndV3()
 			game.ReplicatedStorage.Remotes.CommF_:InvokeServer("Wenlocktoad", "3")
 			return
 		elseif l == -1 then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Beli >= 2m", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Beli >= 2m", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -13994,7 +14062,7 @@ function UpgradeRaceV2AndV3()
 					end
 				end
 			else
-				A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
+				A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
 				wait(5)
 			end
 		elseif l == "Mink V2" then
@@ -14135,7 +14203,7 @@ ToggleAutoGetFullyCyborg = RaceNormalSection.CreateToggle(
 	function(l)
 		SaveSettings("Auto Get Fully Cyborg", l)
 		if l and not Settings["Auto Get Cyborg"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Turn On Auto Get Cyborg plz", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Turn On Auto Get Cyborg plz", ShowTime = 5 })
 		end
 	end
 )
@@ -14151,7 +14219,7 @@ RaceNormalSection.CreateToggle(
 )
 function GetCyborg()
 	if game.ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Check") == 2 then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Plz Turn Off", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Plz Turn Off", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -14307,7 +14375,7 @@ function GetRaceGhoul()
 		or game.ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true) == 2
 		or game.ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4, true) == 1
 	then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Plz Turn Off", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Plz Turn Off", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -14417,7 +14485,7 @@ function GetRaceGhoul()
 			if Settings["Hop Server Get Ghoul"] then
 				SpecialHop("Cursed Captain")
 			end
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Wating Boss Spawn", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Wating Boss Spawn", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -14584,7 +14652,7 @@ function CollectBlueGear()
 end
 function PullLeverV4()
 	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -14653,7 +14721,7 @@ function PullLeverV4()
 				fireproximityprompt(l.Lever.Prompt.ProximityPrompt, 1)
 			end
 		else
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Pull Lever", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Done Pull Lever", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -15132,7 +15200,7 @@ function AutoTrialV4()
 	-- Kiểm tra vị trí trước (giống kaiv4.lua)
 	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
 		if TeleportTempleOfTime() == "locked" then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Temple of Time is locked", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Temple of Time is locked", ShowTime = 5 })
 			task.wait(5)
 		end
 		return
@@ -15476,7 +15544,7 @@ function DetectQuestRainBowHaki(R)
 end
 function GetRainBowHaki()
 	if game.ReplicatedStorage.Remotes.CommF_:InvokeServer("HornedMan") == 1 then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Get Rainbow Haki", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Done Get Rainbow Haki", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -15505,7 +15573,7 @@ function GetRainBowHaki()
 				UsedualFlock()
 			until not IsMobAlive(g) or not Settings["Auto Get Rainbow Haki"]
 		else
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Waiting Boss Spawn", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -15575,7 +15643,7 @@ function GuitarPuzzleProgress()
 			CommF:InvokeServer("gravestoneEvent", 2, true)
 			task.wait(1)
 		else
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Hop Full Moon", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Hop Full Moon", ShowTime = 5 })
 			SpecialHop("FullMoon")
 		end
 	else
@@ -15691,12 +15759,12 @@ function AutoSoulGuitar()
 		game:GetService("ReplicatedStorage").Remotes.CommF_:InvokeServer("soulGuitarBuy", true)
 		== "[You already own this item.]"
 	then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "[You already own this item.]", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "[You already own this item.]", ShowTime = 5 })
 		task.wait(5)
 		return
 	end
 	if t.Data.Fragments.Value < 5000 then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Frag >= 5k", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Frag >= 5k", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -15928,7 +15996,7 @@ function QuestGood4()
 				(Settings["Select Method Hop CDK1"] or {})["Hop Raid Castle [ Delay 20s Hop Because check Raids Castle ]"]
 			then
 				A.CreateNoti({
-					Title = "Banana Cat Hub",
+					Title = "Skider Hub",
 					Desc = "Waiting 20s for check raid castle if dont have will Server",
 					ShowTime = 5,
 				})
@@ -15940,7 +16008,7 @@ function QuestGood4()
 					SpecialHop("Raid Castle")
 				end
 			else
-				A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Waint Raid Castle", ShowTime = 5 })
+				A.CreateNoti({ Title = "Skider Hub", Desc = "Waint Raid Castle", ShowTime = 5 })
 			end
 			wait(5)
 		end
@@ -16044,10 +16112,10 @@ function Questgood5()
 		TweenManager.CancelCurrent()
 	else
 		if Settings["Select Method Hop CDK1"] and Settings["Select Method Hop CDK1"]["Find Cake Queen"] then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = 'Hop Server Find Cake Queen"', ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = 'Hop Server Find Cake Queen"', ShowTime = 5 })
 			HopServer()
 		else
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = 'Wating Cake Queen"', ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = 'Wating Cake Queen"', ShowTime = 5 })
 		end
 		wait(5)
 	end
@@ -16263,13 +16331,13 @@ function CheckMasterSword(g, R)
 end
 function GetCDK()
 	if not CheckItemInventory("Tushita") or not CheckItemInventory("Yama") then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Get Tushita and Yama", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Get Tushita and Yama", ShowTime = 5 })
 		wait(5)
 		return
 	end
 	if CheckItemInventory("Tushita") and (CheckItemInventory("Yama")) then
 		if not CheckMasterSword("Yama", 350) or not CheckMasterSword("Tushita", 350) then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Mastery >= 350", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Mastery >= 350", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -16532,7 +16600,7 @@ function GetTushita()
 				end
 			end
 		else
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Rip Indra Dont Spawn", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Rip Indra Dont Spawn", ShowTime = 5 })
 			wait(5)
 		end
 	end
@@ -16928,7 +16996,7 @@ GetItemsSection.CreateToggle(
 )
 function autoCraftSharkAnchor()
 	if CheckItemInventory("Shark Anchor") then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Shark Anchor", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Done Shark Anchor", ShowTime = 5 })
 		wait(5)
 		return
 	end
@@ -16982,7 +17050,7 @@ GetItemsSection.CreateToggle(
 )
 function AutoYorumini()
 	if CheckItemInventory("Dark Dagger") then
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "u haved Yoru Mini", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "u haved Yoru Mini", ShowTime = 5 })
 		return
 	end
 	local g = CheckNameBoss("rip_indra True Form")
@@ -17383,7 +17451,7 @@ function AutoUpgradeWeapon(R)
 	if m then
 		R = NameMaterials[m]
 		if not R then
-			A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Not Support Material" .. m .. "Sorry", ShowTime = 5 })
+			A.CreateNoti({ Title = "Skider Hub", Desc = "Not Support Material" .. m .. "Sorry", ShowTime = 5 })
 			wait(5)
 			return
 		end
@@ -17700,7 +17768,7 @@ function AutoCraftinMagnetVol()
 			wait(2)
 		end
 	else
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Done Craft Volcanic Magnet", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Done Craft Volcanic Magnet", ShowTime = 5 })
 		ToggleAutoCraftingVolcanicMagnet:SetStage(false)
 	end
 end
@@ -17795,7 +17863,7 @@ function AutoFindPrehistoric()
 			getgenv().TweenBoat:Pause()
 			getgenv().TweenBoat:Cancel()
 		end
-		A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Prehistoric Island Spawned", ShowTime = 5 })
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Prehistoric Island Spawned", ShowTime = 5 })
 		ToggleAutoFindPrehistoricIsland:SetStage(false)
 		wait(5)
 	end
@@ -19055,7 +19123,7 @@ local b = {
 	Username = "Binini Hub",
 	AvatarURL = "https://images-ext-1.discordapp.net/external/9LSZu__Uvs7I0N8MWag-JmwF2iT-pHCHSe2UdixGEXQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1262364141968949308/a_0c5fb64e2cbb35d029d73b44576c6a60.gif",
 	BannerURL = "https://cdn.discordapp.com/attachments/1017024488665264218/1262729537578471504/banner_server.jpg",
-	Title = "Banana Hub Notification",
+	Title = "Skider Hub Notification",
 	FooterText = "Binini Hub",
 	Color = 16776960,
 }
@@ -19155,7 +19223,7 @@ function Webhookprofile()
 			BannerURL = "https://cdn.discordapp.com/attachments/1017024488665264218/1262729537578471504/banner_server.jpg",
 			AvatarURL = "https://images-ext-1.discordapp.net/external/9LSZu__Uvs7I0N8MWag-JmwF2iT-pHCHSe2UdixGEXQ/%3Fsize%3D4096/https/cdn.discordapp.com/avatars/1262364141968949308/a_0c5fb64e2cbb35d029d73b44576c6a60.gif",
 			Username = "Binini Hub",
-			Title = "<:bananacon:1261744974534541352> Banana Hub Notification <:bananacon:1261744974534541352>",
+			Title = "Skider Hub Notification",
 			FooterText = "Binini Hub",
 			FruitMinValue = 1000000,
 			ItemMinRarity = 3,
@@ -19449,61 +19517,87 @@ a.CreateToggle({ Title = "Black Screen", Desc = nil, Default = Settings["Black S
 	end)
 	SaveSettings("Black Screen", b)
 end)
-local function b(s)
-	if type(s) ~= "table" then
-		return s
-	end
-	local X, g, f, K, R = {}, {}, {}, "{\10", 1
-	while true do
-		local m = 0
-		for E, E in pairs(s) do
-			m += 1
+local function SerializeSettingsForClipboard(value)
+	local visited = {}
+
+	local function serialize(v, depth)
+		local valueType = type(v)
+		if valueType == "nil" then
+			return "nil"
+		elseif valueType == "boolean" or valueType == "number" then
+			return tostring(v)
+		elseif valueType == "string" then
+			return string.format("%q", v)
+		elseif valueType ~= "table" then
+			return string.format("%q", tostring(v))
 		end
-		local E = 1
-		for l, Q in pairs(s) do
-			if X[s] == nil or E >= X[s] then
-				local S, d = string.find, T[24](K:len())
-				table.insert(
-					f,
-					if S(K, "}", T:d5(d))
-						then K .. ",\10"
-						else if not string.find(K, "\10", K:len()) then K .. "\10" else K
-				)
-				K = ""
-				d, S =
-					if type(l) == "number" or type(l) == "boolean"
-						then "[" .. tostring(l) .. "]"
-						else '["' .. tostring(l) .. '"]',
-					type(Q) == "number" or type(Q) == "boolean"
-				if S then
-					K ..= string.rep("\9", R) .. d .. " = " .. tostring(Q)
-				elseif type(Q) == "table" then
-					K ..= string.rep("\9", R) .. d .. " = {\10"
-					table.insert(g, s)
-					table.insert(g, Q)
-					X[s] = E + 1
-					break
-				else
-					K ..= string.rep("\9", R) .. d .. ' = "' .. tostring(Q) .. '"'
-				end
-				K = if E == m then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K .. ","
-			else
-				K = if E == m then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K
+
+		if visited[v] then
+			return "nil --[[ cyclic table omitted ]]"
+		end
+		visited[v] = true
+
+		local indent = string.rep("\t", depth)
+		local childIndent = string.rep("\t", depth + 1)
+		local keys = {}
+		for key in pairs(v) do
+			table.insert(keys, key)
+		end
+		table.sort(keys, function(a, b)
+			local ta, tb = type(a), type(b)
+			if ta == tb then
+				if ta == "number" then return a < b end
+				return tostring(a) < tostring(b)
 			end
-			E += 1
+			return ta < tb
+		end)
+
+		local out = { "{" }
+		for _, key in ipairs(keys) do
+			-- Always use bracket keys so spaces and Lua keywords are copied safely.
+			local keyText = "[" .. serialize(key, depth + 1) .. "]"
+			table.insert(out, "\n" .. childIndent .. keyText .. " = " .. serialize(v[key], depth + 1) .. ",")
 		end
-		K = if m == 0 then K .. "\10" .. string.rep("\9", R - 1) .. "}" else K
-		if #g > 0 then
-			s = g[#g]
-			g[#g] = nil
-			R = X[s] == nil and R + 1 or R - 1
-		else
-			break
+		if #keys > 0 then
+			table.insert(out, "\n" .. indent)
+		end
+		table.insert(out, "}")
+
+		visited[v] = nil
+		return table.concat(out)
+	end
+
+	return "getgenv().Config = " .. serialize(value, 0)
+end
+
+local function CopyTextToClipboard(text)
+	local clipboardFn = nil
+	if type(setclipboard) == "function" then
+		clipboardFn = setclipboard
+	elseif type(toclipboard) == "function" then
+		clipboardFn = toclipboard
+	elseif type(set_clipboard) == "function" then
+		clipboardFn = set_clipboard
+	elseif type(Clipboard) == "table" and type(Clipboard.set) == "function" then
+		clipboardFn = function(value)
+			return Clipboard.set(value)
 		end
 	end
-	table.insert(f, K)
-	return "getgenv().Config = " .. table.concat(f)
+
+	if not clipboardFn then
+		return false, "Executor does not support clipboard API"
+	end
+
+	local ok, result = pcall(clipboardFn, text)
+	if not ok then
+		return false, tostring(result)
+	end
+	if result == false then
+		return false, "Clipboard API returned false"
+	end
+	return true
 end
+
 a.CreateToggle(
 	{ Title = "Remove Notifications", Desc = nil, Default = Settings["Remove Notifications"] or false },
 	function(T)
@@ -19666,9 +19760,26 @@ spawn(function()
 		end
 	end)
 end)
-a.CreateButton({ Title = "Copy Config" }, function()
-	setclipboard(b((HttpService:JSONDecode(readfile(FolderName .. "/" .. SaveFileName)))))
-	A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Successfully Copy Config", ShowTime = 5 })
+a.CreateButton({ Title = "Copy Setting" }, function()
+	local configText = SerializeSettingsForClipboard(Settings)
+	local ok, err = CopyTextToClipboard(configText)
+	if ok then
+		A.CreateNoti({ Title = "Skider Hub", Desc = "Successfully copied settings to clipboard", ShowTime = 5 })
+	else
+		-- Fallback: save the exact copy text so unsupported executors still get the config.
+		local saved = false
+		if type(writefile) == "function" then
+			_ensureSettingsFolder()
+			saved = pcall(function()
+				writefile(FolderName .. "/CopiedSetting.lua", configText)
+			end)
+		end
+		A.CreateNoti({
+			Title = "Skider Hub",
+			Desc = saved and "Clipboard unsupported - saved as Skider Hub/CopiedSetting.lua" or ("Copy failed: " .. tostring(err)),
+			ShowTime = 7,
+		})
+	end
 end)
 a.CreateBind({ Title = "Toggle GUI", Key = Enum.KeyCode.LeftControl }, function()
 	getgenv().UIToggled = not getgenv().UIToggled
@@ -19707,8 +19818,8 @@ runAsync = require(game.ReplicatedStorage.Util.runAsync)
 Spinner = require(game:GetService("ReplicatedStorage").Controllers.UI.Spinner)
 SharedGachaUtil = require(game.ReplicatedStorage.Modules.Gacha.SharedGachaUtil)
 TextUtil = require(game.ReplicatedStorage.Modules.Util.TextUtil)
-if not getgenv().BananaCatMainLoop then
-	getgenv().BananaCatMainLoop = true
+if not getgenv().SkiderHubMainLoop then
+	getgenv().SkiderHubMainLoop = true
 	lastHopTick = tick()
 	lastFruitTick = tick()
 	x.RenderStepped:Connect(function()
@@ -19718,7 +19829,7 @@ if not getgenv().BananaCatMainLoop then
 		if tick() - lastHopTick >= 500 then
 			lastHopTick = tick()
 			pcall(function()
-				writefile("Banana Cat Hub/Jobid.json", HttpService:JSONEncode({}))
+				writefile("Skider Hub/Jobid.json", HttpService:JSONEncode({}))
 			end)
 		end
 		pcall(function()
@@ -19796,7 +19907,7 @@ if not getgenv().BananaCatMainLoop then
 						if b then
 							SpecialHop(b)
 						else
-							A.CreateNoti({ Title = "Banana Cat Hub", Desc = "Full Sword Legendary", ShowTime = 5 })
+							A.CreateNoti({ Title = "Skider Hub", Desc = "Full Sword Legendary", ShowTime = 5 })
 						end
 					end
 				end
