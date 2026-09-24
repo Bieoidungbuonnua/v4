@@ -260,235 +260,493 @@ game:GetService("Players").LocalPlayer.Idled:connect(function()
 	wait(1)
 	vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
 end)
-local _uiOk, A = pcall(function()
-	local source = game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua")
-	-- Cheap, one-time rebrand for literals that are not hidden by the library obfuscator.
-	source = source:gsub("Banana Cat Hub", "Skider Hub")
-		:gsub("Banana Hub", "Skider Hub")
-		:gsub("Binini Hub", "Skider Hub")
-	local chunk, compileErr = loadstring(source)
-	if not chunk then
-		error(compileErr or "UI library compile failed")
-	end
-	return chunk()
+-- ============================================================================
+-- SKIDER HUB - FLUENT UI COMPATIBILITY LAYER
+-- Replaces the old zzzz.lua UI only. All BNN feature callbacks below stay intact.
+-- ============================================================================
+local Fluent
+local _fluentOk, _fluentErr = pcall(function()
+    Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 end)
-if not _uiOk or type(A) ~= "table" then
-	getgenv().LoadScript = nil
-	error("[Skider Hub] Failed to load UI library: " .. tostring(A))
+if not _fluentOk or type(Fluent) ~= "table" then
+    getgenv().LoadScript = nil
+    error("[Skider Hub] Failed to load Fluent UI: " .. tostring(_fluentErr))
 end
 
--- Lightweight Skider skin. IMPORTANT: no RenderStepped/Heartbeat theme loop,
--- no per-object PropertyChanged hooks, and PlayerGui is never scanned.
 local SKIDER_HUB_LOGO = "rbxassetid://90412962524051"
-local SKIDER_GREEN = Color3.fromRGB(18, 105, 58)
-local SKIDER_GREEN_HOVER = Color3.fromRGB(24, 130, 72)
-local SKIDER_GREEN_DEEP = Color3.fromRGB(8, 42, 24)
-local SKIDER_TEXT_WHITE = Color3.fromRGB(245, 247, 250)
-local SKIDER_TEXT_DIM = Color3.fromRGB(205, 212, 218)
-
-local function _skiderLower(v)
-	return type(v) == "string" and string.lower(v) or ""
-end
-
-local function _skiderReplaceText(v)
-	if type(v) ~= "string" then return v end
-	v = v:gsub("Banana Cat Hub", "Skider Hub")
-	v = v:gsub("Banana Hub", "Skider Hub")
-	v = v:gsub("Binini Hub", "Skider Hub")
-	return v
-end
-
-local function _skiderIsHubText(v)
-	local x = _skiderLower(v)
-	return x:find("skider hub", 1, true) ~= nil
-		or x:find("banana cat hub", 1, true) ~= nil
-		or x:find("ui library", 1, true) ~= nil
-		or x:find("automatically hides", 1, true) ~= nil
-end
-
-local function _skiderAccent(c, deep)
-	if typeof(c) ~= "Color3" then return c end
-	local _, sat, val = c:ToHSV()
-	if sat < 0.18 or val < 0.08 then return c end
-	return deep and SKIDER_GREEN_DEEP or (val > 0.72 and SKIDER_GREEN_HOVER or SKIDER_GREEN)
-end
-
-local function _skiderGreenSequence(seq)
-	if typeof(seq) ~= "ColorSequence" then return seq end
-	local pts = {}
-	for _, kp in ipairs(seq.Keypoints) do
-		pts[#pts + 1] = ColorSequenceKeypoint.new(kp.Time, _skiderAccent(kp.Value, false))
-	end
-	return ColorSequence.new(pts)
-end
-
-local function _skiderIsHubRoot(root)
-	if not root or not root:IsA("ScreenGui") then return false end
-	local n = _skiderLower(root.Name)
-	if n:find("nousigi", 1, true) or n:find("skider", 1, true) or n:find("banana", 1, true) then
-		return true
-	end
-	for _, o in ipairs(root:GetDescendants()) do
-		if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and _skiderIsHubText(o.Text) then
-			return true
-		end
-	end
-	return false
-end
-
-local function _skiderNearestButtonSurface(textObj)
-	local p = textObj
-	for _ = 1, 4 do
-		p = p and p.Parent
-		if not p then break end
-		if p:IsA("TextButton") or p:IsA("ImageButton") then return p end
-		if p:IsA("Frame") then
-			local ok, size = pcall(function() return p.AbsoluteSize end)
-			if ok and size.X <= 220 and size.Y <= 80 then return p end
-		end
-	end
-	return textObj:IsA("TextButton") and textObj or nil
-end
-
-local function _skiderStyleClickButton(textObj)
-	if not textObj or _skiderLower((textObj.Text or ""):gsub("%s+", "")) ~= "click" then return end
-	pcall(function()
-		textObj.TextColor3 = SKIDER_TEXT_WHITE
-		textObj.TextStrokeTransparency = 1
-		textObj.Font = Enum.Font.GothamSemibold
-	end)
-	local surface = _skiderNearestButtonSurface(textObj)
-	if not surface then return end
-	pcall(function()
-		surface.BackgroundTransparency = 0
-		surface.BackgroundColor3 = SKIDER_GREEN
-		if surface:IsA("ImageButton") then
-			surface.ImageTransparency = 1
-			surface.ImageColor3 = Color3.new(1,1,1)
-		end
-	end)
-	for _, c in ipairs(surface:GetChildren()) do
-		if c:IsA("UIGradient") then
-			pcall(function() c.Enabled = false end)
-		elseif c:IsA("ImageLabel") then
-			pcall(function() c.ImageTransparency = 1 end)
-		end
-	end
-	local corner = surface:FindFirstChildOfClass("UICorner")
-	if not corner then corner = Instance.new("UICorner", surface) end
-	corner.CornerRadius = UDim.new(0, 8)
-	local stroke = surface:FindFirstChild("SkiderStroke") or Instance.new("UIStroke")
-	stroke.Name = "SkiderStroke"
-	stroke.Color = SKIDER_GREEN_HOVER
-	stroke.Transparency = 0.30
-	stroke.Thickness = 1
-	stroke.Parent = surface
-end
-
-local function _skiderPatchLogos(root, brandLabels)
-	local images = {}
-	for _, o in ipairs(root:GetDescendants()) do
-		if o:IsA("ImageLabel") or o:IsA("ImageButton") then images[#images + 1] = o end
-	end
-	for _, img in ipairs(images) do
-		pcall(function()
-			local n = _skiderLower(img.Name)
-			local pn = img.Parent and _skiderLower(img.Parent.Name) or ""
-			local explicit = n:find("logo",1,true) or n:find("brand",1,true) or n:find("toggle",1,true)
-				or pn:find("logo",1,true) or pn:find("brand",1,true)
-			local nearBrand = false
-			if not explicit then
-				local sz = img.AbsoluteSize
-				if img.Image ~= "" and sz.X >= 20 and sz.Y >= 20 and sz.X <= 120 and sz.Y <= 120 then
-					local ic = img.AbsolutePosition + sz / 2
-					for _, label in ipairs(brandLabels) do
-						local lc = label.AbsolutePosition + label.AbsoluteSize / 2
-						if math.abs(ic.Y-lc.Y) <= 52 and math.abs(ic.X-lc.X) <= 160 then nearBrand = true break end
-					end
-				end
-			end
-			if explicit or nearBrand then
-				img.Image = SKIDER_HUB_LOGO
-				img.ImageRectOffset = Vector2.new(0,0)
-				img.ImageRectSize = Vector2.new(0,0)
-				img.ImageColor3 = Color3.new(1,1,1)
-			end
-		end)
-	end
-end
-
-local function _skiderPatchRootOnce(root)
-	if not _skiderIsHubRoot(root) then return end
-	local brandLabels = {}
-	for _, o in ipairs(root:GetDescendants()) do
-		pcall(function()
-			if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
-				local nt = _skiderReplaceText(o.Text)
-				if nt ~= o.Text then o.Text = nt end
-				if _skiderIsHubText(o.Text) then
-					brandLabels[#brandLabels + 1] = o
-					o.RichText = false
-					o.TextColor3 = SKIDER_GREEN
-				elseif o:IsA("TextButton") then
-					o.TextColor3 = SKIDER_TEXT_WHITE
-				else
-					local _, sat, val = o.TextColor3:ToHSV()
-					if sat > 0.25 and val > 0.25 then o.TextColor3 = SKIDER_TEXT_DIM end
-				end
-				_skiderStyleClickButton(o)
-			elseif o:IsA("GuiObject") then
-				o.BackgroundColor3 = _skiderAccent(o.BackgroundColor3, false)
-				o.BorderColor3 = _skiderAccent(o.BorderColor3, true)
-			end
-			if o:IsA("UIStroke") then o.Color = _skiderAccent(o.Color, false) end
-			if o:IsA("UIGradient") and o.Enabled then o.Color = _skiderGreenSequence(o.Color) end
-			if o:IsA("ScrollingFrame") then o.ScrollBarImageColor3 = SKIDER_GREEN end
-		end)
-	end
-	_skiderPatchLogos(root, brandLabels)
-end
-
-local function _skiderPatchUIOnce()
-	local containers = { game:GetService("CoreGui") }
-	pcall(function()
-		if gethui then
-			local h = gethui()
-			if h and h ~= containers[1] then containers[#containers + 1] = h end
-		end
-	end)
-	for _, container in ipairs(containers) do
-		for _, root in ipairs(container:GetChildren()) do
-			if root:IsA("ScreenGui") then _skiderPatchRootOnce(root) end
-		end
-	end
-end
-
--- Keep notifications branded without installing a permanent GUI watcher.
-if type(A.CreateNoti) == "function" then
-	local _skiderCreateNoti = A.CreateNoti
-	A.CreateNoti = function(params)
-		if type(params) == "table" then params.Title = "Skider Hub" end
-		local result = _skiderCreateNoti(params)
-		-- One delayed pass only; no persistent notification watcher.
-		task.delay(0.08, _skiderPatchUIOnce)
-		return result
-	end
-end
-
-Main = A.CreateMain({
-	Title = "Skider Hub",
-	Desc = " - Blox Fruit",
-	Image = SKIDER_HUB_LOGO,
-	Logo = SKIDER_HUB_LOGO,
-	Icon = SKIDER_HUB_LOGO,
+local _FluentWindow = Fluent:CreateWindow({
+    Title = "Skider Hub",
+    SubTitle = "Blox Fruit",
+    TabWidth = 170,
+    Size = UDim2.fromOffset(720, 520),
+    Acrylic = false, -- lighter than acrylic; better for multi-account use
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.LeftControl,
 })
 
--- A few finite passes are enough for the library's startup popup/toggle/pages.
--- They terminate completely; there is no permanent theme polling loop.
-task.delay(0.10, _skiderPatchUIOnce)
-task.delay(1.5, _skiderPatchUIOnce)
-task.delay(4.0, _skiderPatchUIOnce)
+-- Asset logo is used by a lightweight floating Fluent toggle button.
+do
+    local parent = (gethui and gethui()) or game:GetService("CoreGui")
+    local old = parent:FindFirstChild("SkiderFluentToggle")
+    if old then pcall(function() old:Destroy() end) end
 
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "SkiderFluentToggle"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = parent
+
+    local btn = Instance.new("ImageButton")
+    btn.Name = "SkiderLogoButton"
+    btn.AnchorPoint = Vector2.new(0, 1)
+    btn.Position = UDim2.new(0, 14, 1, -14)
+    btn.Size = UDim2.fromOffset(54, 54)
+    btn.BackgroundColor3 = Color3.fromRGB(12, 48, 30)
+    btn.BackgroundTransparency = 0.08
+    btn.BorderSizePixel = 0
+    btn.Image = SKIDER_HUB_LOGO
+    btn.ScaleType = Enum.ScaleType.Fit
+    btn.AutoButtonColor = true
+    btn.ZIndex = 100
+    btn.Parent = gui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 12)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(30, 130, 75)
+    stroke.Thickness = 1
+    stroke.Transparency = 0.25
+    stroke.Parent = btn
+
+    btn.Activated:Connect(function()
+        pcall(function() _FluentWindow:Minimize() end)
+    end)
+end
+
+local _AdapterOptions = {}
+local _adapterId = 0
+local function _nextId(prefix)
+    _adapterId += 1
+    prefix = tostring(prefix or "Option"):gsub("[^%w_]", "_")
+    return "Skider_" .. prefix .. "_" .. tostring(_adapterId)
+end
+
+local function _copyTable(v)
+    if type(v) ~= "table" then return v end
+    local out = {}
+    for k, x in pairs(v) do
+        out[k] = type(x) == "table" and _copyTable(x) or x
+    end
+    return out
+end
+
+local function _listValues(list)
+    local values = {}
+    if type(list) ~= "table" then return values end
+    if #list > 0 then
+        for _, v in ipairs(list) do
+            if type(v) == "string" or type(v) == "number" then values[#values + 1] = tostring(v) end
+        end
+    else
+        for k in pairs(list) do values[#values + 1] = tostring(k) end
+        table.sort(values)
+    end
+    return values
+end
+
+local function _multiState(list, default)
+    local state = {}
+    local values = _listValues(list)
+    for _, name in ipairs(values) do state[name] = false end
+    if type(list) == "table" and #list == 0 then
+        for k, v in pairs(list) do state[tostring(k)] = v == true end
+    end
+    if type(default) == "table" then
+        if #default > 0 then
+            for _, name in ipairs(default) do state[tostring(name)] = true end
+        else
+            for k, v in pairs(default) do state[tostring(k)] = v == true end
+        end
+    end
+    return state
+end
+
+local function _callSet(control, value)
+    if not control then return end
+    pcall(function()
+        if type(control.SetValue) == "function" then control:SetValue(value) end
+    end)
+end
+
+local function _methodValue(a, b)
+    return b ~= nil and b or a
+end
+
+local function _pageIcon(name)
+    local n = tostring(name or ""):lower()
+    if n:find("shop", 1, true) then return "shopping-cart" end
+    if n:find("status", 1, true) then return "activity" end
+    if n:find("local", 1, true) then return "user" end
+    if n:find("setting", 1, true) then return "settings" end
+    if n:find("farm", 1, true) then return "sprout" end
+    if n:find("fruit", 1, true) then return "cherry" end
+    if n:find("raid", 1, true) or n:find("dungeon", 1, true) then return "swords" end
+    if n:find("sea", 1, true) then return "waves" end
+    if n:find("race", 1, true) then return "sparkles" end
+    if n:find("item", 1, true) then return "package" end
+    if n:find("volcano", 1, true) then return "flame" end
+    if n:find("esp", 1, true) then return "eye" end
+    if n:find("pvp", 1, true) then return "crosshair" end
+    if n:find("webhook", 1, true) then return "send" end
+    return "circle"
+end
+
+local A = { Options = _AdapterOptions }
+
+function A.CreateNoti(params)
+    params = type(params) == "table" and params or {}
+    Fluent:Notify({
+        Title = "Skider Hub",
+        Content = tostring(params.Desc or params.Content or ""),
+        Duration = tonumber(params.ShowTime or params.Duration) or 5,
+    })
+end
+
+function A.CreateMain(_)
+    local main = {}
+
+    function main.CreatePage(cfg)
+        cfg = type(cfg) == "table" and cfg or {}
+        local pageName = tostring(cfg.Page_Name or cfg.Page_Title or "Page")
+        local tab = _FluentWindow:AddTab({
+            Title = pageName,
+            Icon = _pageIcon(pageName),
+        })
+        local page = { _tab = tab, _name = pageName }
+
+        function page.CreateSection(sectionName)
+            sectionName = tostring(sectionName or "Section")
+            pcall(function() tab:AddSection(sectionName) end)
+            local section = { _tab = tab, _page = pageName, _section = sectionName }
+
+            local function register(title, typ, meta, wrapper)
+                title = tostring(title or typ or "Option")
+                meta = meta or {}
+                meta.type = typ
+                meta.Page_Name = pageName
+                meta.Section_Name = sectionName
+                meta.FunctionCreate = wrapper
+                _AdapterOptions[title] = meta
+                return wrapper
+            end
+
+            function section.CreateButton(cfg2, callback)
+                cfg2 = type(cfg2) == "table" and cfg2 or {}
+                local title = tostring(cfg2.Title or "Button")
+                local wrapper = {}
+                tab:AddButton({
+                    Title = title,
+                    Description = cfg2.Desc or cfg2.Description,
+                    Callback = function()
+                        if callback then task.spawn(callback) end
+                    end,
+                })
+                return register(title, "button", { value = title }, wrapper)
+            end
+
+            function section.CreateToggle(cfg2, callback)
+                cfg2 = type(cfg2) == "table" and cfg2 or {}
+                local title = tostring(cfg2.Title or "Toggle")
+                local meta = { value = cfg2.Default == true }
+                local control
+                local wrapper = {}
+                control = tab:AddToggle(_nextId(title), {
+                    Title = title,
+                    Description = cfg2.Desc or cfg2.Description,
+                    Default = meta.value,
+                    Callback = function(v)
+                        meta.value = v == true
+                        if callback then callback(meta.value) end
+                    end,
+                })
+                function wrapper.SetStage(a, b)
+                    local v = _methodValue(a, b) == true
+                    meta.value = v
+                    _callSet(control, v)
+                end
+                wrapper.SetValue = wrapper.SetStage
+                return register(title, "toggle", meta, wrapper)
+            end
+
+            function section.CreateSlider(cfg2, callback)
+                cfg2 = type(cfg2) == "table" and cfg2 or {}
+                local title = tostring(cfg2.Title or "Slider")
+                local minv = tonumber(cfg2.Min) or 0
+                local maxv = tonumber(cfg2.Max) or 100
+                local def = tonumber(cfg2.Default)
+                if def == nil then def = minv end
+                local meta = { min = minv, max = maxv, step = cfg2.Precise and 0.1 or 1, value = def }
+                local wrapper, control = {}, nil
+                control = tab:AddSlider(_nextId(title), {
+                    Title = title,
+                    Description = cfg2.Desc or cfg2.Description,
+                    Default = def,
+                    Min = minv,
+                    Max = maxv,
+                    Rounding = cfg2.Precise and 1 or 0,
+                    Callback = function(v)
+                        meta.value = v
+                        if callback then callback(v) end
+                    end,
+                })
+                function wrapper.SetValue(a, b)
+                    local v = tonumber(_methodValue(a, b)) or meta.value
+                    meta.value = v
+                    _callSet(control, v)
+                end
+                return register(title, "slider", meta, wrapper)
+            end
+
+            function section.CreateBox(cfg2, callback)
+                cfg2 = type(cfg2) == "table" and cfg2 or {}
+                local title = tostring(cfg2.Title or "Input")
+                local def = cfg2.Default == nil and "" or tostring(cfg2.Default)
+                local meta = { value = def }
+                local wrapper, control = {}, nil
+                control = tab:AddInput(_nextId(title), {
+                    Title = title,
+                    Description = cfg2.Desc or cfg2.Description,
+                    Default = def,
+                    Placeholder = cfg2.Placeholder or "",
+                    Numeric = cfg2.Number == true,
+                    Finished = false,
+                    Callback = function(v)
+                        meta.value = tostring(v or "")
+                        if callback then callback(cfg2.Number and (tonumber(v) or v) or v) end
+                    end,
+                })
+                function wrapper.SetValue(a, b)
+                    local v = tostring(_methodValue(a, b) or "")
+                    meta.value = v
+                    _callSet(control, v)
+                end
+                return register(title, "box", meta, wrapper)
+            end
+
+            function section.CreateLabel(cfg2)
+                cfg2 = type(cfg2) == "table" and cfg2 or {}
+                local title = tostring(cfg2.Title or "")
+                local current = title
+                local paragraph = tab:AddParagraph({ Title = title ~= "" and title or "Status", Content = "" })
+                local wrapper = {}
+                function wrapper.SetText(a, b)
+                    local v = tostring(_methodValue(a, b) or "")
+                    current = v
+                    pcall(function() paragraph:SetDesc(v) end)
+                end
+                function wrapper.GetText() return current end
+                return register(title ~= "" and title or _nextId("Label"), "textlabel", { text = current }, wrapper)
+            end
+
+            function section.CreateDropdown(cfg2, callback)
+                cfg2 = type(cfg2) == "table" and cfg2 or {}
+                local title = tostring(cfg2.Title or "Dropdown")
+
+                -- Old BNN "Slider dropdown": Fluent renders each sub-slider directly.
+                if cfg2.Slider == true and type(cfg2.List) == "table" then
+                    local meta = { list = _copyTable(cfg2.List), value = {} }
+                    local wrapper = { _controls = {} }
+                    local keys = {}
+                    for k in pairs(cfg2.List) do keys[#keys + 1] = k end
+                    table.sort(keys, function(a,b) return tostring(a) < tostring(b) end)
+                    for _, key in ipairs(keys) do
+                        local spec = cfg2.List[key]
+                        if type(spec) == "table" then
+                            local subTitle = tostring(spec.Title or key)
+                            local def = tonumber(spec.Default) or tonumber(spec.Min) or 0
+                            meta.value[key] = def
+                            local c
+                            c = tab:AddSlider(_nextId(title .. "_" .. tostring(key)), {
+                                Title = title .. " - " .. subTitle,
+                                Default = def,
+                                Min = tonumber(spec.Min) or 0,
+                                Max = tonumber(spec.Max) or 100,
+                                Rounding = spec.Precise and 1 or 0,
+                                Callback = function(v)
+                                    meta.value[key] = v
+                                    spec.Default = v
+                                    if callback then callback(spec, v) end
+                                end,
+                            })
+                            wrapper._controls[key] = c
+                        end
+                    end
+                    function wrapper.SetSubValue(a, b, c)
+                        local key, val
+                        if c ~= nil then key, val = b, c else key, val = a, b end
+                        if key == wrapper then return end
+                        if val == nil then return end
+                        meta.value[key] = val
+                        local control = wrapper._controls[key]
+                        _callSet(control, val)
+                    end
+                    function wrapper.SetValue(a, b)
+                        local tbl = _methodValue(a, b)
+                        if type(tbl) == "table" then
+                            for k, v in pairs(tbl) do wrapper:SetSubValue(k, v) end
+                        end
+                    end
+                    return register(title, "slider_dropdown", meta, wrapper)
+                end
+
+                local values = _listValues(cfg2.List)
+
+                -- Priority dropdown: Fluent multi-select, preserving selection order.
+                if cfg2.Priority == true then
+                    local order = {}
+                    if type(cfg2.Default) == "table" then
+                        for _, v in ipairs(cfg2.Default) do order[#order + 1] = tostring(v) end
+                    end
+                    local selected = {}
+                    for _, v in ipairs(order) do selected[v] = true end
+                    local meta = { list = _copyTable(values), value = _copyTable(order) }
+                    local wrapper, control = {}, nil
+                    control = tab:AddDropdown(_nextId(title), {
+                        Title = title,
+                        Description = cfg2.Desc or cfg2.Description,
+                        Values = values,
+                        Multi = true,
+                        Default = selected,
+                        Callback = function(v)
+                            v = type(v) == "table" and v or {}
+                            local present = {}
+                            for k, on in pairs(v) do if on then present[tostring(k)] = true end end
+                            local newOrder = {}
+                            for _, old in ipairs(order) do if present[old] then newOrder[#newOrder + 1] = old; present[old] = nil end end
+                            for _, option in ipairs(values) do if present[option] then newOrder[#newOrder + 1] = option; present[option] = nil end end
+                            order = newOrder
+                            meta.value = _copyTable(order)
+                            if callback then callback(_copyTable(order)) end
+                        end,
+                    })
+                    function wrapper.SetValue(a, b)
+                        local tbl = _methodValue(a, b)
+                        if type(tbl) ~= "table" then return end
+                        order = {}
+                        local map = {}
+                        if #tbl > 0 then
+                            for _, v in ipairs(tbl) do local x=tostring(v); order[#order+1]=x; map[x]=true end
+                        else
+                            for k, on in pairs(tbl) do if on then local x=tostring(k); order[#order+1]=x; map[x]=true end end
+                        end
+                        meta.value = _copyTable(order)
+                        _callSet(control, map)
+                    end
+                    function wrapper.GetNewList(a, b)
+                        local list = _methodValue(a, b)
+                        values = _listValues(list)
+                        meta.list = _copyTable(values)
+                        pcall(function() control:SetValues(values) end)
+                    end
+                    return register(title, "priority_dropdown", meta, wrapper)
+                end
+
+                -- Old Selected=true means multi-select and callback(key, bool).
+                if cfg2.Selected == true then
+                    local state = _multiState(cfg2.List, cfg2.Default)
+                    local meta = { list = _copyTable(values), value = _copyTable(state) }
+                    local wrapper, control = {}, nil
+                    control = tab:AddDropdown(_nextId(title), {
+                        Title = title,
+                        Description = cfg2.Desc or cfg2.Description,
+                        Values = values,
+                        Multi = true,
+                        Default = _copyTable(state),
+                        Callback = function(v)
+                            v = type(v) == "table" and v or {}
+                            local nextState = {}
+                            for _, option in ipairs(values) do nextState[option] = v[option] == true end
+                            for key, newValue in pairs(nextState) do
+                                if state[key] ~= newValue and callback then callback(key, newValue) end
+                            end
+                            state = nextState
+                            meta.value = _copyTable(state)
+                        end,
+                    })
+                    function wrapper.SetValue(a, b)
+                        local tbl = _methodValue(a, b)
+                        if type(tbl) ~= "table" then return end
+                        state = _multiState(values, tbl)
+                        meta.value = _copyTable(state)
+                        _callSet(control, _copyTable(state))
+                    end
+                    function wrapper.GetNewList(a, b)
+                        local list = _methodValue(a, b)
+                        values = _listValues(list)
+                        local newState = {}
+                        for _, option in ipairs(values) do newState[option] = state[option] == true end
+                        state = newState
+                        meta.list = _copyTable(values)
+                        meta.value = _copyTable(state)
+                        pcall(function() control:SetValues(values) end)
+                        _callSet(control, _copyTable(state))
+                    end
+                    return register(title, "multi_toggle", meta, wrapper)
+                end
+
+                -- Standard single dropdown.
+                local def = cfg2.Default
+                if def == nil and #values > 0 then def = values[1] end
+                local meta = { list = _copyTable(values), value = def }
+                local wrapper, control = {}, nil
+                control = tab:AddDropdown(_nextId(title), {
+                    Title = title,
+                    Description = cfg2.Desc or cfg2.Description,
+                    Values = values,
+                    Multi = false,
+                    Default = def,
+                    Callback = function(v)
+                        meta.value = v
+                        if callback then callback(v) end
+                    end,
+                })
+                function wrapper.SetValue(a, b)
+                    local v = _methodValue(a, b)
+                    meta.value = v
+                    _callSet(control, v)
+                end
+                function wrapper.GetNewList(a, b)
+                    local list = _methodValue(a, b)
+                    values = _listValues(list)
+                    meta.list = _copyTable(values)
+                    pcall(function() control:SetValues(values) end)
+                end
+                return register(title, "dropdown", meta, wrapper)
+            end
+
+            function section.CreateBind(cfg2, callback)
+                cfg2 = type(cfg2) == "table" and cfg2 or {}
+                local title = tostring(cfg2.Title or "Toggle GUI")
+                -- Fluent already owns LeftControl through MinimizeKey. Add a lightweight note only.
+                local wrapper = {}
+                pcall(function()
+                    tab:AddParagraph({ Title = title, Content = "Key: " .. tostring(cfg2.Key or Enum.KeyCode.LeftControl) })
+                end)
+                return register(title, "bind", { value = cfg2.Key }, wrapper)
+            end
+
+            return section
+        end
+
+        return page
+    end
+
+    return main
+end
+
+Main = A.CreateMain({ Title = "Skider Hub", Desc = " - Blox Fruit", Image = SKIDER_HUB_LOGO })
 getgenv().LoadScript = true
 PageShop = Main.CreatePage({ Page_Name = "Shop", Page_Title = "Shop" })
 getgenv().Options = A.Options
