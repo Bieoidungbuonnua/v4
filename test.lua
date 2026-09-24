@@ -2935,6 +2935,86 @@ function DetectNameMulti(player)
 	return lookup6
 end
 
+function DetectNameAbility(player)
+	local iterator2, state2, initialKey2 = next, player:GetChildren()
+	for unusedIndex, value7 in iterator2, state2, initialKey2 do
+		if table.find(items18, value7.Name) then
+			return true
+		end
+	end
+	return false
+end
+
+function GetOtherPlayerRaces()
+	local lookup6 = {}
+	for unusedIndex, player in pairs(Players:GetChildren()) do
+		if player.Name ~= localPlayer.Name and player:FindFirstChild("Data") and player.Data:FindFirstChild("Race") then
+			lookup6[player.Name] = player.Data.Race.Value
+		end
+	end
+	return lookup6
+end
+
+function CheckMultiPlayerNearDoor()
+	if not Workspace:FindFirstChild("Characters") then return false end
+	local iterator2, state2, initialKey2 = next, Workspace.Characters:GetChildren()
+	local count13 = 0
+	for key, value7 in iterator2, state2, initialKey2 do
+		key = GetOtherPlayerRaces()[value7.Name]
+		if key
+			and value7:FindFirstChild("HumanoidRootPart")
+			and (DetectNameAbility(value7.HumanoidRootPart))
+			and Workspace.Map:FindFirstChild("Temple of Time")
+			and Workspace.Map["Temple of Time"]:FindFirstChild(key .. "Corridor")
+			and (
+					value7.HumanoidRootPart.Position
+					- Workspace.Map["Temple of Time"][key .. "Corridor"].Door.Door.RightDoor.Union.Position
+				).Magnitude
+				< 100
+		then
+			count13 = count13 + 1
+		end
+	end
+	if count13 >= 2 then
+		return true
+	end
+	return false
+end
+
+function CheckMultiAccount()
+	local lookup6 = {}
+	for unusedIndex, player in pairs(Players:GetChildren()) do
+		if Settings["Select Players Multi"] and Settings["Select Players Multi"][player.Name] and player:FindFirstChild("Data") and player.Data:FindFirstChild("Race") then
+			lookup6[player.Name] = player.Data.Race.Value
+		end
+	end
+	return lookup6
+end
+
+function CheckMultiTeleDoor()
+	if not Workspace:FindFirstChild("Characters") then return false end
+	local iterator2, state2, initialKey2 = next, Workspace.Characters:GetChildren()
+	local count13 = 0
+	for key, value7 in iterator2, state2, initialKey2 do
+		key = CheckMultiAccount()[value7.Name]
+		if key
+			and value7:FindFirstChild("HumanoidRootPart")
+			and Workspace.Map:FindFirstChild("Temple of Time")
+			and Workspace.Map["Temple of Time"]:FindFirstChild(key .. "Corridor")
+			and (
+					value7.HumanoidRootPart.Position
+					- Workspace.Map["Temple of Time"][key .. "Corridor"].Door.Door.RightDoor.Union.Position
+				).Magnitude
+				< 100
+		then
+			count13 = count13 + 1
+		end
+	end
+	if count13 >= 2 then
+		return true
+	end
+	return false
+end
 
 -- ══════════════════════════════════════════════════════════════════
 -- ══════════════════════════════════════════════════════════════════
@@ -2992,15 +3072,14 @@ local function isHelperAccount()
 end
 
 do
-    local function configuredV3Countdown()
-        return math.max(1, tonumber(Settings["V3 Countdown"]) or 3)
-    end
+    -- Giữ nguyên bộ điều phối từ backup, chỉ lấy số giây từ config OneClick/Main.
+    local V3_COUNTDOWN      = math.max(1, tonumber(Settings["V3 Countdown"]) or 4)
     local V3_FILE_POLL      = 0.05
     local V3_READY_FRESH    = 5.0
     local V3_FIRE_COUNT     = 3
     local V3_FIRE_INTERVAL  = 0.05
     local V3_DOOR_DIST      = 65
-    local FILE_ROOT         = "TurnV3"
+    local FILE_ROOT         = "SkiderV4/TurnV3"
 
     -- SERVICES
     local Players           = game:GetService("Players")
@@ -3019,18 +3098,58 @@ do
     -- ════════════ ROLE DETECTION ════════════
     -- Helper = có trong HelperList
     -- Main   = KHÔNG có trong HelperList
-    local LOCAL_HELPERS = {}
-    local HelpWhitelist = {}
+    local LOCAL_HELPERS   = {}
+
+    local HelpWhitelist   = {}
+
     do
+
         local seen = {}
-        for _, raw in ipairs(getgenv().HelperList or {}) do
-            local name = tostring(raw):match("^%s*(.-)%s*$")
-            if name ~= "" and not seen[name] then
-                seen[name] = true
-                table.insert(LOCAL_HELPERS, name)
-                HelpWhitelist[name] = true
+
+        local function addH(raw)
+
+            if type(raw) == "table" then
+
+                for k, v in pairs(raw) do
+
+                    if type(k) == "number" and type(v) == "string" then addH(v)
+
+                    elseif type(k) == "string" and (v == true or type(v) == "table") then addH(k)
+
+                    elseif type(v) == "string" then addH(v) end
+
+                end
+
+            elseif type(raw) == "string" then
+
+                local name = raw:match("^%s*(.-)%s*$")
+
+                if name ~= "" and not seen[name] then
+
+                    seen[name] = true
+
+                    table.insert(LOCAL_HELPERS, name)
+
+                    HelpWhitelist[name] = true
+
+                end
+
             end
+
         end
+
+        -- Multi-source: HelperList, JoinV4Config, Config, Settings
+
+        addH(getgenv().HelperList)
+
+        if getgenv().JoinV4Config and getgenv().JoinV4Config["Helper"] then addH(getgenv().JoinV4Config["Helper"]) end
+
+        if getgenv().Config and getgenv().Config["Name Helper TurnV3"] then addH(getgenv().Config["Name Helper TurnV3"]) end
+
+        if getgenv().Settings and getgenv().Settings["Name Helper TurnV3"] then addH(getgenv().Settings["Name Helper TurnV3"]) end
+
+        if getgenv().Settings and getgenv().Settings["Select Players Multi"] then addH(getgenv().Settings["Select Players Multi"]) end
+
     end
 
     local isUper = not HelpWhitelist[USERNAME]   -- MAIN: không trong whitelist
@@ -3287,10 +3406,6 @@ do
         local now       = v3ServerNow()
         local expiresAt = tonumber(data.expires_at) or 0
         if expiresAt <= now then return nil end
-        -- Never execute a command whose shared fire time has already passed.
-        -- Old command.json files were the second path that could activate V3 instantly.
-        local fireAt = tonumber(data.fire_at) or 0
-        if fireAt <= now then return nil end
         return data
     end
 
@@ -3327,9 +3442,8 @@ do
             return nil
         end
 
-        local now       = v3ServerNow()
-        local countdown = configuredV3Countdown()
-        local fireAt    = now + countdown
+        local now     = v3ServerNow()
+        local fireAt  = now + V3_COUNTDOWN
         local roundId = sanitize(USERNAME) .. "_" .. tostring(math.floor(fireAt * 1000))
 
         local members = {}
@@ -3351,11 +3465,11 @@ do
             created_at = now,
             fire_at    = fireAt,
             expires_at = fireAt + 10,
-            countdown  = countdown,
+            countdown  = V3_COUNTDOWN,
         }
 
         if safeWriteJson(commandPath(), command) then
-            setStatus(string.format("Main | V3 countdown %.0fs...", countdown))
+            setStatus(string.format("Main | V3 countdown %.0fs...", V3_COUNTDOWN))
             return command
         end
         return nil
@@ -3470,10 +3584,6 @@ do
 
     local function tryActivateAbility()
         if activating then return false end
-        if Settings["Auto Turn On V3 Near Door"] ~= true then
-            setStatus("TurnV3 | Disabled")
-            return false
-        end
         if not (isnight() and isfullmoon()) then return false end
 
         local ffaNow = false
