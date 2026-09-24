@@ -1,4 +1,125 @@
+-- Hot branding patch: if an older build is already loaded in this same server,
+-- do not silently return before applying the new Skider Hub logo/theme.
 if getgenv().__BF_LOADED then
+	if not getgenv().__SKIDER_BRAND_HOTPATCH_ACTIVE then
+		getgenv().__SKIDER_BRAND_HOTPATCH_ACTIVE = true
+		task.spawn(function()
+			local CoreGui = game:GetService("CoreGui")
+			local LOGO = "rbxassetid://90412962524051"
+			local DARK_GREEN = Color3.fromRGB(18, 105, 58)
+			local oldBrand = "Banana" .. " Cat" .. " Hub"
+
+			local function isWarm(c)
+				if typeof(c) ~= "Color3" then return false end
+				local h, s, v = c:ToHSV()
+				return h >= 0.015 and h <= 0.20 and s >= 0.24 and v >= 0.34
+			end
+
+			local function isBrandText(s)
+				if type(s) ~= "string" then return false end
+				local l = string.lower(s)
+				return string.find(l, string.lower(oldBrand), 1, true) ~= nil
+					or string.find(l, "skider hub", 1, true) ~= nil
+					or string.find(l, "search section or func", 1, true) ~= nil
+			end
+
+			local function screenAncestor(o)
+				while o do
+					if o:IsA("ScreenGui") then return o end
+					o = o.Parent
+				end
+			end
+
+			local function patchObject(o)
+				pcall(function()
+					if o:IsA("GuiObject") then
+						if isWarm(o.BackgroundColor3) then o.BackgroundColor3 = DARK_GREEN end
+						if isWarm(o.BorderColor3) then o.BorderColor3 = DARK_GREEN end
+					end
+					if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+						if type(o.Text) == "string" and string.find(o.Text, oldBrand, 1, true) then
+							o.Text = o.Text:gsub(oldBrand, "Skider Hub")
+						end
+						if isWarm(o.TextColor3) then o.TextColor3 = DARK_GREEN end
+					end
+					if o:IsA("ImageLabel") or o:IsA("ImageButton") then
+						if isWarm(o.ImageColor3) then o.ImageColor3 = DARK_GREEN end
+						local n = string.lower(tostring(o.Name or ""))
+						local pn = o.Parent and string.lower(tostring(o.Parent.Name or "")) or ""
+						if string.find(n, "logo", 1, true) or string.find(n, "brand", 1, true)
+							or string.find(pn, "logo", 1, true) or string.find(pn, "brand", 1, true) then
+							o.Image = LOGO
+							o.ImageRectOffset = Vector2.new(0, 0)
+							o.ImageRectSize = Vector2.new(0, 0)
+							o.ImageColor3 = Color3.new(1, 1, 1)
+						end
+					end
+					if o:IsA("ScrollingFrame") and isWarm(o.ScrollBarImageColor3) then o.ScrollBarImageColor3 = DARK_GREEN end
+					if o:IsA("UIStroke") and isWarm(o.Color) then o.Color = DARK_GREEN end
+					if o:IsA("UIGradient") then
+						local pts, changed = {}, false
+						for _, kp in ipairs(o.Color.Keypoints) do
+							local c = kp.Value
+							if isWarm(c) then c = DARK_GREEN changed = true end
+							table.insert(pts, ColorSequenceKeypoint.new(kp.Time, c))
+						end
+						if changed then o.Color = ColorSequence.new(pts) end
+					end
+				end)
+			end
+
+			local function patchRoot(root)
+				local labels, images = {}, {}
+				patchObject(root)
+				for _, o in ipairs(root:GetDescendants()) do
+					patchObject(o)
+					if (o:IsA("TextLabel") or o:IsA("TextButton")) and type(o.Text) == "string"
+						and string.find(string.lower(o.Text), "skider hub", 1, true) then
+						table.insert(labels, o)
+					elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
+						table.insert(images, o)
+					end
+				end
+
+				for _, img in ipairs(images) do
+					pcall(function()
+						local sz = img.AbsoluteSize
+						if img.Image == "" or sz.X < 20 or sz.Y < 20 or sz.X > 100 or sz.Y > 100 then return end
+						if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.35 then return end
+						local ic = img.AbsolutePosition + sz / 2
+						for _, lb in ipairs(labels) do
+							local lc = lb.AbsolutePosition + lb.AbsoluteSize / 2
+							if (ic - lc).Magnitude <= 260 then
+								img.Image = LOGO
+								img.ImageRectOffset = Vector2.new(0, 0)
+								img.ImageRectSize = Vector2.new(0, 0)
+								img.ImageColor3 = Color3.new(1, 1, 1)
+								break
+							end
+						end
+					end)
+				end
+			end
+
+			while getgenv().__BF_LOADED do
+				local roots = {}
+				for _, o in ipairs(CoreGui:GetDescendants()) do
+					if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+						if isBrandText(o.Text) then
+							local r = screenAncestor(o)
+							if r then roots[r] = true end
+						end
+					elseif o:IsA("ScreenGui") then
+						local n = string.lower(tostring(o.Name or ""))
+						if string.find(n, "nousigi", 1, true) or string.find(n, "skider", 1, true) then roots[o] = true end
+					end
+				end
+				for r in pairs(roots) do patchRoot(r) end
+				task.wait(0.20)
+			end
+			getgenv().__SKIDER_BRAND_HOTPATCH_ACTIVE = nil
+		end)
+	end
 	return getgenv().__BF_RESULT
 end
 
@@ -274,6 +395,9 @@ if not _uiOk or type(A) ~= "table" then
 end
 local SKIDER_HUB_LOGO = "rbxassetid://90412962524051"
 local SKIDER_DARK_GREEN = Color3.fromRGB(18, 105, 58)
+local SKIDER_DARK_GREEN_HOVER = Color3.fromRGB(24, 130, 72)
+local SKIDER_DARK_GREEN_DIM = Color3.fromRGB(12, 70, 38)
+
 Main = A.CreateMain({
 	Title = "Skider Hub",
 	Desc = " - Blox Fruit",
@@ -282,63 +406,218 @@ Main = A.CreateMain({
 	Icon = SKIDER_HUB_LOGO,
 })
 
--- Apply branding to the external UI library after it creates Nousigi Hub GUI.
--- This only touches the hub UI, never Roblox/Blox Fruits UI.
-local function _isYellowUIColor(color)
-	if typeof(color) ~= "Color3" then
-		return false
-	end
-	local r, g, b = color.R, color.G, color.B
-	return r >= 0.55 and g >= 0.40 and b <= 0.30 and r >= g * 0.85
+-- Force-brand the ACTUAL GUI created by the external UI library.
+-- The external library hardcodes the old hub name, gold accents and its own logo,
+-- so simply passing Title/Image to CreateMain is not enough.
+local _skiderRoots = setmetatable({}, { __mode = "k" })
+local _skiderRootConnections = setmetatable({}, { __mode = "k" })
+
+local function _replaceSkiderBrandText(value)
+	if type(value) ~= "string" then return value end
+	local oldBrand = "Banana" .. " Cat" .. " Hub"
+	value = value:gsub(oldBrand, "Skider Hub")
+	return value
 end
 
-local function _applySkiderBrandingToObject(obj)
+local function _isSkiderBrandText(value)
+	if type(value) ~= "string" then return false end
+	local s = string.lower(value)
+	return string.find(s, "banana cat hub", 1, true) ~= nil
+		or string.find(s, "skider hub", 1, true) ~= nil
+		or string.find(s, "search section or func", 1, true) ~= nil
+end
+
+local function _isOldWarmAccent(color)
+	if typeof(color) ~= "Color3" then return false end
+	local h, s, v = color:ToHSV()
+	-- Covers orange/yellow/gold used by the old UI theme, while leaving pure red alone.
+	return h >= 0.015 and h <= 0.20 and s >= 0.24 and v >= 0.34
+end
+
+local function _greenifySequence(seq)
+	if typeof(seq) ~= "ColorSequence" then return seq end
+	local changed = false
+	local points = {}
+	for _, kp in ipairs(seq.Keypoints) do
+		local c = kp.Value
+		if _isOldWarmAccent(c) then
+			c = SKIDER_DARK_GREEN
+			changed = true
+		end
+		table.insert(points, ColorSequenceKeypoint.new(kp.Time, c))
+	end
+	return changed and ColorSequence.new(points) or seq
+end
+
+local function _applySkiderThemeObject(obj)
 	pcall(function()
 		if obj:IsA("GuiObject") then
-			if _isYellowUIColor(obj.BackgroundColor3) then obj.BackgroundColor3 = SKIDER_DARK_GREEN end
-			if _isYellowUIColor(obj.BorderColor3) then obj.BorderColor3 = SKIDER_DARK_GREEN end
+			if _isOldWarmAccent(obj.BackgroundColor3) then obj.BackgroundColor3 = SKIDER_DARK_GREEN end
+			if _isOldWarmAccent(obj.BorderColor3) then obj.BorderColor3 = SKIDER_DARK_GREEN end
 		end
+
 		if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-			if _isYellowUIColor(obj.TextColor3) then obj.TextColor3 = SKIDER_DARK_GREEN end
+			local newText = _replaceSkiderBrandText(obj.Text)
+			if newText ~= obj.Text then obj.Text = newText end
+			if _isOldWarmAccent(obj.TextColor3) then obj.TextColor3 = SKIDER_DARK_GREEN end
 		end
+
 		if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
-			if _isYellowUIColor(obj.ImageColor3) then obj.ImageColor3 = SKIDER_DARK_GREEN end
-			local objectName = string.lower(obj.Name or "")
-			if string.find(objectName, "logo", 1, true) or string.find(objectName, "brand", 1, true) then
+			if _isOldWarmAccent(obj.ImageColor3) then obj.ImageColor3 = SKIDER_DARK_GREEN end
+			local n = string.lower(tostring(obj.Name or ""))
+			local pn = obj.Parent and string.lower(tostring(obj.Parent.Name or "")) or ""
+			if string.find(n, "logo", 1, true)
+				or string.find(n, "brand", 1, true)
+				or string.find(pn, "logo", 1, true)
+				or string.find(pn, "brand", 1, true)
+			then
 				obj.Image = SKIDER_HUB_LOGO
 				obj.ImageRectOffset = Vector2.new(0, 0)
 				obj.ImageRectSize = Vector2.new(0, 0)
+				obj.ImageColor3 = Color3.new(1, 1, 1)
 			end
 		end
-		if obj:IsA("UIStroke") and _isYellowUIColor(obj.Color) then
+
+		if obj:IsA("ScrollingFrame") and _isOldWarmAccent(obj.ScrollBarImageColor3) then
+			obj.ScrollBarImageColor3 = SKIDER_DARK_GREEN
+		end
+
+		if obj:IsA("UIStroke") and _isOldWarmAccent(obj.Color) then
 			obj.Color = SKIDER_DARK_GREEN
+		end
+
+		if obj:IsA("UIGradient") then
+			obj.Color = _greenifySequence(obj.Color)
 		end
 	end)
 end
 
-local function _applySkiderHubBranding()
-	local coreGui = game:GetService("CoreGui")
-	local root = coreGui:FindFirstChild("Nousigi Hub GUI")
-	if not root then return false end
-
-	_applySkiderBrandingToObject(root)
-	for _, obj in ipairs(root:GetDescendants()) do
-		_applySkiderBrandingToObject(obj)
+local function _findScreenGuiAncestor(obj)
+	local current = obj
+	while current do
+		if current:IsA("ScreenGui") then return current end
+		current = current.Parent
 	end
-
-	if not root:GetAttribute("SkiderBrandHooked") then
-		root:SetAttribute("SkiderBrandHooked", true)
-		root.DescendantAdded:Connect(function(obj)
-			task.defer(_applySkiderBrandingToObject, obj)
-		end)
-	end
-	return true
+	return nil
 end
 
+local function _registerSkiderRoot(root)
+	if not root or not root:IsA("ScreenGui") then return end
+	_skiderRoots[root] = true
+	if _skiderRootConnections[root] then return end
+
+	_skiderRootConnections[root] = root.DescendantAdded:Connect(function(obj)
+		-- Libraries often assign colors/text one frame after parenting the object.
+		task.delay(0.05, function()
+			if obj and obj.Parent then _applySkiderThemeObject(obj) end
+		end)
+	end)
+end
+
+local function _discoverSkiderRoots(container)
+	if not container then return end
+
+	for _, obj in ipairs(container:GetDescendants()) do
+		if obj:IsA("ScreenGui") then
+			local n = string.lower(tostring(obj.Name or ""))
+			if string.find(n, "nousigi", 1, true)
+				or string.find(n, "banana", 1, true)
+				or string.find(n, "skider", 1, true)
+			then
+				_registerSkiderRoot(obj)
+			end
+		elseif obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+			if _isSkiderBrandText(obj.Text) then
+				_registerSkiderRoot(_findScreenGuiAncestor(obj))
+			end
+		end
+	end
+end
+
+local function _forceHubLogoNearBrand(root)
+	-- Catch obfuscated libraries that name the logo simply "ImageLabel".
+	-- Only square images physically close to a Skider Hub title are treated as hub logos.
+	local brandLabels = {}
+	local imageObjects = {}
+	for _, obj in ipairs(root:GetDescendants()) do
+		if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+			if type(obj.Text) == "string" and string.find(string.lower(obj.Text), "skider hub", 1, true) then
+				table.insert(brandLabels, obj)
+			end
+		elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+			table.insert(imageObjects, obj)
+		end
+	end
+
+	for _, img in ipairs(imageObjects) do
+		pcall(function()
+			local size = img.AbsoluteSize
+			local isSquare = size.X >= 20 and size.Y >= 20 and size.X <= 100 and size.Y <= 100
+				and math.abs(size.X - size.Y) <= math.max(size.X, size.Y) * 0.35
+			if not isSquare or img.Image == "" then return end
+
+			local ic = img.AbsolutePosition + (size / 2)
+			for _, label in ipairs(brandLabels) do
+				local ls = label.AbsoluteSize
+				local lc = label.AbsolutePosition + (ls / 2)
+				if (ic - lc).Magnitude <= 260 then
+					img.Image = SKIDER_HUB_LOGO
+					img.ImageRectOffset = Vector2.new(0, 0)
+					img.ImageRectSize = Vector2.new(0, 0)
+					img.ImageColor3 = Color3.new(1, 1, 1)
+					break
+				end
+			end
+		end)
+	end
+end
+
+local function _patchSkiderRoot(root)
+	if not root or not root.Parent then return end
+	_applySkiderThemeObject(root)
+	for _, obj in ipairs(root:GetDescendants()) do
+		_applySkiderThemeObject(obj)
+	end
+	_forceHubLogoNearBrand(root)
+end
+
+local _guiContainers = { game:GetService("CoreGui") }
+pcall(function()
+	if gethui then
+		local hui = gethui()
+		if hui and hui ~= _guiContainers[1] then table.insert(_guiContainers, hui) end
+	end
+end)
+
+for _, container in ipairs(_guiContainers) do
+	_discoverSkiderRoots(container)
+	pcall(function()
+		container.DescendantAdded:Connect(function(obj)
+			task.delay(0.08, function()
+				if not obj or not obj.Parent then return end
+				if obj:IsA("ScreenGui") then
+					local n = string.lower(tostring(obj.Name or ""))
+					if string.find(n, "nousigi", 1, true) or string.find(n, "banana", 1, true) or string.find(n, "skider", 1, true) then
+						_registerSkiderRoot(obj)
+					end
+				elseif obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+					if _isSkiderBrandText(obj.Text) then _registerSkiderRoot(_findScreenGuiAncestor(obj)) end
+				end
+			end)
+		end)
+	end)
+end
+
+-- Keep enforcing the theme because the external library restores its gold colors on hover/tween.
 task.spawn(function()
-	for _ = 1, 40 do
-		if _applySkiderHubBranding() then break end
-		task.wait(0.25)
+	while getgenv().LoadScript ~= false do
+		for _, container in ipairs(_guiContainers) do
+			_discoverSkiderRoots(container)
+		end
+		for root in pairs(_skiderRoots) do
+			_patchSkiderRoot(root)
+		end
+		task.wait(0.20)
 	end
 end)
 getgenv().LoadScript = true
@@ -801,11 +1080,11 @@ SectionServer.CreateButton({ Title = "Open Gui Server Browser (Low Player and Pi
 			ROW_HOVER = Color3.fromRGB(20, 22, 35),
 			ROW_TOP = Color3.fromRGB(10, 22, 34),
 			BORDER = Color3.fromRGB(28, 31, 48),
-			BORDER_HOV = Color3.fromRGB(0, 80, 120),
-			CYAN = Color3.fromRGB(0, 212, 255),
-			CYAN_DIM = Color3.fromRGB(0, 80, 120),
-			GREEN = Color3.fromRGB(0, 204, 102),
-			GREEN_GLOW = Color3.fromRGB(0, 255, 136),
+			BORDER_HOV = Color3.fromRGB(12, 70, 38),
+			CYAN = Color3.fromRGB(18, 105, 58),
+			CYAN_DIM = Color3.fromRGB(12, 70, 38),
+			GREEN = Color3.fromRGB(18, 105, 58),
+			GREEN_GLOW = Color3.fromRGB(24, 130, 72),
 			DARK_GREEN = Color3.fromRGB(18, 105, 58),
 			RED = Color3.fromRGB(255, 68, 85),
 			TEXT_PRI = Color3.fromRGB(232, 234, 240),
