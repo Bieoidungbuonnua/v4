@@ -1,3 +1,183 @@
+-- Skider Hub library-chrome patch V2.
+-- Targets ONLY the external hub library's help notification + its own toggle button.
+-- PlayerGui/Blox Fruits HUD/hotbar are intentionally never scanned.
+if not getgenv().__SKIDER_LIBRARY_CHROME_PATCH_V2 then
+    getgenv().__SKIDER_LIBRARY_CHROME_PATCH_V2 = true
+    task.spawn(function()
+        local CoreGui = game:GetService("CoreGui")
+        local Players = game:GetService("Players")
+        local LOGO = "rbxassetid://90412962524051"
+        local GREEN = Color3.fromRGB(18, 105, 58)
+        local WHITE = Color3.fromRGB(245, 247, 250)
+        local watched = setmetatable({}, { __mode = "k" })
+
+        local function lower(v)
+            return type(v) == "string" and string.lower(v) or ""
+        end
+
+        local function replaceBrand(v)
+            if type(v) ~= "string" then return v end
+            v = v:gsub("Banana Cat Hub", "Skider Hub")
+            v = v:gsub("BANANA CAT HUB", "Skider Hub")
+            v = v:gsub("banana cat hub", "Skider Hub")
+            v = v:gsub("Banana Hub", "Skider Hub")
+            v = v:gsub("BANANA HUB", "Skider Hub")
+            v = v:gsub("Binini Hub", "Skider Hub")
+            return v
+        end
+
+        local function isLibraryHelpText(v)
+            local t = lower(v)
+            return string.find(t, "ui library", 1, true) ~= nil
+                or string.find(t, "automatically hides", 1, true) ~= nil
+                or string.find(t, "bottom-left", 1, true) ~= nil
+                or string.find(t, "press the button", 1, true) ~= nil
+        end
+
+        local function screenAncestor(o)
+            while o do
+                if o:IsA("ScreenGui") then return o end
+                o = o.Parent
+            end
+            return nil
+        end
+
+        local function setLogo(img)
+            if not img or not (img:IsA("ImageLabel") or img:IsA("ImageButton")) then return end
+            pcall(function()
+                img.Image = LOGO
+                img.ImageRectOffset = Vector2.new(0, 0)
+                img.ImageRectSize = Vector2.new(0, 0)
+                img.ImageColor3 = Color3.new(1, 1, 1)
+            end)
+        end
+
+        local function rootHasLibraryHelp(root)
+            if not root or not root:IsA("ScreenGui") then return false end
+            for _, o in ipairs(root:GetDescendants()) do
+                if (o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox")) and isLibraryHelpText(o.Text) then
+                    return true
+                end
+            end
+            return false
+        end
+
+        local function patchHelpIcon(root)
+            if not rootHasLibraryHelp(root) then return end
+
+            local helpLabels = {}
+            for _, o in ipairs(root:GetDescendants()) do
+                if o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+                    local nt = replaceBrand(o.Text)
+                    if nt ~= o.Text then pcall(function() o.Text = nt end) end
+                    if isLibraryHelpText(nt) then
+                        helpLabels[#helpLabels + 1] = o
+                        pcall(function()
+                            if string.find(lower(nt), "ui library", 1, true) then
+                                o.TextColor3 = GREEN
+                            else
+                                o.TextColor3 = WHITE
+                            end
+                        end)
+                    end
+                end
+            end
+
+            -- The old Banana icon is a small square image immediately beside the
+            -- library-help title/body. Patch only images geometrically tied to this popup.
+            for _, img in ipairs(root:GetDescendants()) do
+                if img:IsA("ImageLabel") or img:IsA("ImageButton") then
+                    pcall(function()
+                        local sz = img.AbsoluteSize
+                        if img.Image == "" or sz.X < 14 or sz.Y < 14 or sz.X > 90 or sz.Y > 90 then return end
+                        if math.abs(sz.X - sz.Y) > math.max(sz.X, sz.Y) * 0.40 then return end
+                        local ic = img.AbsolutePosition + sz / 2
+                        for _, label in ipairs(helpLabels) do
+                            local lc = label.AbsolutePosition + label.AbsoluteSize / 2
+                            if math.abs(ic.Y - lc.Y) <= 55 and ic.X <= lc.X + 35 and ic.X >= lc.X - 150 then
+                                setLogo(img)
+                                break
+                            end
+                        end
+                    end)
+                end
+            end
+
+            -- The library's own old floating toggle is also a small square ImageButton
+            -- at the bottom-left. This scan is safe because it runs only inside a
+            -- ScreenGui already proven to contain the hub library help popup.
+            local cam = workspace.CurrentCamera
+            local viewport = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+            for _, img in ipairs(root:GetDescendants()) do
+                if img:IsA("ImageButton") then
+                    pcall(function()
+                        local sz, pos = img.AbsoluteSize, img.AbsolutePosition
+                        if sz.X >= 32 and sz.X <= 110 and sz.Y >= 32 and sz.Y <= 110
+                            and math.abs(sz.X - sz.Y) <= 24
+                            and pos.X <= math.max(180, viewport.X * 0.20)
+                            and pos.Y >= viewport.Y * 0.45
+                        then
+                            setLogo(img)
+                        end
+                    end)
+                end
+            end
+        end
+
+        local containers = { CoreGui }
+        pcall(function()
+            if gethui then
+                local h = gethui()
+                if h and h ~= CoreGui then containers[#containers + 1] = h end
+            end
+        end)
+
+        local function watchRoot(root)
+            if watched[root] then return end
+            if not rootHasLibraryHelp(root) then return end
+            watched[root] = true
+            patchHelpIcon(root)
+            root.DescendantAdded:Connect(function(o)
+                task.delay(0.03, function()
+                    if root.Parent and o.Parent then patchHelpIcon(root) end
+                end)
+            end)
+        end
+
+        for _, container in ipairs(containers) do
+            pcall(function()
+                container.DescendantAdded:Connect(function(o)
+                    if o:IsA("ScreenGui") then
+                        task.delay(0.08, function()
+                            if o.Parent and rootHasLibraryHelp(o) then watchRoot(o) end
+                        end)
+                    elseif o:IsA("TextLabel") or o:IsA("TextButton") or o:IsA("TextBox") then
+                        task.delay(0.03, function()
+                            if o.Parent and isLibraryHelpText(o.Text) then
+                                local root = screenAncestor(o)
+                                if root then watchRoot(root); patchHelpIcon(root) end
+                            end
+                        end)
+                    end
+                end)
+            end)
+        end
+
+        while task.wait(0.20) do
+            for _, container in ipairs(containers) do
+                if container and container.Parent then
+                    for _, root in ipairs(container:GetChildren()) do
+                        if root:IsA("ScreenGui") and rootHasLibraryHelp(root) then
+                            watchRoot(root)
+                            patchHelpIcon(root)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
 -- Skider Hub SAFE UI hotpatch.
 -- IMPORTANT: branding/theme changes are scoped to the hub UI only.
 -- PlayerGui/Main, HUD, hotbar, tools and Devil Fruit icons are never scanned or modified.
@@ -482,6 +662,10 @@ game:GetService("Players").LocalPlayer.Idled:connect(function()
 end)
 local _uiOk, A = pcall(function()
 	local source = game:HttpGet("https://raw.githubusercontent.com/obiiyeuem/vthangsitink/refs/heads/main/zzzz.lua")
+	-- Rebrand any plain literals that the external library leaves unobfuscated.
+	source = source:gsub("Banana Cat Hub", "Skider Hub")
+		:gsub("Banana Hub", "Skider Hub")
+		:gsub("Binini Hub", "Skider Hub")
 	local chunk, compileErr = loadstring(source)
 	if not chunk then
 		error(compileErr or "UI library compile failed")
@@ -591,6 +775,32 @@ local function _skiderIsHubRoot(root)
         end
     end
     return false
+end
+
+local function _skiderPatchOwnFloatingToggle(root)
+    if not root or not root:IsA("ScreenGui") then return end
+    -- This function is only called for an already-verified hub root. It never scans PlayerGui.
+    local cam = workspace.CurrentCamera
+    local viewport = cam and cam.ViewportSize or Vector2.new(1920, 1080)
+    for _, img in ipairs(root:GetDescendants()) do
+        if img:IsA("ImageButton") then
+            pcall(function()
+                local sz, pos = img.AbsoluteSize, img.AbsolutePosition
+                if img.Image ~= ""
+                    and sz.X >= 32 and sz.X <= 110
+                    and sz.Y >= 32 and sz.Y <= 110
+                    and math.abs(sz.X - sz.Y) <= 24
+                    and pos.X <= math.max(180, viewport.X * 0.20)
+                    and pos.Y >= viewport.Y * 0.45
+                then
+                    img.Image = SKIDER_HUB_LOGO
+                    img.ImageRectOffset = Vector2.new(0, 0)
+                    img.ImageRectSize = Vector2.new(0, 0)
+                    img.ImageColor3 = Color3.new(1, 1, 1)
+                end
+            end)
+        end
+    end
 end
 
 local function _skiderPatchHeaderLogo(root)
@@ -714,6 +924,7 @@ local function _skiderRegisterRoot(root)
                 if root.Parent and o.Parent then
                     _skiderApplyObject(o)
                     _skiderWatchObject(o)
+                    _skiderPatchOwnFloatingToggle(root)
                     _skiderPatchHeaderLogo(root)
                 end
             end)
@@ -723,6 +934,7 @@ end
 
 local function _skiderPatchRoot(root)
     if not root or not root.Parent or not _skiderIsHubRoot(root) then return end
+    _skiderPatchOwnFloatingToggle(root)
     _skiderPatchHeaderLogo(root)
     _skiderApplyObject(root)
     _skiderWatchObject(root)
