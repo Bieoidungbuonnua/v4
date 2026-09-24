@@ -1309,6 +1309,7 @@ local topOfGreatTree = CFrame.new(3028, 2281, -7325)
 local TEMPLE_ENTRY_POS = Vector3.new(28310.0234, 14895.1123, 109.456741)
 local templeTeleportRetryRunning = false
 local templeTeleportRetryState = "idle"
+local templeTeleportRetryAttempts = 0
 
 local function TryTeleportTempleOfTimeOnce()
     BorrowTempleOfTime()
@@ -1368,6 +1369,27 @@ local function TryTeleportTempleOfTimeOnce()
     return "in_progress"
 end
 
+local function SafeTryTeleportTempleOfTimeOnce()
+    templeTeleportRetryAttempts = templeTeleportRetryAttempts + 1
+    local ok, state = pcall(TryTeleportTempleOfTimeOnce)
+
+    if not ok then
+        local attemptError = state
+        state = "retry_error"
+        warn("[Temple Retry] Attempt failed: " .. tostring(attemptError))
+    elseif type(state) ~= "string" then
+        state = "in_progress"
+    end
+
+    getgenv().TempleTeleportStatus = {
+        Running = templeTeleportRetryRunning,
+        State = state,
+        Attempts = templeTeleportRetryAttempts,
+        UpdatedAt = tick(),
+    }
+    return state
+end
+
 function TeleportTempleOfTime()
     if IsInTempleOfTime() then
         templeTeleportRetryState = "arrived"
@@ -1381,7 +1403,7 @@ function TeleportTempleOfTime()
     end
 
     templeTeleportRetryRunning = true
-    templeTeleportRetryState = TryTeleportTempleOfTimeOnce()
+    templeTeleportRetryState = SafeTryTeleportTempleOfTimeOnce()
 
     if templeTeleportRetryState == "wrong_sea" then
         templeTeleportRetryRunning = false
@@ -1389,20 +1411,32 @@ function TeleportTempleOfTime()
     end
 
     task.spawn(function()
-        while not IsInTempleOfTime() do
-            task.wait(1)
-            if IsInTempleOfTime() then break end
+        local workerOk, workerError = pcall(function()
+            while not IsInTempleOfTime() do
+                task.wait(1)
+                if IsInTempleOfTime() then break end
 
-            templeTeleportRetryState = TryTeleportTempleOfTimeOnce()
-            if templeTeleportRetryState == "wrong_sea" then
-                break
+                templeTeleportRetryState = SafeTryTeleportTempleOfTimeOnce()
+                if templeTeleportRetryState == "wrong_sea" then
+                    break
+                end
             end
+        end)
+
+        if not workerOk then
+            templeTeleportRetryState = "retry_error"
+            warn("[Temple Retry] Worker recovered: " .. tostring(workerError))
         end
 
         if IsInTempleOfTime() then
             templeTeleportRetryState = "arrived"
         end
         templeTeleportRetryRunning = false
+        if type(getgenv().TempleTeleportStatus) == "table" then
+            getgenv().TempleTeleportStatus.Running = false
+            getgenv().TempleTeleportStatus.State = templeTeleportRetryState
+            getgenv().TempleTeleportStatus.UpdatedAt = tick()
+        end
     end)
 
     return templeTeleportRetryState
