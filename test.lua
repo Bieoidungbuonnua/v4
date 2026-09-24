@@ -4177,8 +4177,14 @@ local function AutoTrialV4Legacy()
 							- game:GetService("Workspace")._WorldOrigin.Locations["Trial of Speed"].Position
 						).Magnitude <= 1000
 					then
-						if game:GetService("Workspace"):FindFirstChild("StartPoint") then
-							ToTarget(game:GetService("Workspace").StartPoint.CFrame * CFrame.new(0, 2, 0))
+						local map = Workspace:FindFirstChild("Map")
+						local minkTrial = map and map:FindFirstChild("MinkTrial")
+						local redPoint = minkTrial and (minkTrial:FindFirstChild("RedPoint", true) or minkTrial:FindFirstChild("Red Point", true))
+						local ceiling = minkTrial and minkTrial:FindFirstChild("Ceiling", true)
+						if redPoint and redPoint:IsA("BasePart") then
+							ToTarget(redPoint.CFrame * CFrame.new(0, 2, 0))
+						elseif ceiling and ceiling:IsA("BasePart") then
+							ToTarget(ceiling.CFrame * CFrame.new(0, -20, 0))
 						end
 					end
 				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
@@ -4374,13 +4380,82 @@ local function RunFishmanTrial()
 	end
 end
 
+local function ResolveMinkTrialGoal()
+	local map = Workspace:FindFirstChild("Map")
+	local minkTrial = map and map:FindFirstChild("MinkTrial")
+
+	-- Newer maps expose the winning marker directly. Prefer it over StartPoint,
+	-- because StartPoint is the blue spawn pad shown in the reported failure.
+	local goalNames = { "RedPoint", "Red Point", "FinishPart", "Finish", "EndPoint", "Goal" }
+	for _, goalName in ipairs(goalNames) do
+		local goal = minkTrial and minkTrial:FindFirstChild(goalName, true)
+		if not goal and (goalName == "RedPoint" or goalName == "Red Point") then
+			goal = Workspace:FindFirstChild(goalName, true)
+		end
+		if goal then
+			if goal:IsA("BasePart") then
+				return goal.CFrame * CFrame.new(0, 2, 0), goal
+			elseif goal:IsA("Attachment") then
+				return goal.WorldCFrame * CFrame.new(0, 2, 0), goal.Parent
+			elseif goal:IsA("Model") then
+				return goal:GetPivot() * CFrame.new(0, 2, 0), goal.PrimaryPart
+			end
+		end
+	end
+
+	-- Proven fallback used by the piggyv4 Mink trial implementation: moving below
+	-- MinkTrial.Ceiling reaches the red winning side without returning to spawn.
+	local ceiling = minkTrial and minkTrial:FindFirstChild("Ceiling", true)
+	if ceiling then
+		if ceiling:IsA("BasePart") then
+			return ceiling.CFrame * CFrame.new(0, -20, 0), nil
+		elseif ceiling:IsA("Model") then
+			return ceiling:GetPivot() * CFrame.new(0, -20, 0), nil
+		end
+	end
+
+	return nil, nil
+end
+
 local function RunMinkTrial()
 	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
 	local trial = locations and locations:FindFirstChild("Trial of Speed")
-	while TrialTimerVisible() and trial and TrialDistance(trial.Position) <= 1000 do
-		task.wait()
-		local startPoint = Workspace:FindFirstChild("StartPoint")
-		if startPoint then ToTarget(startPoint.CFrame * CFrame.new(0, 2, 0)) end
+	if not trial then return end
+
+	while TrialTimerVisible() and TrialDistance(trial.Position) <= 1000 do
+		local goalCFrame, touchPart = ResolveMinkTrialGoal()
+		if not goalCFrame then
+			task.wait(0.2)
+			continue
+		end
+
+		local distance = TrialDistance(goalCFrame.Position)
+		if distance > 8 then
+			-- Start one complete tween and let it advance. The old loop restarted
+			-- ToTarget every frame, continuously cancelling its own tween.
+			ToTarget(goalCFrame)
+			local travelStarted = tick()
+			local travelTimeout = math.max(2, distance / TWEEN_SPEED + 2)
+			repeat
+				task.wait(0.1)
+			until not TrialTimerVisible()
+				or TrialDistance(trial.Position) > 1000
+				or TrialDistance(goalCFrame.Position) <= 8
+				or tick() - travelStarted >= travelTimeout
+		else
+			local _, humanoid, root = TrialCharacterReady()
+			if root and humanoid and humanoid.Health > 0 then
+				root.CFrame = goalCFrame
+				if touchPart and touchPart:IsA("BasePart") and firetouchinterest then
+					pcall(function()
+						firetouchinterest(root, touchPart, 0)
+						task.wait()
+						firetouchinterest(root, touchPart, 1)
+					end)
+				end
+			end
+			task.wait(0.15)
+		end
 	end
 end
 
@@ -4447,6 +4522,8 @@ function AutoTrialV4()
 				RunSkypieaTrial()
 			elseif race == "Fishman" then
 				RunFishmanTrial()
+			elseif race == "Mink" then
+				RunMinkTrial()
 			elseif race == "Ghoul" then
 				RunGhoulTrial()
 			elseif race == "Cyborg" then
