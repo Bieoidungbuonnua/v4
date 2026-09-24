@@ -2935,86 +2935,6 @@ function DetectNameMulti(player)
 	return lookup6
 end
 
-function DetectNameAbility(player)
-	local iterator2, state2, initialKey2 = next, player:GetChildren()
-	for unusedIndex, value7 in iterator2, state2, initialKey2 do
-		if table.find(items18, value7.Name) then
-			return true
-		end
-	end
-	return false
-end
-
-function GetOtherPlayerRaces()
-	local lookup6 = {}
-	for unusedIndex, player in pairs(Players:GetChildren()) do
-		if player.Name ~= localPlayer.Name and player:FindFirstChild("Data") and player.Data:FindFirstChild("Race") then
-			lookup6[player.Name] = player.Data.Race.Value
-		end
-	end
-	return lookup6
-end
-
-function CheckMultiPlayerNearDoor()
-	if not Workspace:FindFirstChild("Characters") then return false end
-	local iterator2, state2, initialKey2 = next, Workspace.Characters:GetChildren()
-	local count13 = 0
-	for key, value7 in iterator2, state2, initialKey2 do
-		key = GetOtherPlayerRaces()[value7.Name]
-		if key
-			and value7:FindFirstChild("HumanoidRootPart")
-			and (DetectNameAbility(value7.HumanoidRootPart))
-			and Workspace.Map:FindFirstChild("Temple of Time")
-			and Workspace.Map["Temple of Time"]:FindFirstChild(key .. "Corridor")
-			and (
-					value7.HumanoidRootPart.Position
-					- Workspace.Map["Temple of Time"][key .. "Corridor"].Door.Door.RightDoor.Union.Position
-				).Magnitude
-				< 100
-		then
-			count13 = count13 + 1
-		end
-	end
-	if count13 >= 2 then
-		return true
-	end
-	return false
-end
-
-function CheckMultiAccount()
-	local lookup6 = {}
-	for unusedIndex, player in pairs(Players:GetChildren()) do
-		if Settings["Select Players Multi"] and Settings["Select Players Multi"][player.Name] and player:FindFirstChild("Data") and player.Data:FindFirstChild("Race") then
-			lookup6[player.Name] = player.Data.Race.Value
-		end
-	end
-	return lookup6
-end
-
-function CheckMultiTeleDoor()
-	if not Workspace:FindFirstChild("Characters") then return false end
-	local iterator2, state2, initialKey2 = next, Workspace.Characters:GetChildren()
-	local count13 = 0
-	for key, value7 in iterator2, state2, initialKey2 do
-		key = CheckMultiAccount()[value7.Name]
-		if key
-			and value7:FindFirstChild("HumanoidRootPart")
-			and Workspace.Map:FindFirstChild("Temple of Time")
-			and Workspace.Map["Temple of Time"]:FindFirstChild(key .. "Corridor")
-			and (
-					value7.HumanoidRootPart.Position
-					- Workspace.Map["Temple of Time"][key .. "Corridor"].Door.Door.RightDoor.Union.Position
-				).Magnitude
-				< 100
-		then
-			count13 = count13 + 1
-		end
-	end
-	if count13 >= 2 then
-		return true
-	end
-	return false
-end
 
 -- ══════════════════════════════════════════════════════════════════
 -- ══════════════════════════════════════════════════════════════════
@@ -3072,13 +2992,15 @@ local function isHelperAccount()
 end
 
 do
-    local V3_COUNTDOWN      = math.max(1, tonumber(Settings["V3 Countdown"]) or 3)
+    local function configuredV3Countdown()
+        return math.max(1, tonumber(Settings["V3 Countdown"]) or 3)
+    end
     local V3_FILE_POLL      = 0.05
     local V3_READY_FRESH    = 5.0
     local V3_FIRE_COUNT     = 3
     local V3_FIRE_INTERVAL  = 0.05
     local V3_DOOR_DIST      = 65
-    local FILE_ROOT         = "SkiderV4/TurnV3"
+    local FILE_ROOT         = "TurnV3"
 
     -- SERVICES
     local Players           = game:GetService("Players")
@@ -3097,58 +3019,18 @@ do
     -- ════════════ ROLE DETECTION ════════════
     -- Helper = có trong HelperList
     -- Main   = KHÔNG có trong HelperList
-    local LOCAL_HELPERS   = {}
-
-    local HelpWhitelist   = {}
-
+    local LOCAL_HELPERS = {}
+    local HelpWhitelist = {}
     do
-
         local seen = {}
-
-        local function addH(raw)
-
-            if type(raw) == "table" then
-
-                for k, v in pairs(raw) do
-
-                    if type(k) == "number" and type(v) == "string" then addH(v)
-
-                    elseif type(k) == "string" and (v == true or type(v) == "table") then addH(k)
-
-                    elseif type(v) == "string" then addH(v) end
-
-                end
-
-            elseif type(raw) == "string" then
-
-                local name = raw:match("^%s*(.-)%s*$")
-
-                if name ~= "" and not seen[name] then
-
-                    seen[name] = true
-
-                    table.insert(LOCAL_HELPERS, name)
-
-                    HelpWhitelist[name] = true
-
-                end
-
+        for _, raw in ipairs(getgenv().HelperList or {}) do
+            local name = tostring(raw):match("^%s*(.-)%s*$")
+            if name ~= "" and not seen[name] then
+                seen[name] = true
+                table.insert(LOCAL_HELPERS, name)
+                HelpWhitelist[name] = true
             end
-
         end
-
-        -- Multi-source: HelperList, JoinV4Config, Config, Settings
-
-        addH(getgenv().HelperList)
-
-        if getgenv().JoinV4Config and getgenv().JoinV4Config["Helper"] then addH(getgenv().JoinV4Config["Helper"]) end
-
-        if getgenv().Config and getgenv().Config["Name Helper TurnV3"] then addH(getgenv().Config["Name Helper TurnV3"]) end
-
-        if getgenv().Settings and getgenv().Settings["Name Helper TurnV3"] then addH(getgenv().Settings["Name Helper TurnV3"]) end
-
-        if getgenv().Settings and getgenv().Settings["Select Players Multi"] then addH(getgenv().Settings["Select Players Multi"]) end
-
     end
 
     local isUper = not HelpWhitelist[USERNAME]   -- MAIN: không trong whitelist
@@ -3405,6 +3287,10 @@ do
         local now       = v3ServerNow()
         local expiresAt = tonumber(data.expires_at) or 0
         if expiresAt <= now then return nil end
+        -- Never execute a command whose shared fire time has already passed.
+        -- Old command.json files were the second path that could activate V3 instantly.
+        local fireAt = tonumber(data.fire_at) or 0
+        if fireAt <= now then return nil end
         return data
     end
 
@@ -3441,8 +3327,9 @@ do
             return nil
         end
 
-        local now     = v3ServerNow()
-        local fireAt  = now + V3_COUNTDOWN
+        local now       = v3ServerNow()
+        local countdown = configuredV3Countdown()
+        local fireAt    = now + countdown
         local roundId = sanitize(USERNAME) .. "_" .. tostring(math.floor(fireAt * 1000))
 
         local members = {}
@@ -3464,11 +3351,11 @@ do
             created_at = now,
             fire_at    = fireAt,
             expires_at = fireAt + 10,
-            countdown  = V3_COUNTDOWN,
+            countdown  = countdown,
         }
 
         if safeWriteJson(commandPath(), command) then
-            setStatus(string.format("Main | V3 countdown %.0fs...", V3_COUNTDOWN))
+            setStatus(string.format("Main | V3 countdown %.0fs...", countdown))
             return command
         end
         return nil
@@ -3583,6 +3470,10 @@ do
 
     local function tryActivateAbility()
         if activating then return false end
+        if Settings["Auto Turn On V3 Near Door"] ~= true then
+            setStatus("TurnV3 | Disabled")
+            return false
+        end
         if not (isnight() and isfullmoon()) then return false end
 
         local ffaNow = false
@@ -3974,307 +3865,6 @@ local function isshouldturnonability()
 	return count >= 2
 end
 
-local function AutoTrialV4Legacy()
-	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and (CheckGoTrain()) then
-		return
-	end
-	local lookup6 = game.Lighting.ClockTime
-	if
-		(CheckMoon() == "Full Moon" and not (lookup6 > 5 and lookup6 < 12) or CheckMoon() == "Next Night")
-		and Settings["Hop Server [Trial Or Pull Lever]"]
-	then
-		if getgenv().TurnOffHOPSVPullAndTrial then
-			if getgenv().TurnOffHOPSVPullAndTrial.SetValue then
-				getgenv().TurnOffHOPSVPullAndTrial:SetValue(false)
-			elseif getgenv().TurnOffHOPSVPullAndTrial.SetStage then
-				getgenv().TurnOffHOPSVPullAndTrial:SetStage(false)
-			end
-		end
-		task.wait(3)
-	elseif Settings["Hop Server [Trial Or Pull Lever]"] then
-		if (myTrialCompleted or postTrialHopDone) and Settings["Hop After Trial"] == false then
-			-- Chặn hop sau khi hoàn thành trial nếu Hop After Trial = false
-		else
-			HopServer()
-			return
-		end
-	end
-
-	if not IsInTempleOfTime() and not VerifyNearbyTrial() then
-		myTrialCompleted = false
-		trialInProgress = false
-		if TeleportTempleOfTime() == "locked" then
-			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Temple of Time is locked", ShowTime = 5 })
-			task.wait(5)
-		end
-		return
-	end
-
-	lookup6 = GetTempleOfTime()
-	local forcefield = lookup6 and lookup6:FindFirstChild("FFABorder") and lookup6.FFABorder:FindFirstChild("Forcefield")
-	-- Chỉ coi FFA active khi forcefield hiện lên (Transparency == 0) VÀ người chơi không còn trong phòng trial riêng
-	local isFFAActive = forcefield and forcefield.Transparency == 0 and not isInsideOwnTrial()
-
-	-- Nếu FFA đang diễn ra: Dừng tween ngay, nhường quyền cho FFA
-	if isFFAActive then
-		TweenManager.CancelCurrent()
-		return
-	end
-
-	-- Nếu ĐÃ LÀM XONG PHẦN TRIAL CỦA MÌNH: ĐỨNG CHỜ TẠI CHỖ, TUYỆT ĐỐI KHÔNG ĐƯỢC TWEEN ĐI ĐÂU!
-	if myTrialCompleted then
-		TweenManager.CancelCurrent()
-		return
-	end
-
-	-- Nếu trước đó đang làm trial mà hiện tại đã bị dịch chuyển về Temple of Time (hết trial zone):
-	-- Tức là trial cá nhân đã hoàn tất, chuyển sang trạng thái đứng chờ FFA!
-	if trialInProgress and not VerifyNearbyTrial() and IsInTempleOfTime() then
-
-		-- Nếu là Helper bị chết/fail giữa trial -> KHÔNG set myTrialCompleted
-
-		-- để họ quay về door và thử lại (không đứng chờ FFA)
-
-		if isAlly then
-
-			-- Helper bị fail trial: reset trạng thái để về door retry
-
-			trialInProgress = false
-
-			myTrialCompleted = false
-
-			TweenManager.CancelCurrent()
-
-			return
-
-		else
-
-			-- Main: đã thoát khỏi trial zone => đứng chờ FFA
-
-			myTrialCompleted = true
-
-			trialInProgress = false
-
-			TweenManager.CancelCurrent()
-
-			return
-
-		end
-
-	end
-
-	if
-		lookup6
-			and (lookup6.FFABorder:FindFirstChild("Forcefield"))
-			and lookup6.FFABorder.Forcefield.Transparency == 1
-		or (VerifyNearbyTrial())
-	then
-		if game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible then
-			if VerifyNearbyTrial() and not getgenv().VerifyTrial then
-				getgenv().VerifyTrial = true
-			end
-			repeat
-				wait()
-			until VerifyNearbyTrial()
-				or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-			local localPlayer4 = game.Players.LocalPlayer.Data.Race.Value
-			if localPlayer4 == "Human" then
-				trialInProgress = true
-				repeat
-					task.wait()
-					local character3 = TrialHuman()
-					if character3 then
-						repeat
-							task.wait()
-							EquipTool(NameWeapon(Settings["Select Weapon"] or "Melee"))
-							SizePart(character3)
-							if Settings["Select Weapon"] == "Blox Fruit" then
-								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-							else
-								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-							end
-							ClickM1(character3)
-							UsedualFlock()
-						until not IsMobAlive(character3)
-							or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-							or (game.Players.LocalPlayer.Character.HumanoidRootPart.Position - game:GetService(
-									"Workspace"
-								)._WorldOrigin.Locations["Trial of Strength"].Position).Magnitude
-								> 1000
-					end
-				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-					or (
-							game.Players.LocalPlayer.Character.HumanoidRootPart.Position
-							- game:GetService("Workspace")._WorldOrigin.Locations["Trial of Strength"].Position
-						).Magnitude
-						> 1000
-				myTrialCompleted = true
-				trialInProgress = false
-				TweenManager.CancelCurrent()
-			elseif localPlayer4 == "Skypiea" then
-				trialInProgress = true
-				repeat
-					task.wait()
-					if
-						game:GetService("Workspace")._WorldOrigin.Locations:FindFirstChild("Trial of the King")
-						and (game.Players.LocalPlayer.Character.HumanoidRootPart.Position - game:GetService(
-								"Workspace"
-							)._WorldOrigin.Locations["Trial of the King"].CFrame.Position).Magnitude
-							<= 1000
-					then
-						if game:GetService("Workspace").Map:FindFirstChild("SkyTrial") and game:GetService("Workspace").Map.SkyTrial:FindFirstChild("Model") and game:GetService("Workspace").Map.SkyTrial.Model:FindFirstChild("FinishPart") then
-							ToTarget(game:GetService("Workspace").Map.SkyTrial.Model.FinishPart.CFrame)
-						end
-						task.wait(3)
-					end
-				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-					or workspace.Map:FindFirstChild("Temple of Time") and workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-					or (game:GetService("Workspace").Map:FindFirstChild("SkyTrial") and game:GetService("Workspace").Map.SkyTrial:FindFirstChild("Model") and game:GetService("Workspace").Map.SkyTrial.Model:FindFirstChild("FinishPart") and localPlayer:DistanceFromCharacter(
-							game:GetService("Workspace").Map.SkyTrial.Model.FinishPart.Position
-						)
-						> 1000)
-				myTrialCompleted = true
-				trialInProgress = false
-				TweenManager.CancelCurrent()
-			elseif localPlayer4 == "Fishman" then
-				local part2 = game:GetService("Workspace")._WorldOrigin.Locations:FindFirstChild("Trial of Water")
-				if part2 and localPlayer:DistanceFromCharacter(part2.Position) < 1500 then
-					trialInProgress = true
-					local humanoid4 = GetSeaBeastTrial()
-					repeat
-						task.wait()
-						if humanoid4 then
-							local rootPart7 = humanoid4:FindFirstChild("HumanoidRootPart")
-							if rootPart7 then
-								getgenv().AimPos = CFrame.new(rootPart7.Position.X, 40, rootPart7.Position.Z)
-								TeleportSeabeast2(humanoid4)
-								if localPlayer:DistanceFromCharacter(rootPart7.Position) < 400 then
-									AutoAllSkill()
-								end
-							end
-						end
-					until not humanoid4
-						or not humanoid4.Parent
-						or humanoid4.Health.Value == 0
-						or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-						or workspace.Map:FindFirstChild("Temple of Time") and workspace.Map["Temple of Time"].FFABorder.Forcefield.Transparency == 0
-						or localPlayer:DistanceFromCharacter(
-								game:GetService("Workspace")._WorldOrigin.Locations
-									:FindFirstChild("Trial of Water").Position
-							)
-							> 1000
-					myTrialCompleted = true
-					trialInProgress = false
-					TweenManager.CancelCurrent()
-				end
-			elseif localPlayer4 == "Mink" then
-				trialInProgress = true
-				repeat
-					task.wait()
-					if
-						(
-							game.Players.LocalPlayer.Character.HumanoidRootPart.Position
-							- game:GetService("Workspace")._WorldOrigin.Locations["Trial of Speed"].Position
-						).Magnitude <= 1000
-					then
-						local map = Workspace:FindFirstChild("Map")
-						local minkTrial = map and map:FindFirstChild("MinkTrial")
-						local redPoint = minkTrial and (minkTrial:FindFirstChild("RedPoint", true) or minkTrial:FindFirstChild("Red Point", true))
-						local ceiling = minkTrial and minkTrial:FindFirstChild("Ceiling", true)
-						if redPoint and redPoint:IsA("BasePart") then
-							ToTarget(redPoint.CFrame * CFrame.new(0, 2, 0))
-						elseif ceiling and ceiling:IsA("BasePart") then
-							ToTarget(ceiling.CFrame * CFrame.new(0, -20, 0))
-						end
-					end
-				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-					or localPlayer:DistanceFromCharacter(
-							game:GetService("Workspace")._WorldOrigin.Locations
-								:FindFirstChild("Trial of Speed").Position
-						)
-						> 1000
-				myTrialCompleted = true
-				trialInProgress = false
-				TweenManager.CancelCurrent()
-			elseif localPlayer4 == "Ghoul" then
-				trialInProgress = true
-				repeat
-					task.wait()
-					local character3 = TrialGhoul()
-					if character3 then
-						repeat
-							task.wait()
-							EquipTool(NameWeapon(Settings["Select Weapon"] or "Melee"))
-							SizePart(character3)
-							if Settings["Select Weapon"] == "Blox Fruit" then
-								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-							else
-								ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-							end
-							UsedualFlock()
-							ClickM1(character3)
-						until not IsMobAlive(character3)
-							or not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-							or localPlayer:DistanceFromCharacter(
-									game:GetService("Workspace")._WorldOrigin.Locations
-										:FindFirstChild("Trial of Carnage").Position
-								)
-								> 1000
-					end
-				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-					or localPlayer:DistanceFromCharacter(
-							game:GetService("Workspace")._WorldOrigin.Locations
-								:FindFirstChild("Trial of Carnage").Position
-						)
-						> 1000
-				myTrialCompleted = true
-				trialInProgress = false
-				TweenManager.CancelCurrent()
-			elseif localPlayer4 == "Cyborg" then
-				repeat
-					task.wait()
-					ToTarget(CFrame.new(28282.5703125, 14896.8505859375, 105.1042709350586))
-				until not game:GetService("Players").LocalPlayer.PlayerGui.Main.TopHUDList.RaidTimer.Visible
-			end
-		else
-			-- CHƯA LÀM TRIAL VÀ ĐANG Ở TEMPLE OF TIME CHUẨN BỊ KÍCH HOẠT V3 TẠI CỬA
-			if not myTrialCompleted and not trialInProgress then
-				if not lookup6 then
-					return
-				end
-				local part2 = lookup6[localPlayer.Data.Race.Value .. "Corridor"].Door.Door.RightDoor.Union
-				if localPlayer:DistanceFromCharacter(part2.Position) > 8 then
-					ToTarget(part2.CFrame)
-				end
-				if
-					Settings["Multi Trial"]
-					and (CheckMultiTeleDoor())
-					and localPlayer:DistanceFromCharacter(part2.Position) <= 8
-				then
-					game:service("VirtualInputManager"):SendKeyEvent(true, "T", false, game)
-					task.wait()
-					game:service("VirtualInputManager"):SendKeyEvent(false, "T", false, game)
-					return
-				end
-				if Settings["Auto Turn On V3 Near Door"] and (CheckMultiPlayerNearDoor()) then
-					game:service("VirtualInputManager"):SendKeyEvent(true, "T", false, game)
-					task.wait()
-					game:service("VirtualInputManager"):SendKeyEvent(false, "T", false, game)
-				end
-			else
-				TweenManager.CancelCurrent()
-			end
-		end
-	elseif getgenv().VerifyTrial then
-		if not Settings["Multi Trial"] and not isHelperAccount() then
-			Settings["Auto Trial"] = false
-			if ToggleAutoTrial then
-				ToggleAutoTrial:SetValue(false)
-			end
-		end
-		getgenv().VerifyTrial = false
-	end
-end
 
 -- Trial V4 engine upgraded from bnn.lua.
 -- IMPORTANT: the original Fluent Temple teleport function and its flow are retained.
@@ -4305,12 +3895,6 @@ end
 
 local function StopTrialTween()
 	if TweenManager and TweenManager.CancelCurrent then TweenManager.CancelCurrent() end
-end
-
-local function PressTrialAbility()
-	VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.T, false, game)
-	task.wait()
-	VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.T, false, game)
 end
 
 local function TrialMobAlive(mob)
@@ -4542,11 +4126,8 @@ function AutoTrialV4()
 			if not union then return end
 
 			if TrialDistance(union.Position) > 8 then ToTarget(union.CFrame) end
-			if Settings["Multi Trial"] and CheckMultiTeleDoor() and TrialDistance(union.Position) <= 8 then
-				PressTrialAbility()
-				return
-			end
-			if Settings["Auto Turn On V3 Near Door"] and CheckMultiPlayerNearDoor() then PressTrialAbility() end
+			-- AutoTrial only positions the account. The kaiv4mix TurnV3 coordinator
+			-- exclusively decides readiness, countdown and the shared activation time.
 		end
 	elseif getgenv().VerifyTrial then
 		if not Settings["Multi Trial"] and not isHelperAccount() then
