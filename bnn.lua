@@ -11644,8 +11644,8 @@ function AutoAttackLeviathan()
 					end
 				elseif Settings["Use Click M1 Skull Guitar Leviathan"] then
 					equiptool(NameWeapon("Gun"))
-					SpamGunSkullGuitar(v.Hitbox11)
-					if t:DistanceFromCharacter(v.Hitbox11.Position) < 400 then
+					SpamGunSkullGuitar(s.Hitbox11)
+					if t:DistanceFromCharacter(s.Hitbox11.Position) < 400 then
 						UseSkillGun()
 					end
 				elseif t:DistanceFromCharacter(s.RootPart.Position) < 400 then
