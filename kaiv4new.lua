@@ -964,6 +964,7 @@ end
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local CoreGui           = game:GetService("CoreGui")
     local Lighting          = game:GetService("Lighting")
+    local TweenService      = game:GetService("TweenService")
 
     local Player   = Players.LocalPlayer
     local USERNAME = Player.Name
