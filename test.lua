@@ -6260,7 +6260,7 @@ end)
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            if players and tonumber(players) >= 2 and tonumber(players) <= 5 then
+            if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
                 table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
             end
         end
@@ -6336,7 +6336,7 @@ end)
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
             -- Loc: players 2..6
-            if players and tonumber(players) >= 2 and tonumber(players) <= 5 then
+            if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
                 table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
             end
         end
