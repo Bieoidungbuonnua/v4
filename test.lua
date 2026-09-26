@@ -4027,24 +4027,24 @@ function TrialGhoul()
 end
 
 function GetSeaBeastTrial()
-	if not Workspace.Map:FindFirstChild("FishmanTrial") then
-		return
-	end
-	local part2 = Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Water")
-	if part2 and Workspace:FindFirstChild("SeaBeasts") then
-		local iterator2, state2, initialKey2 = next, Workspace.SeaBeasts:GetChildren()
-		for unusedIndex, value7 in iterator2, state2, initialKey2 do
-			if
-				string.find(value7.Name, "SeaBeast")
-				and (value7:FindFirstChild("HumanoidRootPart"))
-				and (value7.HumanoidRootPart.Position - part2.Position).Magnitude <= 1500
-			then
-				if value7:FindFirstChild("Health") and value7.Health.Value > 0 then
-					return value7
-				end
+	-- Bỏ check FishmanTrial map node (quá strict, không cần thiết)
+	-- Chỉ cần SeaBeast ở gần Trial of Water location
+	local part2 = Workspace._WorldOrigin
+		and Workspace._WorldOrigin.Locations
+		and Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Water")
+	local seaBeasts = Workspace:FindFirstChild("SeaBeasts")
+	if not part2 or not seaBeasts then return nil end
+	for _, value7 in ipairs(seaBeasts:GetChildren()) do
+		if string.find(value7.Name, "SeaBeast")
+			and value7:FindFirstChild("HumanoidRootPart")
+			and (value7.HumanoidRootPart.Position - part2.Position).Magnitude <= 1500
+		then
+			if value7:FindFirstChild("Health") and value7.Health.Value > 0 then
+				return value7
 			end
 		end
 	end
+	return nil
 end
 
 function TeleportSeabeast2(seaBeast)
@@ -4318,20 +4318,34 @@ end)
 local function RunFishmanTrial()
 	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
 	local trial = locations and locations:FindFirstChild("Trial of Water")
-	if not trial or TrialDistance(trial.Position) >= 1500 then return end
+	if not trial then return end
+
+	-- HideUI-safe: fallback check b\u1eb1ng distance n\u1ebfu kh\u00f4ng t\u00ecm \u0111\u01b0\u1ee3c UI timer
+	local function isTimerActive()
+		local gui  = localPlayer:FindFirstChild("PlayerGui")
+		local main = gui and gui:FindFirstChild("Main")
+		local top  = main and (main:FindFirstChild("TopHUDList") or main:FindFirstChild("Timer"))
+		if top then
+			local raidTimer = top:FindFirstChild("RaidTimer") or top:FindFirstChild("Timer")
+			if raidTimer then return raidTimer.Visible == true end
+		end
+		-- Fallback: c\u00f2n trong v\u00f9ng trial
+		local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+		return hrp and (hrp.Position - trial.Position).Magnitude <= 1500 or false
+	end
 
 	local seaBeast = GetSeaBeastTrial()
 	repeat
 		task.wait()
 		if seaBeast and IsMobAlive(seaBeast) then
-			TeleportSeabeast2(seaBeast)   -- gi\u1eef nguy\u00ean ph\u1ea7n tele \u1ed5n \u0111\u1ecbnh
-			_G.SHOULDSPAMSKILLS = true    -- worker piggyv4 t\u1ef1 spam skill
+			TeleportSeabeast2(seaBeast)
+			ClickM1(seaBeast)
+			_G.SHOULDSPAMSKILLS = true
 		else
 			_G.SHOULDSPAMSKILLS = false
 			seaBeast = GetSeaBeastTrial()
 		end
-	until not TrialTimerVisible()
-		or TrialDistance(trial.Position) > 1500
+	until not isTimerActive()
 
 	_G.SHOULDSPAMSKILLS = false
 end
