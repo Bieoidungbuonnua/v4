@@ -4258,132 +4258,28 @@ local function RunSkypieaTrial()
 	end
 end
 
--- Trả về weapon fallback để equip khi chờ skill hồi CD (ưu tiên Melee > Sword > Gun > Blox Fruit)
-local function _FishmanFallbackWeapon()
-	local preferred = { "Melee", "Sword", "Gun", "Blox Fruit" }
-	local main = Settings["Select Weapon"] or "Melee"
-	for _, wtype in ipairs(preferred) do
-		if wtype ~= main then
-			-- Kiểm tra có tool loại này không
-			for _, tool in ipairs(localPlayer.Backpack:GetChildren()) do
-				if tool:IsA("Tool") and tool.ToolTip == wtype then return wtype end
-			end
-			if localPlayer.Character then
-				for _, tool in ipairs(localPlayer.Character:GetChildren()) do
-					if tool:IsA("Tool") and tool.ToolTip == wtype then return wtype end
-				end
-			end
-		end
-	end
-	return main
-end
-
--- Kiểm tra xem weapon (theo tên tool thật) còn skill nào ready không
--- Sword / Gun / Blox Fruit: Skills UI folder = tên tool thật (ví dụ "Dark Blade", "Flintlock")
--- Nếu không tìm thấy container → trả true (assume còn skill, tránh kẹt fallback)
-local function _FishmanHasSkillReady(weaponName)
-	if not weaponName then return true end
-	local main = localPlayer.PlayerGui
-	local skills = main
-		and main:FindFirstChild("Main")
-		and main.Main:FindFirstChild("Skills")
-	if not skills then return true end
-	local container = skills:FindFirstChild(weaponName)
-	if not container then
-		-- Thử tìm theo ToolTip type (Melee, Sword, Gun, Blox Fruit)
-		local char = localPlayer.Character
-		local equipped = (char and char:FindFirstChildOfClass("Tool"))
-			or localPlayer.Backpack:FindFirstChild(weaponName)
-		if equipped then
-			container = skills:FindFirstChild(equipped.ToolTip)
-				or skills:FindFirstChild(equipped.Name)
-		end
-	end
-	if not container then return true end -- không tìm được → cứ spam
-	for _, frame in ipairs(container:GetChildren()) do
-		if frame:IsA("Frame") and frame.Name ~= "Template" then
-			local title = frame:FindFirstChild("Title")
-			local cd = frame:FindFirstChild("Cooldown")
-			if title and title.TextColor3 == Color3.new(1, 1, 1) and cd
-				and (cd.Size == UDim2.new(0, 0, 1, -1) or cd.Size == UDim2.new(1, 0, 1, -1)) then
-				return true
-			end
-		end
-	end
-	return false
-end
-
 local function RunFishmanTrial()
+	-- Port y h\u1ec7t bnn.lua: ch\u1ec9 toTarget + ClickM1, kh\u00f4ng spam skill th\u1ee7 c\u00f4ng
+	-- Heartbeat FastAttack (_FastAttackInst) \u0111\u00e3 t\u1ef1 x\u1eed l\u00fd attack + skill li\u00ean t\u1ee5c
 	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
 	local trial = locations and locations:FindFirstChild("Trial of Water")
 	if not trial or TrialDistance(trial.Position) >= 1500 then return end
 
 	local seaBeast = GetSeaBeastTrial()
-	local mainWeapon  = Settings["Select Weapon"] or "Melee"
-	local skillKeys   = { "Z", "X", "C", "V", "F" }
-
-	while TrialTimerVisible() and TrialDistance(trial.Position) <= 1500 do
+	repeat
 		task.wait()
-
-		-- Cập nhật lại sea beast nếu chết
-		if not seaBeast or not seaBeast.Parent
-			or not seaBeast:FindFirstChild("Health")
-			or seaBeast.Health.Value <= 0
-		then
+		if seaBeast and IsMobAlive(seaBeast) then
+			if Settings["Select Weapon"] == "Blox Fruit" then
+				ToTarget(seaBeast.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
+			else
+				ToTarget(seaBeast.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
+			end
+			ClickM1(seaBeast)
+		else
 			seaBeast = GetSeaBeastTrial()
 		end
-
-		if seaBeast and seaBeast:FindFirstChild("HumanoidRootPart") then
-			local root = seaBeast.HumanoidRootPart
-			getgenv().AimPos = CFrame.new(root.Position.X, 40, root.Position.Z)
-
-			-- Teleport đến vị trí đánh sea beast
-			TeleportSeabeast2(seaBeast)
-
-			-- Equip weapon chính và M1
-			EquipTool(NameWeapon(mainWeapon))
-			ClickM1(seaBeast)
-
-			if TrialDistance(root.Position) < 500 then
-				-- Lấy tên tool theo weapon type
-				local mainToolName = NameWeapon(mainWeapon)
-
-				-- Kiểm tra còn skill nào của weapon chính không
-				if mainToolName and _FishmanHasSkillReady(mainToolName) then
-					-- Còn skill → equip weapon chính, đợi 1 frame cho skill bar load rồi spam
-					EquipTool(mainToolName)
-					task.wait(0.08) -- đợi skill bar hiển thị (quan trọng với Sword/Gun/Fruit)
-					for _, key in ipairs(skillKeys) do
-						if not TrialTimerVisible() then break end
-						VirtualInputManager:SendKeyEvent(true, key, false, game)
-						task.wait(0.08)
-						VirtualInputManager:SendKeyEvent(false, key, false, game)
-						task.wait(0.05)
-					end
-				else
-					-- Hết skill → đổi sang weapon fallback để M1 + đợi skill hồi
-					local fallback = _FishmanFallbackWeapon()
-					if fallback ~= mainWeapon then
-						EquipTool(NameWeapon(fallback))
-					end
-					-- M1 trong lúc đợi
-					ClickM1(seaBeast)
-
-					-- Đợi đến khi weapon chính có skill hồi lại (max 3s)
-					local waitStart = tick()
-					while tick() - waitStart < 3 do
-						task.wait(0.1)
-						if not TrialTimerVisible() then break end
-						ClickM1(seaBeast)
-						if _FishmanHasSkillReady(mainToolName) then break end
-					end
-
-					-- Quay lại weapon chính để spam skill
-					EquipTool(mainToolName)
-				end
-			end
-		end
-	end
+	until not TrialTimerVisible()
+		or TrialDistance(trial.Position) > 1500
 end
 
 local function ResolveMinkTrialGoal()
