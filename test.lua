@@ -162,38 +162,81 @@ autoJoinTeam()
 --------------------------------------------------------------------------------
 -- 1. FLUENT UI INITIALIZATION
 --------------------------------------------------------------------------------
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
--- SaveManager replaced with built-in Configuration & Copy Setting system
-local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+-- HideUI: khi OneClickV4 + JoinV4Config["HideUI"] = true
+-- → bỏ qua load Fluent nặng, dùng stub nhẹ, vẫn chạy automation đầy đủ
+local _HIDE_UI = getgenv().Mode == "OneClickV4"
+    and type(getgenv().JoinV4Config) == "table"
+    and getgenv().JoinV4Config["HideUI"] == true
 
-local Window = Fluent:CreateWindow({
-    Title = "Skider Hub V4",
-    SubTitle = "create by biee_dungbuon",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(580, 460),
-    Acrylic = true,
-    Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.LeftControl
-})
+local Fluent, InterfaceManager, Window, Tabs, uiLibrary
 
-local Tabs = {
-    StatusServer = Window:AddTab({ Title = "Status & Server", Icon = "activity" }),
-    RaceNormal   = Window:AddTab({ Title = "Race Normal", Icon = "user" }),
-    RaceV4       = Window:AddTab({ Title = "Race V4", Icon = "sparkles" }),
-    KillTrial    = Window:AddTab({ Title = "Kill Trial", Icon = "swords" }),
-    Settings     = Window:AddTab({ Title = "Settings", Icon = "settings" })
-}
+if _HIDE_UI then
+    -- Stub nhẹ: không load gì nặng, chỉ tạo dummy objects
+    local _noTab = setmetatable({}, {
+        __index = function(_, _k)
+            return function(...) return {} end
+        end
+    })
+    Fluent = {
+        Notify = function(p)
+            print(string.format("[SkiderV4] %s: %s", tostring(p and p.Title or ""), tostring(p and p.Content or "")))
+        end
+    }
+    InterfaceManager = {
+        SetLibrary = function() end,
+        SetFolder  = function() end,
+        BuildInterfaceSection = function() end,
+    }
+    Window = {
+        AddTab      = function() return _noTab end,
+        SelectTab   = function() end,
+        Minimize    = function() end,
+    }
+    Tabs = {
+        StatusServer = _noTab,
+        RaceNormal   = _noTab,
+        RaceV4       = _noTab,
+        KillTrial    = _noTab,
+        Settings     = _noTab,
+    }
+    uiLibrary = {
+        CreateNoti = function(p)
+            print(string.format("[SkiderV4] %s | %s", tostring(p and p.Title or ""), tostring(p and p.Desc or "")))
+        end
+    }
+else
+    -- Load đầy đủ Fluent UI bình thường
+    Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+    InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
--- Backward compatibility for notifications
-local uiLibrary = {
-    CreateNoti = function(params)
-        Fluent:Notify({
-            Title = params.Title or "Skider Hub V4",
-            Content = params.Desc or "",
-            Duration = params.ShowTime or 5
-        })
-    end
-}
+    Window = Fluent:CreateWindow({
+        Title = "Skider Hub V4",
+        SubTitle = "create by biee_dungbuon",
+        TabWidth = 160,
+        Size = UDim2.fromOffset(580, 460),
+        Acrylic = true,
+        Theme = "Dark",
+        MinimizeKey = Enum.KeyCode.LeftControl
+    })
+
+    Tabs = {
+        StatusServer = Window:AddTab({ Title = "Status & Server", Icon = "activity" }),
+        RaceNormal   = Window:AddTab({ Title = "Race Normal", Icon = "user" }),
+        RaceV4       = Window:AddTab({ Title = "Race V4", Icon = "sparkles" }),
+        KillTrial    = Window:AddTab({ Title = "Kill Trial", Icon = "swords" }),
+        Settings     = Window:AddTab({ Title = "Settings", Icon = "settings" }),
+    }
+
+    uiLibrary = {
+        CreateNoti = function(params)
+            Fluent:Notify({
+                Title   = params.Title or "Skider Hub V4",
+                Content = params.Desc or "",
+                Duration = params.ShowTime or 5,
+            })
+        end
+    }
+end
 
 --------------------------------------------------------------------------------
 -- FLOATING TOGGLE BUTTON (Nút hình vuông bo tròn góc trái dưới màn hình)
@@ -4235,22 +4278,35 @@ local function _FishmanFallbackWeapon()
 	return main
 end
 
--- Kiểm tra xem weapon hiện tại còn skill nào chưa hồi không
+-- Kiểm tra xem weapon (theo tên tool thật) còn skill nào ready không
+-- Sword / Gun / Blox Fruit: Skills UI folder = tên tool thật (ví dụ "Dark Blade", "Flintlock")
+-- Nếu không tìm thấy container → trả true (assume còn skill, tránh kẹt fallback)
 local function _FishmanHasSkillReady(weaponName)
-	if not weaponName then return false end
-	local skills = localPlayer.PlayerGui
-		and localPlayer.PlayerGui:FindFirstChild("Main")
-		and localPlayer.PlayerGui.Main:FindFirstChild("Skills")
-	if not skills then return true end -- không tìm được UI → cứ coi là còn
+	if not weaponName then return true end
+	local main = localPlayer.PlayerGui
+	local skills = main
+		and main:FindFirstChild("Main")
+		and main.Main:FindFirstChild("Skills")
+	if not skills then return true end
 	local container = skills:FindFirstChild(weaponName)
-	if not container then return false end
+	if not container then
+		-- Thử tìm theo ToolTip type (Melee, Sword, Gun, Blox Fruit)
+		local char = localPlayer.Character
+		local equipped = (char and char:FindFirstChildOfClass("Tool"))
+			or localPlayer.Backpack:FindFirstChild(weaponName)
+		if equipped then
+			container = skills:FindFirstChild(equipped.ToolTip)
+				or skills:FindFirstChild(equipped.Name)
+		end
+	end
+	if not container then return true end -- không tìm được → cứ spam
 	for _, frame in ipairs(container:GetChildren()) do
 		if frame:IsA("Frame") and frame.Name ~= "Template" then
 			local title = frame:FindFirstChild("Title")
 			local cd = frame:FindFirstChild("Cooldown")
 			if title and title.TextColor3 == Color3.new(1, 1, 1) and cd
 				and (cd.Size == UDim2.new(0, 0, 1, -1) or cd.Size == UDim2.new(1, 0, 1, -1)) then
-				return true -- còn ít nhất 1 skill ready
+				return true
 			end
 		end
 	end
@@ -4294,12 +4350,13 @@ local function RunFishmanTrial()
 
 				-- Kiểm tra còn skill nào của weapon chính không
 				if mainToolName and _FishmanHasSkillReady(mainToolName) then
-					-- Còn skill → equip weapon chính rồi spam hết skill
+					-- Còn skill → equip weapon chính, đợi 1 frame cho skill bar load rồi spam
 					EquipTool(mainToolName)
+					task.wait(0.08) -- đợi skill bar hiển thị (quan trọng với Sword/Gun/Fruit)
 					for _, key in ipairs(skillKeys) do
 						if not TrialTimerVisible() then break end
 						VirtualInputManager:SendKeyEvent(true, key, false, game)
-						task.wait(0.05)
+						task.wait(0.08)
 						VirtualInputManager:SendKeyEvent(false, key, false, game)
 						task.wait(0.05)
 					end
@@ -4552,7 +4609,9 @@ end
 
 --------------------------------------------------------------------------------
 -- 6. FLUENT UI BUILDING (Tabs, Sections, Toggles, Dropdowns, Buttons)
+-- HideUI mode: toàn bộ block này bị bỏ qua, chỉ chạy automation worker
 --------------------------------------------------------------------------------
+if not _HIDE_UI then
 
 -- ==============================================================================
 -- STATUS & SERVER LOGIC & HELPERS
@@ -5506,6 +5565,8 @@ InterfaceManager:SetFolder("SkiderV4")
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 
 Window:SelectTab(1)
+
+end -- end if not _HIDE_UI (section 6 UI building)
 
 --------------------------------------------------------------------------------
 -- 7. WORKER LOOPS (Preserved and complete)
