@@ -4258,9 +4258,64 @@ local function RunSkypieaTrial()
 	end
 end
 
+-- SKILL SPAM WORKER (port t\u1eeb piggyv4) - b\u1eadt/t\u1eaft qua _G.SHOULDSPAMSKILLS
+local _piggyValidTooltip = { Melee=true, ["Blox Fruit"]=true, Sword=true, Gun=true }
+local _piggyValidKey     = { Z=true, X=true, C=true, V=true, F=true }
+local _piggyFruits = {
+	["Buddha-Buddha"]=true,["T-Rex-T-Rex"]=true,["Dragon-Dragon"]=true,
+	["Yeti-Yeti"]=true,["Leopard-Leopard"]=true,["Venom-Venom"]=true,
+	["Phoenix-Phoenix"]=true,["Kitsune-Kitsune"]=true,["Mammoth-Mammoth"]=true,
+	["Gas-Gas"]=true,["Portal-Portal"]=true,
+}
+local function _piggyGetWeapons()
+	local t = {}
+	for _, v in ipairs(localPlayer.Backpack:GetChildren()) do
+		if v:IsA("Tool") and _piggyValidTooltip[v.ToolTip] then table.insert(t, v) end
+	end
+	if localPlayer.Character then
+		for _, v in ipairs(localPlayer.Character:GetChildren()) do
+			if v:IsA("Tool") and _piggyValidTooltip[v.ToolTip] then table.insert(t, v) end
+		end
+	end
+	return t
+end
+_G.SHOULDSPAMSKILLS = false
+task.spawn(function()
+	while task.wait(0.05) do
+		if not _G.SHOULDSPAMSKILLS then continue end
+		local skillsUI = localPlayer.PlayerGui
+			and localPlayer.PlayerGui:FindFirstChild("Main")
+			and localPlayer.PlayerGui.Main:FindFirstChild("Skills")
+		if not skillsUI then continue end
+		local weapons = _piggyGetWeapons()
+		for _, v in ipairs(weapons) do
+			if not skillsUI:FindFirstChild(v.Name) then pcall(EquipTool, v.Name) end
+		end
+		for _, v in ipairs(weapons) do
+			if not _G.SHOULDSPAMSKILLS then break end
+			if localPlayer.Character and not localPlayer.Character:FindFirstChild(v.Name) then
+				pcall(EquipTool, v.Name)
+			end
+			local ui = skillsUI:FindFirstChild(v.Name)
+			if not ui then continue end
+			for _, slot in ipairs(ui:GetChildren()) do
+				if not _piggyValidKey[slot.Name] then continue end
+				local cd    = slot:FindFirstChild("Cooldown")
+				local title = slot:FindFirstChild("Title")
+				if not cd or not title then continue end
+				if title.TextColor3 ~= Color3.new(1,1,1) then continue end
+				if cd.Size ~= UDim2.new(0,0,1,-1) then continue end
+				if slot.Name == "V" and _piggyFruits[ui.Name] then continue end
+				VirtualInputManager:SendKeyEvent(true,  slot.Name, false, game)
+				task.wait(0.05)
+				VirtualInputManager:SendKeyEvent(false, slot.Name, false, game)
+				task.wait(0.5)
+			end
+		end
+	end
+end)
+
 local function RunFishmanTrial()
-	-- Port y h\u1ec7t bnn.lua: ch\u1ec9 toTarget + ClickM1, kh\u00f4ng spam skill th\u1ee7 c\u00f4ng
-	-- Heartbeat FastAttack (_FastAttackInst) \u0111\u00e3 t\u1ef1 x\u1eed l\u00fd attack + skill li\u00ean t\u1ee5c
 	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
 	local trial = locations and locations:FindFirstChild("Trial of Water")
 	if not trial or TrialDistance(trial.Position) >= 1500 then return end
@@ -4269,17 +4324,16 @@ local function RunFishmanTrial()
 	repeat
 		task.wait()
 		if seaBeast and IsMobAlive(seaBeast) then
-			if Settings["Select Weapon"] == "Blox Fruit" then
-				ToTarget(seaBeast.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-			else
-				ToTarget(seaBeast.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-			end
-			ClickM1(seaBeast)
+			TeleportSeabeast2(seaBeast)   -- gi\u1eef nguy\u00ean ph\u1ea7n tele \u1ed5n \u0111\u1ecbnh
+			_G.SHOULDSPAMSKILLS = true    -- worker piggyv4 t\u1ef1 spam skill
 		else
+			_G.SHOULDSPAMSKILLS = false
 			seaBeast = GetSeaBeastTrial()
 		end
 	until not TrialTimerVisible()
 		or TrialDistance(trial.Position) > 1500
+
+	_G.SHOULDSPAMSKILLS = false
 end
 
 local function ResolveMinkTrialGoal()
