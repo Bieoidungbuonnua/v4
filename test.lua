@@ -833,238 +833,292 @@ function BringMob(target)
     end
 end
 
-local BnnMouse = require(ReplicatedStorage.Mouse)
-local BnnCombatUtil = require(ReplicatedStorage.Modules.CombatUtil)
-local BnnNet = require(ReplicatedStorage.Modules.Net)
-local BnnRegisterAttack = ReplicatedStorage.Modules.Net:WaitForChild("RE/RegisterAttack")
-local BnnRegisterHit = BnnNet:RemoteEvent("RegisterHit", true)
+-- [[ ATTACK ENGINE - Replaced with FastAttack class (pastefy X6xLHpIv) ]]
+-- loadstring FastMax helper
+pcall(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/AnhDzaiScript/Setting/refs/heads/main/FastMax.lua"))()
+end)
 
-local BnnBodyParts = {
-    RightUpperArm = true, RightLowerArm = true, RightHand = true,
-    RightUpperLeg = true, RightLowerLeg = true, RightFoot = true,
-    LeftUpperArm = true, LeftLowerArm = true, LeftHand = true,
-    LeftUpperLeg = true, LeftLowerLeg = true, LeftFoot = true,
-    UpperTorso = true, LowerTorso = true, Head = true,
+local _AtkModules = ReplicatedStorage:WaitForChild("Modules")
+local _AtkNet = _AtkModules:WaitForChild("Net")
+local _RegisterAttack = _AtkNet:WaitForChild("RE/RegisterAttack")
+local _RegisterHit    = _AtkNet:WaitForChild("RE/RegisterHit")
+local _ShootGunEvent  = _AtkNet:WaitForChild("RE/ShootGunEvent")
+local _GunValidator   = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Validator2")
+
+local _AtkConfig = {
+    AttackDistance  = 65,
+    AttackMobs      = true,
+    AttackPlayers   = true,
+    AttackCooldown  = 0.2,
+    ComboResetTime  = 0.3,
+    MaxCombo        = 4,
+    HitboxLimbs     = {"RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm", "RightHand", "LeftHand"},
+    AutoClickEnabled = true,
 }
 
-local function BnnPartsInRadius(model, position, radius)
-    local parts = {}
-    for _, part in ipairs(model:GetChildren()) do
-        if part:IsA("BasePart") and (part.Position - position).Magnitude <= radius then
-            table.insert(parts, part)
+local FastAttackClass = {}
+FastAttackClass.__index = FastAttackClass
+
+function FastAttackClass.new()
+    local self = setmetatable({
+        Debounce        = 0,
+        ComboDebounce   = 0,
+        ShootDebounce   = 0,
+        M1Combo         = 0,
+        EnemyRootPart   = nil,
+        Connections     = {},
+        Overheat        = { Dragonstorm = { MaxOverheat = 3, Cooldown = 0, TotalOverheat = 0, Distance = 350, Shooting = false } },
+        ShootsPerTarget = { ["Dual Flintlock"] = 2 },
+        SpecialShoots   = { ["Skull Guitar"] = "TAP", ["Bazooka"] = "Position", ["Cannon"] = "Position", ["Dragonstorm"] = "Overheat" },
+    }, FastAttackClass)
+
+    pcall(function()
+        self.CombatFlags  = require(_AtkModules.Flags).COMBAT_REMOTE_THREAD
+        self.ShootFunction = getupvalue(require(ReplicatedStorage.Controllers.CombatController).Attack, 9)
+        local LocalScript = localPlayer:WaitForChild("PlayerScripts"):FindFirstChildOfClass("LocalScript")
+        if LocalScript and getsenv then
+            self.HitFunction = getsenv(LocalScript)._G.SendHitsToServer
         end
-    end
-    return parts
+    end)
+
+    return self
 end
 
-local function BnnRawBladeHits(character, sourceParts, radius, includePlayers)
-    local result = {}
-    if not character or not sourceParts[1] then return result end
-    local candidates = {}
-    local enemies = Workspace:FindFirstChild("Enemies")
-    for _, model in ipairs(enemies and enemies:GetChildren() or {}) do table.insert(candidates, model) end
-    if includePlayers then
-        local characters = Workspace:FindFirstChild("Characters")
-        for _, model in ipairs(characters and characters:GetChildren() or {}) do table.insert(candidates, model) end
-    end
+function FastAttackClass:IsEntityAlive(entity)
+    local humanoid = entity and entity:FindFirstChild("Humanoid")
+    return humanoid and humanoid.Health > 0
+end
 
-    for _, model in ipairs(candidates) do
-        local root = model:FindFirstChild("HumanoidRootPart")
-        if model:IsDescendantOf(Workspace) and model ~= character and root then
-            local playerRadius = Players:GetPlayerFromCharacter(model) and radius / 1.5 or radius
-            local positions = { root.Position }
-            if root.Size.Y > 5 then table.insert(positions, (root.CFrame * CFrame.new(0, -root.Size.Y * 1.5 + 3, 0)).Position) end
-            for _, position in ipairs(positions) do
-                if (position - sourceParts[1].Position).Magnitude < 10 + playerRadius + root.Size.X / 2 then
-                    for _, part in ipairs(BnnPartsInRadius(model, sourceParts[1].Position, playerRadius + root.Size.X / 2)) do
-                        table.insert(result, part)
+function FastAttackClass:CheckStun(Character, Humanoid, ToolTip)
+    local Stun = Character:FindFirstChild("Stun")
+    local Busy = Character:FindFirstChild("Busy")
+    if Humanoid.Sit and (ToolTip == "Sword" or ToolTip == "Melee" or ToolTip == "Blox Fruit") then
+        return false
+    elseif Stun and Stun.Value > 0 or Busy and Busy.Value then
+        return false
+    end
+    return true
+end
+
+function FastAttackClass:GetBladeHits(Character, Distance)
+    local Position = Character:GetPivot().Position
+    local BladeHits = {}
+    Distance = Distance or _AtkConfig.AttackDistance
+
+    local function ProcessTargets(Folder)
+        for _, Enemy in ipairs(Folder:GetChildren()) do
+            if Enemy ~= Character and self:IsEntityAlive(Enemy) then
+                local BasePart = Enemy:FindFirstChild(_AtkConfig.HitboxLimbs[math.random(#_AtkConfig.HitboxLimbs)])
+                    or Enemy:FindFirstChild("HumanoidRootPart")
+                if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
+                    if not self.EnemyRootPart then
+                        self.EnemyRootPart = BasePart
+                    else
+                        table.insert(BladeHits, { Enemy, BasePart })
                     end
-                    break
                 end
             end
         end
     end
-    return result
+
+    if _AtkConfig.AttackMobs   then ProcessTargets(Workspace.Enemies) end
+    if _AtkConfig.AttackPlayers then ProcessTargets(Workspace.Characters) end
+
+    return BladeHits
 end
 
-getgenv().getBladeHits = function(character, sourceParts, radius, includePlayers)
-    return BnnRawBladeHits(character, sourceParts, radius, includePlayers)
-end
-
-local function BnnGetBladeHits(radius, includePlayers)
-    local character = localPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    local hits, seen = {}, {}
-    if not character or not root or not BnnCombatUtil then return hits end
-    for _, hitPart in ipairs(BnnRawBladeHits(character, { root }, radius or 80, includePlayers)) do
-        local rig = BnnCombatUtil:GetRigOfHitPart(hitPart)
-        if rig and not seen[rig] and BnnBodyParts[hitPart.Name] and BnnCombatUtil:IsVulnerable(rig) then
-            local targetSummoner = rig:FindFirstChild("Summoner")
-            local ownSummoner = character:FindFirstChild("Summoner")
-            if rig ~= character
-                and (not ownSummoner or not ownSummoner.Value or rig ~= ownSummoner.Value.Character)
-                and (not Players:GetPlayerFromCharacter(character) or not targetSummoner or targetSummoner.Value ~= Players:GetPlayerFromCharacter(character))
-            then
-                table.insert(hits, { rig, hitPart })
-                seen[rig] = true
-            end
+function FastAttackClass:GetClosestEnemy(Character, Distance)
+    local BladeHits = self:GetBladeHits(Character, Distance)
+    local Closest, MinDistance = nil, math.huge
+    for _, Hit in ipairs(BladeHits) do
+        local Magnitude = (Character:GetPivot().Position - Hit[2].Position).Magnitude
+        if Magnitude < MinDistance then
+            MinDistance = Magnitude
+            Closest = Hit[2]
         end
     end
-    return hits
+    return Closest
+end
+
+function FastAttackClass:GetCombo()
+    local Combo = (tick() - self.ComboDebounce) <= _AtkConfig.ComboResetTime and self.M1Combo or 0
+    Combo = Combo >= _AtkConfig.MaxCombo and 1 or Combo + 1
+    self.ComboDebounce = tick()
+    self.M1Combo = Combo
+    return Combo
+end
+
+function FastAttackClass:GetValidator2()
+    local v1  = getupvalue(self.ShootFunction, 15)
+    local v2  = getupvalue(self.ShootFunction, 13)
+    local v3  = getupvalue(self.ShootFunction, 16)
+    local v4  = getupvalue(self.ShootFunction, 17)
+    local v5  = getupvalue(self.ShootFunction, 14)
+    local v6  = getupvalue(self.ShootFunction, 12)
+    local v7  = getupvalue(self.ShootFunction, 18)
+    local v8  = v6 * v2
+    local v9  = (v5 * v2 + v6 * v1) % v3
+    v9 = (v9 * v3 + v8) % v4
+    v5 = math.floor(v9 / v3)
+    v6 = v9 - v5 * v3
+    v7 = v7 + 1
+    setupvalue(self.ShootFunction, 15, v1)
+    setupvalue(self.ShootFunction, 13, v2)
+    setupvalue(self.ShootFunction, 16, v3)
+    setupvalue(self.ShootFunction, 17, v4)
+    setupvalue(self.ShootFunction, 14, v5)
+    setupvalue(self.ShootFunction, 12, v6)
+    setupvalue(self.ShootFunction, 18, v7)
+    return math.floor(v9 / v4 * 16777215), v7
+end
+
+function FastAttackClass:ShootInTarget(TargetPosition)
+    local Character = localPlayer.Character
+    if not self:IsEntityAlive(Character) then return end
+    local Equipped = Character:FindFirstChildOfClass("Tool")
+    if not Equipped or Equipped.ToolTip ~= "Gun" then return end
+    local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or 0.3
+    if (tick() - self.ShootDebounce) < Cooldown then return end
+    local ShootType = self.SpecialShoots[Equipped.Name] or "Normal"
+    if ShootType == "Position" or (ShootType == "TAP" and Equipped:FindFirstChild("RemoteEvent")) then
+        Equipped:SetAttribute("LocalTotalShots", (Equipped:GetAttribute("LocalTotalShots") or 0) + 1)
+        _GunValidator:FireServer(self:GetValidator2())
+        if ShootType == "TAP" then
+            Equipped.RemoteEvent:FireServer("TAP", TargetPosition)
+        else
+            _ShootGunEvent:FireServer(TargetPosition)
+        end
+        self.ShootDebounce = tick()
+    else
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+        task.wait(0.05)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+        self.ShootDebounce = tick()
+    end
+end
+
+function FastAttackClass:UseNormalClick(Character, Humanoid, Cooldown)
+    self.EnemyRootPart = nil
+    local BladeHits = self:GetBladeHits(Character)
+    if self.EnemyRootPart then
+        _RegisterAttack:FireServer(Cooldown)
+        if self.CombatFlags and self.HitFunction then
+            self.HitFunction(self.EnemyRootPart, BladeHits)
+        else
+            _RegisterHit:FireServer(self.EnemyRootPart, BladeHits)
+        end
+    end
+end
+
+function FastAttackClass:UseFruitM1(Character, Equipped, Combo)
+    local Targets = self:GetBladeHits(Character)
+    if not Targets[1] then return end
+    local Direction = (Targets[1][2].Position - Character:GetPivot().Position).Unit
+    Equipped.LeftClickRemote:FireServer(Direction, Combo)
+end
+
+function FastAttackClass:Attack()
+    if not _AtkConfig.AutoClickEnabled or (tick() - self.Debounce) < _AtkConfig.AttackCooldown then return end
+    local Character = localPlayer.Character
+    if not Character or not self:IsEntityAlive(Character) then return end
+    local Humanoid = Character.Humanoid
+    local Equipped  = Character:FindFirstChildOfClass("Tool")
+    if not Equipped then return end
+    local ToolTip = Equipped.ToolTip
+    if not table.find({"Melee", "Blox Fruit", "Sword", "Gun"}, ToolTip) then return end
+    local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or _AtkConfig.AttackCooldown
+    if not self:CheckStun(Character, Humanoid, ToolTip) then return end
+    local Combo = self:GetCombo()
+    Cooldown = Cooldown + (Combo >= _AtkConfig.MaxCombo and 0.05 or 0)
+    self.Debounce = Combo >= _AtkConfig.MaxCombo and ToolTip ~= "Gun" and (tick() + 0.05) or tick()
+    if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
+        self:UseFruitM1(Character, Equipped, Combo)
+    elseif ToolTip == "Gun" then
+        local Target = self:GetClosestEnemy(Character, 120)
+        if Target then self:ShootInTarget(Target.Position) end
+    else
+        self:UseNormalClick(Character, Humanoid, Cooldown)
+    end
+end
+
+-- Tạo instance và kết nối Heartbeat
+local _FastAttackInst = FastAttackClass.new()
+table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
+    if Settings["Auto Click"] then
+        _FastAttackInst:Attack()
+    end
+end))
+
+-- === Wrapper functions giữ nguyên API cho phần còn lại của script ===
+
+function AttackFunction(radius)
+    -- Gọi attack class trực tiếp qua Heartbeat; fallback manual invoke nếu cần
+    _FastAttackInst:Attack()
 end
 
 function AttackAOE(radius, includePlayers)
-    local hits = BnnGetBladeHits(radius or 80, includePlayers)
+    local Character = localPlayer.Character
+    if not Character then return nil end
+    _FastAttackInst.EnemyRootPart = nil
+    local hits = _FastAttackInst:GetBladeHits(Character, radius or 80)
     return #hits > 0 and hits or nil
 end
 
-local bnnAttackIndex = 0
-local function BnnFireHits(hits, attackDelay)
-    if not hits or #hits == 0 or not BnnRegisterAttack or not BnnRegisterHit then return false end
-    BnnRegisterAttack:FireServer(attackDelay or 0)
-    local first = table.remove(hits, 1)
-    BnnRegisterHit:FireServer(first[2], hits)
-    table.clear(hits)
-    return true
-end
-
-local function BnnAnimatedAttack(radius)
-    local character = localPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    local tool = character and character:FindFirstChildOfClass("Tool")
-    local hits = BnnGetBladeHits(radius or 80, false)
-    if not humanoid or not tool or #hits == 0 or not BnnCombatUtil then return BnnFireHits(hits, 0) end
-    local success = pcall(function()
-        local cache = BnnCombatUtil:GetMovesetAnimCache(humanoid)
-        local weaponName = BnnCombatUtil:GetWeaponName(tool)
-        local weaponData = BnnCombatUtil:GetWeaponData(weaponName)
-        local moveset = weaponData and weaponData.Moveset
-        local rig = humanoid.RootPart and humanoid.RootPart.Parent
-        if weaponData and not BnnCombatUtil:CanAttack(rig, weaponData.WeaponType) then return end
-        if not cache or not moveset or not moveset.Basic or #moveset.Basic == 0 then error("No moveset") end
-        bnnAttackIndex = bnnAttackIndex % #moveset.Basic + 1
-        local animation = cache[BnnCombatUtil:GetPureWeaponName(weaponName) .. "-basic" .. bnnAttackIndex]
-        if not animation then error("No animation") end
-        local speed = animation:GetAttribute("SpeedMult") or 1
-        BnnFireHits(hits, animation.Length / speed)
-        animation:Play(0.1, 1, speed)
-    end)
-    if not success and #hits > 0 then return BnnFireHits(hits, 0) end
-    return success
-end
-
-function AttackFunction(radius)
-    local character = localPlayer.Character
-    local stun = character and character:FindFirstChild("Stun")
-    if not character or (stun and stun.Value ~= 0) then return end
-    if Settings["Attack No Animation "] then
-        BnnFireHits(BnnGetBladeHits(radius or 80, false), 0)
-    else
-        BnnAnimatedAttack(radius or 80)
-    end
-end
-
-local bnnFruitClickIndex = 1
-local function BnnUseFruitM1(target, secondaryDirection, boatMode)
-    local character = localPlayer.Character
-    local root = character and (character.PrimaryPart or character:FindFirstChild("HumanoidRootPart"))
-    local targetPosition = boatMode and target and target.Position or target and target.PrimaryPart and target.PrimaryPart.Position
-    if not root or not targetPosition then return false end
-    local fruitName = NameWeapon("Blox Fruit")
-    local fruit = fruitName and character:FindFirstChild(fruitName)
-    if not fruit then return false end
-    local leftClick = fruit:FindFirstChild("LeftClickRemote")
-    local remoteFunction = fruit:FindFirstChild("RemoteFunction")
-    local remoteEvent = fruit:FindFirstChild("RemoteEvent")
-    if not leftClick and remoteFunction then
-        if remoteEvent then remoteEvent:FireServer(targetPosition) end
-        remoteFunction:InvokeServer("TAP")
-        return true
-    end
-    if leftClick then
-        if fruitName == "Mammoth-Mammoth" then
-            leftClick:FireServer(targetPosition)
-            return true
-        end
-        bnnFruitClickIndex = bnnFruitClickIndex % 5 + 1
-        local direction = (targetPosition - root.Position).Unit
-        leftClick:FireServer(direction, bnnFruitClickIndex)
-        if secondaryDirection and BnnMouse and BnnMouse.Hit then
-            local mouseDirection = ((BnnMouse.Hit.Position - root.Position) * Vector3.new(1, 0, 1)).Unit
-            leftClick:FireServer(mouseDirection, bnnFruitClickIndex)
-        end
-        return true
-    end
-    return false
-end
-
-getgenv().UseFruitM1 = function(target, secondaryDirection)
-    return BnnUseFruitM1(target, secondaryDirection, false)
-end
-getgenv().UseFruitM1Boat = function(target, secondaryDirection)
-    return BnnUseFruitM1(target, secondaryDirection, true)
-end
-
-getgenv().PathClickM1 = {}
-local function BnnTrackClickRemotes(character)
-    local function track(tool)
-        if not tool:IsA("Tool") then return end
-        task.delay(0.5, function()
-            if tool.Parent then
-                local remote = tool:FindFirstChild("RemoteFunction")
-                if remote then getgenv().PathClickM1[tool.Name] = remote end
-            end
-        end)
-    end
-    for _, child in ipairs(character:GetChildren()) do track(child) end
-    character.ChildAdded:Connect(track)
-end
-if localPlayer.Character then BnnTrackClickRemotes(localPlayer.Character) end
-localPlayer.CharacterAdded:Connect(BnnTrackClickRemotes)
-
 function FastAttack(target)
-    if target and Settings["Select Weapon"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
-    AttackFunction(target and 30 or 80)
+    -- target hint: thu hẹp khoảng cách nếu cần, rồi gọi Attack
+    _FastAttackInst:Attack()
 end
 
-local fastAttackInstance = { Attack = function() FastAttack() end }
+local fastAttackInstance = { Attack = function() _FastAttackInst:Attack() end }
 
 function ClickM1(target, wideRange)
     local character = localPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local root      = character and character:FindFirstChild("HumanoidRootPart")
     local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
-    local humanoid = target and target:FindFirstChildOfClass("Humanoid")
-    if not root or not targetRoot or not humanoid or humanoid.Health <= 0 or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
-    if Settings["Select Weapon"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
-    AttackFunction(wideRange and 80 or 30)
+    local humanoid  = target and target:FindFirstChildOfClass("Humanoid")
+    if not root or not targetRoot or not humanoid or humanoid.Health <= 0
+        or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
+    _FastAttackInst:Attack()
 end
 getgenv().ClickM1 = ClickM1
 
 getgenv().ClickM1Dungeon = function(target, wideRange)
     local character = localPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local root      = character and character:FindFirstChild("HumanoidRootPart")
     local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
-    local humanoid = target and target:FindFirstChildOfClass("Humanoid")
-    if not root or not targetRoot or not humanoid or humanoid.Health <= 0 or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
-    if Settings["Select Weapon Dungeon"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
-    AttackFunction(wideRange and 80 or 30)
+    local humanoid  = target and target:FindFirstChildOfClass("Humanoid")
+    if not root or not targetRoot or not humanoid or humanoid.Health <= 0
+        or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
+    _FastAttackInst:Attack()
 end
 
 getgenv().ClickM1Volcano = function(target, wideRange)
     local character = localPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local root      = character and character:FindFirstChild("HumanoidRootPart")
     local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
-    local humanoid = target and target:FindFirstChildOfClass("Humanoid")
-    if not root or not targetRoot or not humanoid or humanoid.Health <= 0 or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
-    if Settings["Select Weapon Kill Golem"] == "Blox Fruit" and getgenv().UseFruitM1(target) then return end
-    AttackFunction(wideRange and 80 or 30)
+    local humanoid  = target and target:FindFirstChildOfClass("Humanoid")
+    if not root or not targetRoot or not humanoid or humanoid.Health <= 0
+        or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
+    _FastAttackInst:Attack()
 end
 
+getgenv().UseFruitM1 = function(target, secondaryDirection)
+    local Character = localPlayer.Character
+    if not Character then return false end
+    local Equipped = Character:FindFirstChildOfClass("Tool")
+    if not Equipped or Equipped.ToolTip ~= "Blox Fruit" then return false end
+    if not Equipped:FindFirstChild("LeftClickRemote") then return false end
+    _FastAttackInst:UseFruitM1(Character, Equipped, _FastAttackInst:GetCombo())
+    return true
+end
+getgenv().UseFruitM1Boat = getgenv().UseFruitM1
+
+getgenv().PathClickM1 = {}
+
 getgenv().AttackFunctionnhungSuperTrial = function()
-    local character = localPlayer.Character
-    local stun = character and character:FindFirstChild("Stun")
-    if not character or (stun and stun.Value ~= 0) then return end
-    BnnFireHits(BnnGetBladeHits(80, true), 0)
+    _AtkConfig.AttackPlayers = true
+    _FastAttackInst:Attack()
 end
 getgenv().AttackFunctionnhungSuper = getgenv().AttackFunctionnhungSuperTrial
 
@@ -1329,36 +1383,66 @@ local function TryTeleportTempleOfTimeOnce()
         return "waiting_character"
     end
 
+    -- Kiểm tra trạng thái tiến trình RaceV4 giống như teleport temple gốc
+    local v4Status
     pcall(function()
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
+        v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
     end)
 
-    if IsInTempleOfTime() then
-        return "arrived"
-    end
-
-    pcall(function()
-        local v4Status = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-        if v4Status == 1 then
+    if v4Status == 1 then
+        -- Bước 1: talk NPC Ancient One để Begin
+        pcall(function()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
-        elseif v4Status == 2 then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
-        elseif v4Status == 3 then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
+        end)
+        return "in_progress"
+    elseif v4Status == 2 then
+        -- Bước 2: Cần di chuyển tới đỉnh cây rồi gọi Teleport + requestEntrance
+        local distToTree = (hrp.Position - topOfGreatTree.Position).Magnitude
+        if distToTree > 30 then
+            ToTarget(topOfGreatTree)
+            return "moving_to_tree"
         end
-    end)
-
-    local distToTree = (hrp.Position - topOfGreatTree.Position).Magnitude
-    if distToTree > 30 then
-        ToTarget(topOfGreatTree)
-        return "moving_to_tree"
-    else
+        -- Đã ở đỉnh cây: gọi Teleport rồi requestEntrance (đúng sequence game gốc)
         pcall(function()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
         end)
+        task.wait(0.3)
         pcall(function()
             ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
         end)
+        if IsInTempleOfTime() then return "arrived" end
+        return "in_progress"
+    elseif v4Status == 3 then
+        -- Bước 3: talk NPC Continue sau khi hoàn thành nhiệm vụ trong temple
+        pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
+        end)
+        task.wait(0.3)
+        pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
+        end)
+        if IsInTempleOfTime() then return "arrived" end
+        return "in_progress"
+    else
+        -- Không có v4Status rõ ràng: thử requestEntrance trực tiếp
+        pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
+        end)
+        if IsInTempleOfTime() then return "arrived" end
+
+        -- Fallback: di chuyển về đỉnh cây rồi thử Teleport
+        local distToTree = (hrp.Position - topOfGreatTree.Position).Magnitude
+        if distToTree > 30 then
+            ToTarget(topOfGreatTree)
+            return "moving_to_tree"
+        else
+            pcall(function()
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Teleport")
+            end)
+            pcall(function()
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", TEMPLE_ENTRY_POS)
+            end)
+        end
     end
 
     local currentRaceState = CheckRace()
