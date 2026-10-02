@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Dex-Bear/VxezeHubLoader/refs/heads/main/MainHub.lua"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Dex-Bear/VxezeHubLoader/refs/heads/main/LotusHub.lua"))()
     end)
 end
 
