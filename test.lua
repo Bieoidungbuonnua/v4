@@ -172,11 +172,16 @@ local Fluent, InterfaceManager, Window, Tabs, uiLibrary
 
 if _HIDE_UI then
     -- Stub nhẹ: không load gì nặng, chỉ tạo dummy objects
-    local _noTab = setmetatable({}, {
+    -- _noTab: recursive stub — mọi method call đều an toàn kể cả chained (toggle:SetValue())
+    local _noStub
+    _noStub = setmetatable({}, {
         __index = function(_, _k)
-            return function(...) return {} end
-        end
+            return function(...) return _noStub end
+        end,
+        __newindex = function() end,
+        __call = function() return _noStub end,
     })
+    local _noTab = _noStub
     Fluent = {
         Notify = function(p)
             print(string.format("[SkiderV4] %s: %s", tostring(p and p.Title or ""), tostring(p and p.Content or "")))
@@ -4133,12 +4138,12 @@ local myTrialCompleted = false
 local trialInProgress = false
 
 local races_trial_place = {
-	["Human"] = Workspace._WorldOrigin.Locations:WaitForChild("Trial of Strength", 5),
-	["Mink"] = Workspace._WorldOrigin.Locations:WaitForChild("Trial of Speed", 5),
-	["Fishman"] = Workspace._WorldOrigin.Locations:WaitForChild("Trial of Water", 5),
-	["Skypiea"] = Workspace._WorldOrigin.Locations:WaitForChild("Trial of the King", 5),
-	["Ghoul"] = Workspace._WorldOrigin.Locations:WaitForChild("Trial of Carnage", 5),
-	["Cyborg"] = Workspace._WorldOrigin.Locations:WaitForChild("Trial of the Machine", 5),
+	["Human"]   = Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Strength"),
+	["Mink"]    = Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Speed"),
+	["Fishman"] = Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Water"),
+	["Skypiea"] = Workspace._WorldOrigin.Locations:FindFirstChild("Trial of the King"),
+	["Ghoul"]   = Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Carnage"),
+	["Cyborg"]  = Workspace._WorldOrigin.Locations:FindFirstChild("Trial of the Machine"),
 }
 
 local race_abilities = {
@@ -4240,10 +4245,35 @@ local function RunGhoulTrial()
 	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
 	local trial = locations and locations:FindFirstChild("Trial of Carnage")
 	if not trial then return end
-	while TrialTimerVisible() and TrialDistance(trial.Position) <= 1000 do
+
+	-- T\u1eaft BringMob trong su\u1ed1t trial \u0111\u1ec3 worker kh\u00f4ng k\u00e9o mob sai
+	local prevBringMob = Settings["Bring Mob"]
+	Settings["Bring Mob"] = false
+
+	-- Outer loop: t\u00ecm mob m\u1edbi khi mob c\u0169 ch\u1ebft (gi\u1ed1ng bnn.lua)
+	repeat
+		task.wait()
 		local mob = TrialGhoul()
-		if mob then AttackTrialMob(mob, trial) else task.wait(0.1) end
-	end
+		if mob then
+			-- Inner loop: t\u1ea5n c\u00f4ng mob cho \u0111\u1ebfn khi ch\u1ebft
+			repeat
+				task.wait()
+				SizePart(mob)
+				local offset = Settings["Select Weapon"] == "Blox Fruit"
+					and CFrame.new(-7, 20, 0)
+					or  CFrame.new(7, 20, 0)
+				ToTarget(mob.HumanoidRootPart.CFrame * offset)
+				UsedualFlock()
+				ClickM1(mob)
+			until not IsMobAlive(mob)
+				or not TrialTimerVisible()
+				or TrialDistance(trial.Position) > 1000
+		end
+	until not TrialTimerVisible()
+		or TrialDistance(trial.Position) > 1000
+
+	-- Kh\u00f4i ph\u1ee5c BringMob sau khi trial xong
+	Settings["Bring Mob"] = prevBringMob
 end
 
 local function RunSkypieaTrial()
