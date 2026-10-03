@@ -719,14 +719,19 @@ local function BnnAddMobSpawn(part)
     end
 end
 
+local _bnnLastSpawnRefresh, _bnnLastNilScan = 0, 0
 local function BnnRefreshMobSpawns()
+    -- Throttle: quét spawn mỗi frame gây lag nặng (getnilinstances rất đắt)
+    if #TableMobSpawn > 0 and tick() - _bnnLastSpawnRefresh < 5 then return end
+    _bnnLastSpawnRefresh = tick()
     local origin = Workspace:FindFirstChild("_WorldOrigin")
     local enemySpawns = origin and origin:FindFirstChild("EnemySpawns")
     for _, part in ipairs(enemySpawns and enemySpawns:GetChildren() or {}) do
         local displayName = part:GetAttribute("DisplayName")
         if displayName and string.find(displayName, "Lv.") then BnnAddMobSpawn(part) end
     end
-    if getnilinstances then
+    if getnilinstances and tick() - _bnnLastNilScan >= 30 then
+        _bnnLastNilScan = tick()
         pcall(function()
             for _, part in ipairs(getnilinstances()) do
                 local displayName = part:GetAttribute("DisplayName")
@@ -808,7 +813,10 @@ end
 
 local bnnBringTarget, bnnBringAnchor
 function BringMob(target)
-    if not Settings["Bring Mob"] or not IsMobAlive(target) then return end
+    if not Settings["Bring Mob"] or getgenv().NoBringMob or not IsMobAlive(target) then return end
+    -- Rate limit: không bring liên tục mỗi frame
+    if tick() - (getgenv().LastBringTick or 0) < 0.35 then return end
+    getgenv().LastBringTick = tick()
     local character = localPlayer.Character
     local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
     local targetRoot = target:FindFirstChild("HumanoidRootPart")
@@ -834,7 +842,7 @@ function BringMob(target)
 
     local selected = {}
     if not target:FindFirstChild("Ignored") then table.insert(selected, target) end
-    local requestedCount = tonumber(Settings["Bring Mob Count"]) or 2
+    local requestedCount = math.clamp(tonumber(Settings["Bring Mob Count"]) or 2, 1, 5)
     local radius, maximum = requestedCount > 2 and 350 or 200, requestedCount
     local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
     local transformed = character:FindFirstChild("RaceTransformed")
@@ -4246,11 +4254,13 @@ local function RunGhoulTrial()
 	local trial = locations and locations:FindFirstChild("Trial of Carnage")
 	if not trial then return end
 
-	-- T\u1eaft BringMob trong su\u1ed1t trial \u0111\u1ec3 worker kh\u00f4ng k\u00e9o mob sai
+	-- Tắt BringMob hoàn toàn trong trial (flag toàn cục, worker khác cũng bị chặn)
+	getgenv().NoBringMob = true
 	local prevBringMob = Settings["Bring Mob"]
 	Settings["Bring Mob"] = false
 
 	-- Outer loop: t\u00ecm mob m\u1edbi khi mob c\u0169 ch\u1ebft (gi\u1ed1ng bnn.lua)
+	pcall(function()
 	repeat
 		task.wait()
 		local mob = TrialGhoul()
@@ -4272,7 +4282,10 @@ local function RunGhoulTrial()
 	until not TrialTimerVisible()
 		or TrialDistance(trial.Position) > 1000
 
-	-- Kh\u00f4i ph\u1ee5c BringMob sau khi trial xong
+	end)
+
+	-- Khôi phục BringMob sau khi trial xong
+	getgenv().NoBringMob = false
 	Settings["Bring Mob"] = prevBringMob
 end
 
