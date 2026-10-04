@@ -1412,39 +1412,28 @@ local function getOpenServers(maxPlayers)
             local ok, res = pcall(function() return sb:InvokeServer(page) end)
             if ok and type(res) == "table" and next(res) ~= nil then
                 for jid, data in pairs(res) do
-                    local idStr = tostring(jid or (type(data) == "table" and data.JobId) or "")
-                    local count = type(data) == "table" and tonumber(data.Count or data.count or data.Players or data.playing) or 0
-                    if idStr ~= "" and idStr ~= tostring(game.JobId) and not _hopTried[idStr] and count <= maxPlayers then
-                        table.insert(serverList, { id = idStr, count = count })
+                    local idValue = type(data) == "table"
+                        and (data.JobId or data.jobId or data.jobid or data.JobID or data.id)
+                        or nil
+                    local idStr = tostring(idValue or jid or "")
+                    local count = type(data) == "table"
+                        and tonumber(data.Count or data.count or data.Players or data.players or data.playing or data.PlayerCount)
+                        or 0
+                    local listedPlaceId = type(data) == "table"
+                        and tonumber(data.PlaceId or data.placeId or data.placeid or data.PlaceID)
+                        or nil
+                    -- __ServerBrowser is scoped to the current place when it does
+                    -- not include PlaceId. If it does include one, require an exact
+                    -- match so a Sea 3 JobId can never be used for another sub-place.
+                    local correctPlace = listedPlaceId == nil or listedPlaceId == tonumber(game.PlaceId)
+                    if #idStr >= 10 and correctPlace and idStr ~= tostring(game.JobId)
+                        and not _hopTried[idStr] and count <= maxPlayers then
+                        table.insert(serverList, { id = idStr, count = count, placeId = listedPlaceId or game.PlaceId })
                     end
                 end
                 if #serverList >= 5 then break end
             end
         end
-    end
-
-    -- 2. Nếu __ServerBrowser chưa trả về đủ, lập tức lấy qua Roblox Public API (luôn có sẵn 100 server)
-    if #serverList == 0 then
-        pcall(function()
-            local url = string.format(
-                "https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true",
-                tostring(game.PlaceId)
-            )
-            local req = game:HttpGet(url)
-            if req and req ~= "" then
-                local body = HttpService:JSONDecode(req)
-                if body and type(body.data) == "table" then
-                    for _, s in ipairs(body.data) do
-                        local sId = tostring(s.id or "")
-                        local sPlaying = tonumber(s.playing) or 0
-                        local sMax = tonumber(s.maxPlayers) or 12
-                        if sId ~= "" and sId ~= tostring(game.JobId) and not _hopTried[sId] and sPlaying < sMax and sPlaying <= maxPlayers then
-                            table.insert(serverList, { id = sId, count = sPlaying })
-                        end
-                    end
-                end
-            end
-        end)
     end
 
     return serverList
@@ -1508,77 +1497,10 @@ function HopLessAll()
 end
 
 function SpecialHop(targetName)
-    if tostring(targetName):lower():find("mirage", 1, true) then
-        if getgenv().MirageApiHopBusy then return end
-        getgenv().MirageApiHopBusy = true
-
-        local function releaseHopLock()
-            task.delay(8, function()
-                getgenv().MirageApiHopBusy = false
-            end)
-        end
-
-        local ok, data = pcall(function()
-            local body = game:HttpGet("https://apiibf.kurinian-hub.xyz/api/bloxfruit/mirage")
-            return HttpService:JSONDecode(body)
-        end)
-
-        if ok and type(data) == "table" and type(data.servers) == "table" then
-            local function ageSeconds(value)
-                local h, m, s = tostring(value or ""):match("^(%d+):(%d+):(%d+)$")
-                return h and (tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)) or math.huge
-            end
-
-            local candidates = {}
-            for _, server in ipairs(data.servers) do
-                local jobId = tostring(server.jobid or "")
-                local placeId = tonumber(server.placeid)
-                local players = tonumber(server.players)
-                if jobId ~= ""
-                    and jobId ~= tostring(game.JobId)
-                    and placeId
-                    and tonumber(server.sea) == 3
-                    and players and players > 0 and players < 12
-                    and not _hopTried[jobId]
-                then
-                    table.insert(candidates, {
-                        jobId = jobId,
-                        placeId = placeId,
-                        players = players,
-                        age = ageSeconds(server.age),
-                        ageText = tostring(server.age or "?"),
-                    })
-                end
-            end
-
-            table.sort(candidates, function(a, b)
-                if a.players ~= b.players then return a.players < b.players end
-                return a.age < b.age
-            end)
-
-            local chosen = candidates[1]
-            if chosen then
-                _hopTried[chosen.jobId] = true
-                pcall(function()
-                    uiLibrary.CreateNoti({
-                        Title = "Skider Hub V4",
-                        Desc = string.format("Mirage API: %d player | age %s", chosen.players, chosen.ageText),
-                        ShowTime = 4,
-                    })
-                end)
-                local teleported = pcall(function()
-                    TeleportService:TeleportToPlaceInstance(chosen.placeId, chosen.jobId, localPlayer)
-                end)
-                releaseHopLock()
-                if teleported then return true end
-            end
-        end
-
-        getgenv().MirageApiHopBusy = false
-        HopServer()
-        return false
-    end
-    HopServer()
+    -- Pull-lever/Mirage hopping must stay inside the exact current place.
+    -- All candidates now come from the game's own __ServerBrowser and all joins
+    -- go through __ServerBrowser("teleport", jobId); no external API/TeleportService.
+    return HopServer()
 end
 
 function TeleportSeaEvents(mob)
@@ -4860,39 +4782,13 @@ do
     -- =========================================================
     ;(function()
     local function hopRandomServer()
-        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
-            or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-        if not sb then return false end
-
-        local servers = nil
-        for page = 1, 10 do
-            local ok, res = pcall(function()
-                return sb:InvokeServer("getServers", page) or sb:InvokeServer(page)
-            end)
-            if ok and type(res) == "table" and next(res) ~= nil then
-                servers = res
-                break
-            end
-        end
-
-        if not servers then return false end
-
-        local validList = {}
-        for jobId, data in pairs(servers) do
-            local jid = tostring(jobId or (type(data) == "table" and data.JobId) or "")
-            local count = tonumber(type(data) == "table" and (data.Count or data.Players or data.PlayerCount) or 0) or 0
-            if jid ~= "" and jid ~= tostring(game.JobId) and count > 0 and count <= 11 then
-                table.insert(validList, jid)
-            end
-        end
-
+        local validList = getOpenServers(11)
         if #validList > 0 then
-            local target = validList[math.random(1, #validList)]
+            local chosen = validList[math.random(1, #validList)]
+            local target = chosen.id
+            _hopTried[target] = true
             setStatus(string.format("Hop random -> %s...", target:sub(1, 8)))
-            pcall(function()
-                sb:InvokeServer("teleport", target)
-            end)
-            return true
+            return teleportViaServerBrowser(target)
         end
         return false
     end
