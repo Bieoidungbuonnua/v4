@@ -1595,7 +1595,7 @@ function SpecialHop(targetName)
             if chosen then
                 _hopTried[chosen.jobId] = true
                 SetCuttayPullLeverStatusRuntime(string.format(
-                    "Mirage found | PlaceId %s | %d players | joining via __ServerBrowser",
+                    "Mirage API candidate | PlaceId %s | %d players | joining via __ServerBrowser",
                     tostring(chosen.placeId), chosen.players
                 ))
                 pcall(function()
@@ -3884,9 +3884,31 @@ local leverTargetCFrame, count12 =
 	),
 	0.2
 
+local function GetMysticIslandModel()
+	local map = Workspace:FindFirstChild("Map")
+	if not map then return nil end
+	return map:FindFirstChild("MysticIsland")
+		or map:FindFirstChild("Mystic Island")
+		or map:FindFirstChild("Mirage Island")
+end
+
+local function GetMirageLocationMarker()
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	local locations = origin and origin:FindFirstChild("Locations")
+	if not locations then return nil end
+	return locations:FindFirstChild("Mirage Island")
+		or locations:FindFirstChild("Mystic Island")
+		or locations:FindFirstChild("MysticIsland")
+end
+
+local function IsMiragePresentInServer()
+	return GetMysticIslandModel() ~= nil or GetMirageLocationMarker() ~= nil
+end
+
 function GetBlueGear()
-	if Workspace.Map:FindFirstChild("MysticIsland") then
-		for unusedIndex, child in pairs(Workspace.Map.MysticIsland:GetChildren()) do
+	local mysticIsland = GetMysticIslandModel()
+	if mysticIsland then
+		for unusedIndex, child in pairs(mysticIsland:GetChildren()) do
 			if child:IsA("MeshPart") and child.MeshId == "rbxassetid://10153114969" then
 				return child
 			end
@@ -3895,10 +3917,9 @@ function GetBlueGear()
 end
 
 function GetHighestPoint()
-	if not Workspace.Map:FindFirstChild("MysticIsland") then
-		return nil
-	end
-	for unusedIndex, child in pairs(Workspace.Map.MysticIsland:GetDescendants()) do
+	local mysticIsland = GetMysticIslandModel()
+	if not mysticIsland then return nil end
+	for unusedIndex, child in pairs(mysticIsland:GetDescendants()) do
 		if child:IsA("MeshPart") then
 			if child.MeshId == "rbxassetid://6745037796" then
 				return child
@@ -4110,6 +4131,19 @@ local function PullLeverV4Legacy()
 	end
 end
 
+local MIRAGE_MAP_LOAD_GRACE = 30
+local cuttayMirageCheckJobId = tostring(game.JobId)
+local cuttayMirageCheckStartedAt = tick()
+
+local function MirageMapLoadWaitRemaining()
+	local currentJobId = tostring(game.JobId)
+	if cuttayMirageCheckJobId ~= currentJobId then
+		cuttayMirageCheckJobId = currentJobId
+		cuttayMirageCheckStartedAt = tick()
+	end
+	return math.max(0, MIRAGE_MAP_LOAD_GRACE - (tick() - cuttayMirageCheckStartedAt))
+end
+
 function PullLeverV4()
 	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
 		SetCuttayPullLeverStatusRuntime("missing Valkyrie Helm or Mirror Fractal")
@@ -4136,12 +4170,15 @@ function PullLeverV4()
 			return
 		end
 
-		local mysticIsland = Workspace.Map:FindFirstChild("MysticIsland")
+		-- The API only supplies a candidate JobId. Mirage is real in this server
+		-- only after its map model or WorldOrigin location marker exists.
+		local mysticIsland = GetMysticIslandModel()
+		local mirageMarker = GetMirageLocationMarker()
 		if mysticIsland and CheckClockTime() == "Night" then
-			SetCuttayPullLeverStatusRuntime("Mirage found: collecting Blue Gear")
+			SetCuttayPullLeverStatusRuntime("Mirage confirmed in server: collecting Blue Gear")
 			CollectBlueGear()
 		elseif mysticIsland and CheckClockTime() ~= "Night" then
-			SetCuttayPullLeverStatusRuntime("Mirage found: waiting for night / moon resonance")
+			SetCuttayPullLeverStatusRuntime("Mirage confirmed in server: waiting for night / moon resonance")
 			if not GetHighestPoint() then
 				local dealer = DetectNpc("Advanced Fruit Dealer")
 				if dealer then
@@ -4154,9 +4191,22 @@ function PullLeverV4()
 			if target and (target.Position - localPlayer.Character.HumanoidRootPart.Position).Magnitude > 10 then
 				ToTarget(target)
 			end
-        elseif not mysticIsland
+		elseif mirageMarker then
+			-- The marker can replicate before the streamed island model. Move near it
+			-- so MysticIsland loads instead of immediately discarding a valid server.
+			SetCuttayPullLeverStatusRuntime("Mirage marker confirmed: waiting for MysticIsland map")
+			local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if root and mirageMarker:IsA("BasePart") and (root.Position - mirageMarker.Position).Magnitude > 300 then
+				ToTarget(mirageMarker.CFrame * CFrame.new(0, 100, 0))
+			end
+		elseif MirageMapLoadWaitRemaining() > 0 then
+			SetCuttayPullLeverStatusRuntime(string.format(
+				"verifying MysticIsland in current server (%ds)",
+				math.ceil(MirageMapLoadWaitRemaining())
+			))
+		elseif not IsMiragePresentInServer()
             and (Settings["Hop Server [Trial Or Pull Lever]"] or getgenv().Mode == "CuttayV4") then
-			SetCuttayPullLeverStatusRuntime("searching Mirage server")
+			SetCuttayPullLeverStatusRuntime("MysticIsland not found after load check: searching API")
 			SpecialHop("Mirage")
 		end
 	else
@@ -5793,10 +5843,7 @@ local function GetTimeEndFullmoon()
 end
 
 local function CheckMirageIsland()
-    local loc = workspace:FindFirstChild("_WorldOrigin") and workspace._WorldOrigin:FindFirstChild("Locations")
-    local mirage = (loc and (loc:FindFirstChild("Mirage Island") or loc:FindFirstChild("Mystic Island")))
-        or (workspace:FindFirstChild("Map") and workspace.Map:FindFirstChild("MysticIsland"))
-    return mirage ~= nil
+    return IsMiragePresentInServer()
 end
 
 local function GetAncientOneStatus()
@@ -6853,8 +6900,12 @@ local function CuttayIsLeverPulled()
 
 	-- RaceV4Progress is Ancient One quest progress, NOT lever state. The old
 	-- `progress >= 4` check skipped PullLeverV4 entirely for fresh V3 accounts.
-	-- Only accept physical lever position as proof that it has been pulled.
-	local temple = GetTempleOfTime()
+	-- Only accept physical lever position while the character is really inside
+	-- Temple. GetTempleOfTime() can borrow the template from MapStash, whose
+	-- default lever transform is not proof that this account pulled it.
+	if not IsInTempleOfTime() then return false end
+	local map = Workspace:FindFirstChild("Map")
+	local temple = map and map:FindFirstChild("Temple of Time")
 	local leverModel = temple and temple:FindFirstChild("Lever")
 	local leverPart = leverModel and (leverModel:FindFirstChild("Lever") or leverModel:FindFirstChild("Part"))
 	if leverPart and math.abs(leverPart.CFrame.Z - leverTargetCFrame.Z) <= count12 then
