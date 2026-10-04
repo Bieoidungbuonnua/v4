@@ -475,7 +475,9 @@ local function ApplyCuttayV4Settings()
     Settings["Auto Get Ghoul"] = false
     Settings["Auto Pull Lever"] = false
     Settings["Auto Pull Lever V4"] = false
-    Settings["Hop Server [Trial Or Pull Lever]"] = true
+    -- CuttayV4 has its own Mirage/Full-Moon routing. Do not let the legacy
+    -- AutoTrial branch random-hop every frame before it can enter the Temple.
+    Settings["Hop Server [Trial Or Pull Lever]"] = false
 end
 
 if getgenv().Mode == "OneClickV4" or getgenv().Mode == "CuttayV4" then
@@ -1387,6 +1389,11 @@ local function getOpenServers(maxPlayers)
 end
 
 function HopServer()
+    if getgenv().SkiderHopServerBusy then return false end
+    getgenv().SkiderHopServerBusy = true
+    task.delay(8, function()
+        getgenv().SkiderHopServerBusy = false
+    end)
     task.spawn(function()
         pcall(function()
             if uiLibrary and uiLibrary.CreateNoti then
@@ -3668,7 +3675,8 @@ function PullLeverV4()
 			if target and (target.Position - localPlayer.Character.HumanoidRootPart.Position).Magnitude > 10 then
 				ToTarget(target)
 			end
-		elseif not mysticIsland and Settings["Hop Server [Trial Or Pull Lever]"] then
+        elseif not mysticIsland
+            and (Settings["Hop Server [Trial Or Pull Lever]"] or getgenv().Mode == "CuttayV4") then
 			SpecialHop("Mirage")
 		end
 	else
@@ -5073,15 +5081,17 @@ function AutoTrialV4()
 
 	local clockTime = Lighting.ClockTime
 	local moon = CheckMoon()
+	local legacyTrialHop = getgenv().Mode ~= "CuttayV4"
+		and Settings["Hop Server [Trial Or Pull Lever]"] == true
 	if (moon == "Full Moon" and not (clockTime > 5 and clockTime < 12) or moon == "Next Night")
-		and Settings["Hop Server [Trial Or Pull Lever]"]
+		and legacyTrialHop
 	then
 		if getgenv().TurnOffHOPSVPullAndTrial then
 			local toggle = getgenv().TurnOffHOPSVPullAndTrial
 			if toggle.SetValue then toggle:SetValue(false) elseif toggle.SetStage then toggle:SetStage(false) end
 		end
 		task.wait(3)
-	elseif Settings["Hop Server [Trial Or Pull Lever]"] then
+	elseif legacyTrialHop then
 		if not ((myTrialCompleted or postTrialHopDone) and Settings["Hop After Trial"] == false) then
 			HopServer()
 			return
@@ -7880,12 +7890,12 @@ end)
     local C_BLUE   = Color3.fromRGB(10, 132, 255)
     local C_PURPLE = Color3.fromRGB(191, 90, 242)
     local C_MUTED  = Color3.fromRGB(142, 142, 147)
-    local C_WHITE  = _CUTTAY_MODE and Color3.fromRGB(28, 28, 30) or Color3.fromRGB(245, 245, 247)
-    local C_BG     = _CUTTAY_MODE and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(0, 0, 0)
+    local C_WHITE  = Color3.fromRGB(245, 245, 247)
+    local C_BG     = Color3.fromRGB(0, 0, 0)
 
     local HOME_POSITION = UDim2.new(0.5, 0, 0, 11)
-    local COMPACT_SIZE  = _CUTTAY_MODE and UDim2.new(0, 429, 0, 60) or UDim2.new(0, 286, 0, 40)
-    local EXPANDED_SIZE = _CUTTAY_MODE and UDim2.new(0, 585, 0, 315) or UDim2.new(0, 390, 0, 210)
+    local COMPACT_SIZE  = UDim2.new(0, 286, 0, 40)
+    local EXPANDED_SIZE = UDim2.new(0, 390, 0, 210)
 
     local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel
     local CompactRole, CompactStatus, StatusDot, IslandStroke, IslandCorner
@@ -8046,7 +8056,7 @@ end)
 
         local gradient = Instance.new("UIGradient")
         gradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, _CUTTAY_MODE and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(20, 20, 22)),
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 20, 22)),
             ColorSequenceKeypoint.new(1, C_BG),
         })
         gradient.Rotation = 120
@@ -8100,7 +8110,7 @@ end)
         expanded.Parent = island
         ExpandedContent = expanded
 
-        local title = newLabel(expanded, "Title", _CUTTAY_MODE and "CUTTAY V4" or "JOIN V4", FONT_SF_BOLD, _CUTTAY_MODE and 22 or 18)
+        local title = newLabel(expanded, "Title", _CUTTAY_MODE and "CUTTAY V4" or "JOIN V4", FONT_SF_BOLD, 18)
         title.Size = UDim2.new(0, 130, 0, 26)
         title.Position = UDim2.new(0, 22, 0, 15)
         title.ZIndex = 52
@@ -8115,7 +8125,7 @@ end)
         local divider = Instance.new("Frame")
         divider.Size = UDim2.new(1, -44, 0, 1)
         divider.Position = UDim2.new(0, 22, 0, 48)
-        divider.BackgroundColor3 = _CUTTAY_MODE and Color3.fromRGB(220, 220, 224) or Color3.fromRGB(45, 45, 48)
+        divider.BackgroundColor3 = Color3.fromRGB(45, 45, 48)
         divider.BorderSizePixel = 0
         divider.ZIndex = 52
         divider.Parent = expanded
@@ -8142,7 +8152,7 @@ end)
         statusBox.Name = "JoinStatus"
         statusBox.Size = UDim2.new(1, -44, 0, 42)
         statusBox.Position = UDim2.new(0, 22, 1, -54)
-        statusBox.BackgroundColor3 = _CUTTAY_MODE and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(24, 24, 27)
+        statusBox.BackgroundColor3 = Color3.fromRGB(24, 24, 27)
         statusBox.BorderSizePixel = 0
         statusBox.ZIndex = 52
         statusBox.Parent = expanded
