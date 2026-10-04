@@ -669,7 +669,11 @@ getgenv().PlayerKillTrial = {}
 getgenv().BlackListPlayerTrial = {}
 getgenv().DelayHop = false
 getgenv().AimPos = nil
-getgenv().CheckPlaceId2 = getgenv().CheckPlaceId2 or 4442272183
+-- Blox Fruits currently has both legacy and migrated place ids.  Keep the
+-- same ids used by bnn.lua so race-upgrade travel also works on migrated maps.
+getgenv().CheckPlaceId = game.PlaceId == 100117331123089 and 100117331123089 or 7449423635
+getgenv().CheckPlaceId2 = game.PlaceId == 4442272183 and 4442272183 or 79091703265657
+getgenv().CheckPlaceId3 = game.PlaceId == 2753915549 and 2753915549 or 85211729168715
 
 local items16, items17 = {}, {}
 local items18 = { "Last Resort", "Agility", "Water Body", "Heavenly Blood", "Energy Core", "Heightened Senses" }
@@ -1298,21 +1302,79 @@ end)
 -- 4. MISSING HELPER FUNCTIONS (ngu.md Section 2)
 --------------------------------------------------------------------------------
 
+function DetectCurrentSea()
+    -- MAP is more reliable than PlaceId after the Blox Fruits place migration.
+    local mapName = tostring(Workspace:GetAttribute("MAP") or "")
+    local seaFromMap = tonumber(mapName:lower():match("sea%s*(%d+)"))
+    if seaFromMap and seaFromMap >= 1 and seaFromMap <= 3 then
+        return seaFromMap, "MAP=" .. mapName
+    end
+
+    local currentPlaceId = tonumber(game.PlaceId)
+    if currentPlaceId == 2753915549 or currentPlaceId == 85211729168715 then
+        return 1, "PlaceId=" .. tostring(currentPlaceId)
+    elseif currentPlaceId == 4442272183 or currentPlaceId == 79091703265657 then
+        return 2, "PlaceId=" .. tostring(currentPlaceId)
+    elseif currentPlaceId == 7449423635 or currentPlaceId == 100117331123089 then
+        return 3, "PlaceId=" .. tostring(currentPlaceId)
+    end
+    return nil, "MAP=" .. mapName .. ", PlaceId=" .. tostring(currentPlaceId)
+end
+
+function ResolveTargetSea(placeId)
+    local targetPlaceId = tonumber(placeId)
+    if targetPlaceId == 2753915549 or targetPlaceId == 85211729168715
+        or targetPlaceId == tonumber(getgenv().CheckPlaceId3) then
+        return 1
+    elseif targetPlaceId == 4442272183 or targetPlaceId == 79091703265657
+        or targetPlaceId == tonumber(getgenv().CheckPlaceId2) then
+        return 2
+    elseif targetPlaceId == 7449423635 or targetPlaceId == 100117331123089
+        or targetPlaceId == tonumber(getgenv().CheckPlaceId) then
+        return 3
+    end
+    return nil
+end
+
 function GoToSea(placeId)
-    if not placeId or game.PlaceId == placeId then
+    if not placeId then
         return true
     end
-    if placeId == 4442272183 and game.PlaceId ~= 4442272183 then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelDressrosa")
-        return false
-    elseif placeId == 7449423635 and game.PlaceId ~= 7449423635 then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelZou")
-        return false
-    elseif placeId == 2753915549 and game.PlaceId ~= 2753915549 then
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("TravelMain")
+
+    local currentSea, detectionSource = DetectCurrentSea()
+    local targetSea = ResolveTargetSea(placeId)
+    if tonumber(game.PlaceId) == tonumber(placeId) or (targetSea and currentSea == targetSea) then
+        if getgenv().SeaTravelTarget then
+            print(string.format("[Sea Travel] Arrived Sea %s (%s)", tostring(targetSea or currentSea), detectionSource))
+        end
+        getgenv().SeaTravelTarget = nil
+        getgenv().SeaTravelLastAt = 0
+        return true
+    end
+
+    if not targetSea then
+        warn("[Sea Travel] Unknown target place id: " .. tostring(placeId))
         return false
     end
-    return true
+
+    -- The upgrade loop runs frequently.  Throttle the remote so it cannot
+    -- spam TravelDressrosa/TravelZou/TravelMain while Roblox is teleporting.
+    local now = tick()
+    if getgenv().SeaTravelTarget ~= targetSea or now - (getgenv().SeaTravelLastAt or 0) >= 8 then
+        getgenv().SeaTravelTarget = targetSea
+        getgenv().SeaTravelLastAt = now
+        local travelRemote = targetSea == 1 and "TravelMain"
+            or targetSea == 2 and "TravelDressrosa"
+            or "TravelZou"
+        print(string.format("[Sea Travel] Sea %s -> Sea %s via %s (%s)", tostring(currentSea or "?"), tostring(targetSea), travelRemote, detectionSource))
+        local ok, travelError = pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer(travelRemote)
+        end)
+        if not ok then
+            warn("[Sea Travel] " .. travelRemote .. " failed: " .. tostring(travelError))
+        end
+    end
+    return false
 end
 
 local _hopTried = {}
