@@ -2061,7 +2061,8 @@ function TakeFruitInventory(bool)
     local inv = ReplicatedStorage.Remotes.CommF_:InvokeServer("getInventory")
     if type(inv) == "table" then
         for _, itm in ipairs(inv) do
-            if itm.Type == "Fruit" or string.find(itm.Name, "Fruit") then
+            if itm.Type == "Blox Fruit" or itm.Type == "Fruit"
+                or string.find(tostring(itm.Name or ""), "Fruit") then
                 return itm.Name
             end
         end
@@ -2218,34 +2219,135 @@ function ChooseGearV4()
     end
 end
 
+getgenv().RaceUpgradeLogState = getgenv().RaceUpgradeLogState or { Message = "", At = 0 }
+
+function SetRaceUpgradeStatus(message, forceLog)
+    message = tostring(message or "Working...")
+    getgenv().RaceUpgradeStatus = message
+    if getgenv().Mode == "CuttayV4" then
+        getgenv().CuttayV4Phase = "GET_V3"
+        getgenv().CuttayV4Status = message
+    end
+    local state = getgenv().RaceUpgradeLogState
+    if forceLog or state.Message ~= message or tick() - (state.At or 0) >= 8 then
+        state.Message = message
+        state.At = tick()
+        print("[Race V2-V3] " .. message)
+    end
+end
+
+function GetBartiloProgress()
+    local result = ReplicatedStorage.Remotes.CommF_:InvokeServer("BartiloQuestProgress", "Bartilo")
+    if type(result) == "number" then return result end
+    if type(result) == "table" then
+        if result.DidPlates then return 3 end
+        if result.KilledSpring then return 2 end
+        if result.KilledBandits then return 1 end
+        return 0
+    end
+    return nil
+end
+
+function GetNextBartiloPlate()
+    local map = Workspace:FindFirstChild("Map")
+    local dressrosa = map and map:FindFirstChild("Dressrosa")
+    local plates = dressrosa and dressrosa:FindFirstChild("BartiloPlates")
+    if not plates then return nil end
+    for index = 1, 8 do
+        local plate = plates:FindFirstChild("Plate" .. index)
+        if plate and plate:IsA("BasePart") and plate.BrickColor == BrickColor.new("Sand yellow") then
+            return plate
+        end
+    end
+    return nil
+end
+
 function AutoQuestBarito()
-    local res = ReplicatedStorage.Remotes.CommF_:InvokeServer("BartiloQuestProgress")
-    if type(res) == "table" then
-        if not res.KilledBandits then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", "BartiloQuest", 1)
-            KillMonster("Swan Pirate", CFrame.new(932.624451, 156.106079, 1180.27466))
-        elseif not res.KilledSpring then
-            KillMonster("Jeremy", CFrame.new(2316.0397949219, 448.95474243164, 767.72882080078))
-        elseif not res.DidPlates then
-            local colosseumCode = {
-                CFrame.new(-1836.0, 11, 1714),
-                CFrame.new(-1850.49329, 13.1789551, 1750.89685),
-                CFrame.new(-1858.87305, 19.3777466, 1712.01807),
-                CFrame.new(-1803.94324, 16.5789185, 1750.89685),
-                CFrame.new(-1858.55835, 16.8604317, 1724.79541),
-                CFrame.new(-1869.54224, 15.987854, 1681.00659),
-                CFrame.new(-1800.0979, 16.4978027, 1684.52368),
-                CFrame.new(-1819.26343, 14.795166, 1717.90625),
-                CFrame.new(-1813.51843, 14.8604736, 1724.79541)
-            }
-            for _, cf in ipairs(colosseumCode) do
-                ToTarget(cf, true)
-                task.wait(0.5)
+    local progress = GetBartiloProgress()
+    if progress == nil then
+        SetRaceUpgradeStatus("Bartilo: waiting for quest progress", true)
+        return false
+    end
+    if progress >= 3 then
+        SetRaceUpgradeStatus("Bartilo completed")
+        return true
+    end
+
+    if progress == 0 then
+        local mainGui = localPlayer.PlayerGui:FindFirstChild("Main")
+        local quest = mainGui and mainGui:FindFirstChild("Quest")
+        local titleObject = quest and quest:FindFirstChild("Container")
+            and quest.Container:FindFirstChild("QuestTitle")
+            and quest.Container.QuestTitle:FindFirstChild("Title")
+        local title = titleObject and tostring(titleObject.Text) or ""
+        local hasQuest = quest and quest.Visible and title:find("Swan Pirates") and title:find("50")
+        if not hasQuest then
+            SetRaceUpgradeStatus("Bartilo 0/3: starting Swan Pirate quest")
+            local questNpc = CFrame.new(-456.28952, 73.0200958, 299.895966)
+            if localPlayer:DistanceFromCharacter(questNpc.Position) > 8 then
+                ToTarget(questNpc)
+            else
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("StartQuest", "BartiloQuest", 1)
+            end
+            return false
+        end
+
+        SetRaceUpgradeStatus("Bartilo 0/3: defeating 50 Swan Pirates")
+        local mob = DetectMob("Swan Pirate")
+        if mob then
+            SizePart(mob)
+            BringMob(mob)
+            UsedualFlock()
+            ClickM1(mob)
+            local offset = Settings["Select Weapon"] == "Blox Fruit"
+                and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+            ToTarget(mob.HumanoidRootPart.CFrame * offset)
+        else
+            local spawnPart = DetectPartSpawnMob("Swan Pirate", true)
+            if spawnPart then
+                ToTarget(spawnPart.CFrame * CFrame.new(0, 60, 0))
+            else
+                DeleteIgnoredMobSpawn()
+                ToTarget(CFrame.new(932.624451, 156.106079, 1180.27466))
             end
         end
-    else
-        ReplicatedStorage.Remotes.CommF_:InvokeServer("BartiloQuestProgress")
+        return false
     end
+
+    if progress == 1 then
+        SetRaceUpgradeStatus("Bartilo 1/3: defeating Jeremy")
+        local boss = CheckNameBoss("Jeremy")
+        if boss and boss.Parent == Workspace.Enemies then
+            SizePart(boss)
+            UsedualFlock()
+            ClickM1(boss)
+            local offset = Settings["Select Weapon"] == "Blox Fruit"
+                and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+            ToTarget(boss.HumanoidRootPart.CFrame * offset)
+        else
+            ToTarget(CFrame.new(2316.0397949219, 448.95474243164, 767.72882080078))
+        end
+        return false
+    end
+
+    SetRaceUpgradeStatus("Bartilo 2/3: completing Colosseum plates")
+    local plate = GetNextBartiloPlate()
+    if not plate then return false end
+    local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    if (hrp.Position - Vector3.new(-1835.65, 10.4325, 1679.75)).Magnitude > 100 then
+        ToTarget(CFrame.new(-1835.65, 10.4325, 1679.75))
+    else
+        hrp.CFrame = plate.CFrame * CFrame.new(0, 3, 0)
+        if firetouchinterest then
+            pcall(function()
+                firetouchinterest(plate, hrp, 0)
+                task.wait()
+                firetouchinterest(plate, hrp, 1)
+            end)
+        end
+    end
+    return false
 end
 
 function CheckMoon()
@@ -2502,7 +2604,7 @@ function CheckPlayercantAttack(player)
 	end
 end
 
-function UpgradeRaceV2AndV3()
+function UpgradeRaceV2AndV3Legacy()
 	local raceStage = CheckRace()
 	if raceStage == " V3" or raceStage == " V4" then
 		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Done V3", ShowTime = 5 })
@@ -2689,6 +2791,211 @@ function UpgradeRaceV2AndV3()
 			end
 		end
 	end
+end
+
+-- Complete BNN V2-V3 engine. This definition intentionally replaces the older
+-- partial port above while keeping its shared helpers and combat modules.
+function RunRaceV3PlayerKill(target, label, blacklist)
+    if not target or target == localPlayer then return false end
+    local started = tick()
+    SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
+    repeat
+        task.wait(0.1)
+        local character = target.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not character or not humanoid or not root or humanoid.Health <= 0 then break end
+
+        pcall(function()
+            local main = localPlayer.PlayerGui:FindFirstChild("Main")
+            local bottom = main and main:FindFirstChild("BottomHUDList")
+            local disabled = bottom and bottom:FindFirstChild("PvpDisabled")
+            if disabled and disabled.Visible then
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("EnablePvp")
+            end
+        end)
+
+        getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
+        if localPlayer:DistanceFromCharacter(root.Position) < 50 then
+            local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if myRoot then myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 3) end
+            AutoAllSkill(true)
+            pcall(getgenv().AttackFunctionnhungSuperTrial)
+        else
+            ToTarget(root.CFrame * CFrame.new(0, 0, 3))
+        end
+    until tick() - started >= 70
+        or not Settings["Auto Upgrade Race V2-V3"]
+        or not target.Parent
+        or not target.Character
+        or CheckSafezone(target.Character)
+        or CheckPlayercantAttack(target.Character)
+
+    local character = target.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if (not humanoid or humanoid.Health <= 0 or not character)
+        and blacklist and not table.find(blacklist, target.Name) then
+        table.insert(blacklist, target.Name)
+    end
+    return humanoid == nil or humanoid.Health <= 0
+end
+
+function UpgradeRaceV2AndV3()
+    local raceStage = CheckRace()
+    local race = tostring(localPlayer.Data.Race.Value)
+
+    if raceStage == " V3" or raceStage == " V4" then
+        SetRaceUpgradeStatus(race .. " already has V3/V4", true)
+        return true
+    end
+    if not GoToSea(getgenv().CheckPlaceId2) then
+        SetRaceUpgradeStatus("Traveling to Sea 2 for race upgrade")
+        return false
+    end
+
+    if raceStage == " V1" then
+        if tonumber(localPlayer.Data.Beli.Value) < 500000 then
+            SetRaceUpgradeStatus("Need 500,000 Beli for Race V2", true)
+            return false
+        end
+
+        local alchemistStep = ReplicatedStorage.Remotes.CommF_:InvokeServer("Alchemist", "1")
+        if alchemistStep == -2 then
+            SetRaceUpgradeStatus("Race V2 completed")
+            return true
+        elseif alchemistStep == 0 then
+            SetRaceUpgradeStatus("Race V2: starting Alchemist flower quest")
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("Alchemist", "2")
+            return false
+        elseif alchemistStep == 1 then
+            if not DetectItemPlr("Flower 1") then
+                SetRaceUpgradeStatus("Race V2: collecting Flower 1 (Red)")
+                local flower = Workspace:FindFirstChild("Flower1")
+                if flower then ToTarget(flower.CFrame) end
+            elseif not DetectItemPlr("Flower 2") then
+                SetRaceUpgradeStatus("Race V2: collecting Flower 2 (Blue)")
+                local flower = Workspace:FindFirstChild("Flower2")
+                if flower then ToTarget(flower.CFrame) end
+            elseif not DetectItemPlr("Flower 3") then
+                SetRaceUpgradeStatus("Race V2: farming Swan Pirate for Flower 3")
+                local swan = DetectMob("Swan Pirate")
+                if swan then
+                    SizePart(swan)
+                    BringMob(swan)
+                    UsedualFlock()
+                    ClickM1(swan)
+                    local offset = Settings["Select Weapon"] == "Blox Fruit"
+                        and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+                    ToTarget(swan.HumanoidRootPart.CFrame * offset)
+                else
+                    local spawnPart = DetectPartSpawnMob("Swan Pirate", true)
+                    if spawnPart then
+                        ToTarget(spawnPart.CFrame * CFrame.new(0, 60, 0))
+                    else
+                        DeleteIgnoredMobSpawn()
+                        ToTarget(CFrame.new(932.624451, 156.106079, 1180.27466))
+                    end
+                end
+            end
+            return false
+        elseif alchemistStep == 2 then
+            SetRaceUpgradeStatus("Race V2: returning flowers to Alchemist")
+            local npcPosition = CFrame.new(-2777.6001, 72.9661407, -3571.42285)
+            if localPlayer:DistanceFromCharacter(npcPosition.Position) > 8 then
+                ToTarget(npcPosition)
+            else
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("Alchemist", "3")
+            end
+            return false
+        end
+
+        SetRaceUpgradeStatus("Race V2 prerequisite: Bartilo quest")
+        AutoQuestBarito()
+        return false
+    end
+
+    if tonumber(localPlayer.Data.Beli.Value) < 2000000 then
+        SetRaceUpgradeStatus("Need 2,000,000 Beli for Race V3", true)
+        return false
+    end
+
+    local aroweStep = ReplicatedStorage.Remotes.CommF_:InvokeServer("Wenlocktoad", "1")
+    if aroweStep == -2 then
+        SetRaceUpgradeStatus(race .. " V3 completed", true)
+        return true
+    elseif aroweStep == -1 then
+        SetRaceUpgradeStatus("Need 2,000,000 Beli for Race V3", true)
+        return false
+    elseif aroweStep == 0 then
+        SetRaceUpgradeStatus(race .. " V3: accepting Arowe quest")
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("Wenlocktoad", "2")
+        return false
+    elseif aroweStep == 2 then
+        SetRaceUpgradeStatus(race .. " V3: purchasing upgrade")
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("Wenlocktoad", "3")
+        return false
+    end
+
+    if race == "Human" then
+        local bossName = not table.find(BlBossHuman, "Jeremy") and "Jeremy"
+            or not table.find(BlBossHuman, "Orbitus") and "Orbitus"
+            or not table.find(BlBossHuman, "Diamond") and "Diamond"
+        if not bossName then
+            table.clear(BlBossHuman)
+            bossName = "Jeremy"
+        end
+        SetRaceUpgradeStatus("Human V3: defeating " .. bossName)
+        local boss = CheckNameBoss(bossName)
+        if boss and boss.Parent == Workspace.Enemies then
+            repeat
+                task.wait()
+                SizePart(boss)
+                UsedualFlock()
+                ClickM1(boss)
+                local offset = Settings["Select Weapon"] == "Blox Fruit"
+                    and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+                ToTarget(boss.HumanoidRootPart.CFrame * offset)
+            until not IsMobAlive(boss) or not Settings["Auto Upgrade Race V2-V3"]
+            if not table.find(BlBossHuman, bossName) then table.insert(BlBossHuman, bossName) end
+        else
+            SetRaceUpgradeStatus("Human V3: waiting for " .. bossName .. " to spawn")
+        end
+    elseif race == "Mink" then
+        SetRaceUpgradeStatus("Mink V3: collecting chests")
+        AutoMinkV2()
+    elseif race == "Fishman" then
+        SetRaceUpgradeStatus("Shark V3: defeating a Sea Beast")
+        AutoFishV2()
+    elseif race == "Cyborg" then
+        if not CheckFruitplr() then
+            local fruitName = TakeFruitInventory(true)
+            if fruitName then
+                SetRaceUpgradeStatus("Cyborg V3: loading physical fruit " .. fruitName)
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadFruit", fruitName)
+            else
+                SetRaceUpgradeStatus("Cyborg V3: need one physical fruit", true)
+            end
+        else
+            SetRaceUpgradeStatus("Cyborg V3: physical fruit ready for Arowe")
+        end
+    elseif race == "Skypiea" then
+        local target = DetectPlayerAngel()
+        if target then
+            RunRaceV3PlayerKill(target, "Angel V3", items16)
+        else
+            SetRaceUpgradeStatus("Angel V3: waiting for another Angel player")
+        end
+    elseif race == "Ghoul" then
+        local target = DetectPlayerGhoul()
+        if target then
+            RunRaceV3PlayerKill(target, "Ghoul V3", items17)
+        else
+            SetRaceUpgradeStatus("Ghoul V3: waiting for an eligible player")
+        end
+    else
+        SetRaceUpgradeStatus("Unsupported race from server: " .. race, true)
+    end
+    return false
 end
 
 function BuyChipLaw()
@@ -6238,7 +6545,7 @@ function CuttayNormalizeRace(value)
     return aliases[race:lower()] or race
 end
 
-local function CuttayDisplayRace(value)
+function CuttayDisplayRace(value)
     local race = CuttayNormalizeRace(value)
     return race == "Fishman" and "Shark" or race
 end
@@ -6550,14 +6857,16 @@ local function CuttayRunStep()
             return
         end
         getgenv().CuttayResourceFarmActive = false
-        if targetRace == "Ghoul" and raceStage == " V2" then
-            CuttaySetStatus("WAIT_GHOUL_V3", "Ghoul V3 kill routine pending configuration")
-            return
-        end
         CuttaySetStatus("GET_V3", "Upgrade " .. CuttayDisplayRace(targetRace) .. raceStage .. " to V3")
         Settings["Auto Upgrade Race V2-V3"] = true
-        pcall(UpgradeRaceV2AndV3)
+        local upgradeOk, upgradeResult = pcall(UpgradeRaceV2AndV3)
         Settings["Auto Upgrade Race V2-V3"] = false
+        if not upgradeOk then
+            local message = "Race V2-V3 error: " .. tostring(upgradeResult)
+            CuttaySetStatus("ERROR", message)
+            warn("[Race V2-V3] " .. message)
+            task.wait(1)
+        end
         return
     end
 
