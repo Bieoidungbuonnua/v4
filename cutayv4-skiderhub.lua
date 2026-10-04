@@ -43,7 +43,17 @@ end
 -- Group modes start only after player data is ready, matching their loader contract.
 if (getgenv().Mode == "OneClickV4" or getgenv().Mode == "CuttayV4")
     and not localPlayer:FindFirstChild("DataLoaded") then
-    localPlayer:WaitForChild("DataLoaded")
+    print("[SkiderV4] Waiting for player data | Mode=" .. tostring(getgenv().Mode))
+    local dataDeadline = tick() + 30
+    repeat
+        task.wait(0.25)
+    until localPlayer:FindFirstChild("DataLoaded")
+        or (localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race"))
+        or tick() >= dataDeadline
+    if not localPlayer:FindFirstChild("DataLoaded")
+        and not (localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")) then
+        warn("[SkiderV4] Player data timeout after 30s; continuing with guarded workers")
+    end
 end
 
 -- Shared JoinV4 configuration (kept compatible with the original BNN bundle)
@@ -259,7 +269,17 @@ local toggleScreenGui = Instance.new("ScreenGui")
 toggleScreenGui.Name = "SkiderV4ToggleGUI"
 toggleScreenGui.ResetOnSpawn = false
 toggleScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-toggleScreenGui.Parent = (gethui and gethui()) or cloneref(game:GetService("CoreGui"))
+toggleScreenGui.Parent = (function()
+    if type(gethui) == "function" then
+        local ok, parent = pcall(gethui)
+        if ok and parent then return parent end
+    end
+    if type(cloneref) == "function" then
+        local ok, parent = pcall(cloneref, game:GetService("CoreGui"))
+        if ok and parent then return parent end
+    end
+    return localPlayer:WaitForChild("PlayerGui")
+end)()
 
 local toggleBtn = Instance.new("ImageButton", toggleScreenGui)
 toggleBtn.Name = "ToggleUIBtn"
@@ -4350,6 +4370,8 @@ do
     end
 
     -- TRY ACTIVATE ABILITY
+    -- Isolate short-lived worker locals from the large TurnV3 coordinator scope.
+    ;(function()
     local activating = false
 
     local function tryActivateAbility()
@@ -4391,10 +4413,12 @@ do
             pcall(tryActivateAbility)
         end
     end)
+    end)()
 
     -- =========================================================
     -- HOP RANDOM SERVER VIA __ServerBrowser (sau khi xong trial / training)
     -- =========================================================
+    ;(function()
     local function hopRandomServer()
         local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
             or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
@@ -4552,6 +4576,7 @@ do
         isUper and "MAIN" or (isAlly and "HELPER" or "OBSERVER"),
         tostring(FILE_SYNC_AVAILABLE)
     ))
+    end)()
 end
 
 function TrialHuman()
@@ -5179,7 +5204,10 @@ end
 -- 6. FLUENT UI BUILDING (Tabs, Sections, Toggles, Dropdowns, Buttons)
 -- HideUI mode: toàn bộ block này bị bỏ qua, chỉ chạy automation worker
 --------------------------------------------------------------------------------
-if not _HIDE_UI then
+-- Keep the complete Fluent builder in its own function scope. Executors that use
+-- an older Luau compiler only allow 200 active locals per function; leaving this
+-- UI block in the main chunk makes compilation fail around formatMultiDefault.
+local function BuildFluentUI()
 
 -- ==============================================================================
 -- STATUS & SERVER LOGIC & HELPERS
@@ -5988,7 +6016,7 @@ local function ExportOneClickV4ConfigString()
     local cfg = getgenv().JoinV4Config or {}
 	local exportMode = getgenv().Mode == "CuttayV4" and "CuttayV4" or "OneClickV4"
     local lines = {
-        'repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("DataLoaded")',
+        'repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer',
         "",
         'getgenv().Mode = "' .. exportMode .. '"',
         "",
@@ -6162,7 +6190,11 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 
 Window:SelectTab(1)
 
-end -- end if not _HIDE_UI (section 6 UI building)
+end -- BuildFluentUI
+
+if not _HIDE_UI then
+    BuildFluentUI()
+end
 
 --------------------------------------------------------------------------------
 -- 7. WORKER LOOPS (Preserved and complete)
@@ -6181,12 +6213,13 @@ end)
 --------------------------------------------------------------------------------
 -- CUTTAY V4 MODE: race/resource/progression state machine
 --------------------------------------------------------------------------------
+;(function()
 local CUTTAY_NORMAL_RACES = { Human = true, Mink = true, Fishman = true, Skypiea = true }
 local CUTTAY_KNOWN_RACES = { Human = true, Mink = true, Fishman = true, Skypiea = true, Cyborg = true, Ghoul = true }
 local CUTTAY_BONE_MOBS = { "Reborn Skeleton", "Demonic Soul", "Living Zombie", "Posessed Mummy" }
 local cuttayBoneSpawnCursor = 0
 
-local function CuttayNormalizeRace(value)
+function CuttayNormalizeRace(value)
     local race = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
     local aliases = {
         shark = "Fishman", fishman = "Fishman", angel = "Skypiea", skypiea = "Skypiea",
@@ -6552,6 +6585,7 @@ if getgenv().Mode == "CuttayV4" then
         end
     end)
 end
+end)()
 
 -- Worker: Auto Click (Continuous Fast Attack for Melee / Sword)
 task.spawn(function()
