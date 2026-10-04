@@ -1560,50 +1560,91 @@ function SpecialHop(targetName)
         end)
 
         if ok and type(data) == "table" and type(data.servers) == "table" then
+            local MAX_AGE = 900
+
             local function ageSeconds(value)
-                local h, m, s = tostring(value or ""):match("^(%d+):(%d+):(%d+)$")
+                local h, m, s = tostring(value or ""):match("^%s*(%d+):(%d+):(%d+)%s*$")
                 return h and (tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)) or math.huge
             end
 
-            local candidates = {}
+            local validServers = {}
+            local hasExplicitMirageName = false
+            local hasAnyServerName = false
             for _, server in ipairs(data.servers) do
-                local jobId = tostring(server.jobid or server.jobId or server.JobId or "")
-                local placeId = tonumber(server.placeid or server.placeId or server.PlaceId)
-                local players = tonumber(server.players or server.Players)
-                if #jobId >= 10
-                    and jobId ~= tostring(game.JobId)
-                    and placeId == tonumber(game.PlaceId)
-                    and players and players > 0 and players < 12
-                    and not _hopTried[jobId]
+                if type(server) == "table" then
+                    local jobId = tostring(server.jobid or server.jobId or server.JobId or "")
+                    local placeId = tonumber(server.placeid or server.placeId or server.PlaceId)
+                    local players = tonumber(server.players or server.Players)
+                    local maxPlayers = tonumber(server.maxplayers or server.maxPlayers or server.MaxPlayers) or 12
+                    local sea = tonumber(server.sea or server.Sea)
+                    local age = ageSeconds(server.age or server.Age)
+                    local name = tostring(server.name or server.Name or ""):match("^%s*(.-)%s*$")
+                    local isExplicitMirage = name:lower() == "mirage"
+
+                    -- __ServerBrowser only accepts a JobId from the exact current
+                    -- PlaceId. `sea`, when supplied, must also identify Sea 3.
+                    local correctSea3Place = placeId == tonumber(game.PlaceId)
+                        and (sea == nil or sea == 3)
+                    local notFull = players ~= nil and maxPlayers > 0
+                        and players >= 0 and players < maxPlayers
+
+                    if #jobId >= 10
+                        and jobId ~= tostring(game.JobId)
+                        and correctSea3Place
+                        and notFull
+                        and age <= MAX_AGE
+                        and not _hopTried[jobId]
+                    then
+                        local parsed = {
+                            jobId = jobId,
+                            placeId = placeId,
+                            players = players,
+                            maxPlayers = maxPlayers,
+                            age = age,
+                            ageText = tostring(server.age or server.Age or "?"),
+                            name = name,
+                            isExplicitMirage = isExplicitMirage,
+                        }
+                        table.insert(validServers, parsed)
+                        if name ~= "" then
+                            hasAnyServerName = true
+                        end
+                        if isExplicitMirage then
+                            hasExplicitMirageName = true
+                        end
+                    end
+                end
+            end
+
+            local candidates = {}
+            for _, server in ipairs(validServers) do
+                -- Prefer the exact `Mirage` label whenever it exists. Only use
+                -- every valid row as fallback when the API provides no names.
+                if (hasExplicitMirageName and server.isExplicitMirage)
+                    or (not hasExplicitMirageName and not hasAnyServerName)
                 then
-                    table.insert(candidates, {
-                        jobId = jobId,
-                        placeId = placeId,
-                        players = players,
-                        age = ageSeconds(server.age),
-                        ageText = tostring(server.age or "?"),
-                    })
+                    table.insert(candidates, server)
                 end
             end
 
             table.sort(candidates, function(a, b)
-                if a.players ~= b.players then return a.players < b.players end
-                return a.age < b.age
+                if a.age ~= b.age then return a.age < b.age end
+                return a.players < b.players
             end)
 
             local chosen = candidates[1]
             if chosen then
                 _hopTried[chosen.jobId] = true
                 SetCuttayPullLeverStatusRuntime(string.format(
-                    "Mirage API candidate | PlaceId %s | %d players | joining via __ServerBrowser",
-                    tostring(chosen.placeId), chosen.players
+                    "Mirage API candidate | PlaceId %s | %d/%d | age %s | joining via __ServerBrowser",
+                    tostring(chosen.placeId), chosen.players, chosen.maxPlayers, chosen.ageText
                 ))
                 pcall(function()
                     uiLibrary.CreateNoti({
                         Title = "Skider Hub V4",
                         Desc = string.format(
-                            "Mirage API: Place %s | %d player | age %s",
-                            tostring(chosen.placeId), chosen.players, chosen.ageText
+                            "Mirage API: Place %s | %d/%d | age %s",
+                            tostring(chosen.placeId), chosen.players, chosen.maxPlayers, chosen.ageText
                         ),
                         ShowTime = 4,
                     })
@@ -1612,10 +1653,12 @@ function SpecialHop(targetName)
                 releaseHopLock()
                 if teleported then return true end
             else
-                SetCuttayPullLeverStatusRuntime("Mirage API has no server for current PlaceId; fallback server hop")
+                SetCuttayPullLeverStatusRuntime(
+                    "Mirage API has no non-full server <=15m for current PlaceId; fallback server hop"
+                )
             end
         else
-            SetCuttayPullLeverStatusRuntime("Mirage API unavailable; fallback server hop")
+            SetCuttayPullLeverStatusRuntime("Mirage API invalid/unavailable (expected servers[]); fallback server hop")
         end
 
         getgenv().MirageApiHopBusy = false
@@ -4131,7 +4174,7 @@ local function PullLeverV4Legacy()
 	end
 end
 
-local MIRAGE_MAP_LOAD_GRACE = 30
+local MIRAGE_MAP_LOAD_GRACE = 5
 local cuttayMirageCheckJobId = tostring(game.JobId)
 local cuttayMirageCheckStartedAt = tick()
 
