@@ -4124,10 +4124,12 @@ function PullLeverV4()
 				fireproximityprompt(lever.Prompt.ProximityPrompt, 1)
 			end
 		else
+			getgenv().CuttayLeverPulledVerified = true
 			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Done Pull Lever", ShowTime = 5 })
-			task.wait(5)
+			return true
 		end
 	end
+	return false
 end
 
 function DetectNameMulti(player)
@@ -6818,10 +6820,19 @@ end
 
 local function CuttayIsLeverPulled()
     if localPlayer.Character and localPlayer.Character:FindFirstChild("RaceTransformed") then return true end
-    local ok, progress = pcall(function()
-        return ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
-    end)
-    return ok and tonumber(progress) and tonumber(progress) >= 4
+    if getgenv().CuttayLeverPulledVerified == true then return true end
+
+	-- RaceV4Progress is Ancient One quest progress, NOT lever state. The old
+	-- `progress >= 4` check skipped PullLeverV4 entirely for fresh V3 accounts.
+	-- Only accept physical lever position as proof that it has been pulled.
+	local temple = GetTempleOfTime()
+	local leverModel = temple and temple:FindFirstChild("Lever")
+	local leverPart = leverModel and (leverModel:FindFirstChild("Lever") or leverModel:FindFirstChild("Part"))
+	if leverPart and math.abs(leverPart.CFrame.Z - leverTargetCFrame.Z) <= count12 then
+		getgenv().CuttayLeverPulledVerified = true
+		return true
+	end
+	return false
 end
 
 local function CuttaySetV4ProgressStatus()
@@ -6994,9 +7005,23 @@ local function CuttayRunStep()
     end
 
     getgenv().CuttayResourceFarmActive = false
+
+	-- V3 is completed in Sea 2. Move to Sea 3 before reading Temple/lever/V4
+	-- state; Ancient One responses outside Sea 3 can otherwise mask this gate.
+	if not GoToSea(getgenv().CheckPlaceId) then
+		CuttaySetStatus("TRAVEL_SEA3", "V3 complete: traveling to Sea 3 to check / pull lever")
+		return
+	end
+
     if not CuttayIsLeverPulled() then
-        CuttaySetStatus("PULL_LEVER", "Prepare for upgrading V4: tween Temple / pull lever")
-        if GoToSea(getgenv().CheckPlaceId) then pcall(PullLeverV4) end
+        CuttaySetStatus("PULL_LEVER", "V3 complete: checking Temple lever before Ancient One")
+		local pullOk, pulled = pcall(PullLeverV4)
+		if pullOk and pulled == true then
+			getgenv().CuttayLeverPulledVerified = true
+			CuttaySetStatus("PULL_LEVER", "Temple lever pulled successfully")
+		elseif not pullOk then
+			CuttaySetStatus("ERROR", "Pull lever error: " .. tostring(pulled))
+		end
         return
     end
 
