@@ -1827,6 +1827,27 @@ function CheckNameBoss(name)
     return nil
 end
 
+-- Human V3 needs two different boss lookups:
+--   * Workspace.Enemies = the live boss that can be attacked.
+--   * ReplicatedStorage = the boss template whose root marks its spawn area.
+-- bnn.lua follows the template while waiting. Treating the template as merely
+-- "not spawned" and standing still can leave Human V3 stuck forever.
+local function FindLiveBoss(name)
+    local enemies = Workspace:FindFirstChild("Enemies")
+    if not enemies then return nil end
+    for _, boss in ipairs(enemies:GetChildren()) do
+        if boss.Name == name and IsMobAlive(boss) then return boss end
+    end
+    return nil
+end
+
+local function FindBossTemplate(name)
+    for _, boss in ipairs(ReplicatedStorage:GetChildren()) do
+        if boss.Name == name and boss:FindFirstChild("HumanoidRootPart") then return boss end
+    end
+    return nil
+end
+
 function DetectPartSpawnMob(name, skipIgnored)
     local function clean(value)
         return value:gsub(" %p?Lv%.? %d+%p?", "")
@@ -2902,11 +2923,26 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     return humanoid == nil or humanoid.Health <= 0
 end
 
+local humanV3WaitBoss
+local humanV3WaitSince = 0
+local HUMAN_V3_BOSS_SPAWNS = {
+    Jeremy = CFrame.new(2316.0397949219, 448.95474243164, 767.72882080078),
+    Diamond = CFrame.new(-1713.5589599609375, 198.99554443359375, -104.31584167480469),
+    Orbitus = CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375),
+    Fajita = CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375),
+}
+
+local function ResetHumanV3BossWait()
+    humanV3WaitBoss = nil
+    humanV3WaitSince = 0
+end
+
 function UpgradeRaceV2AndV3()
     local raceStage = CheckRace()
     local race = tostring(localPlayer.Data.Race.Value)
 
     if raceStage == " V3" or raceStage == " V4" then
+        ResetHumanV3BossWait()
         SetRaceUpgradeStatus(race .. " already has V3/V4", true)
         return true
     end
@@ -3007,8 +3043,11 @@ function UpgradeRaceV2AndV3()
             bossName = "Jeremy"
         end
         SetRaceUpgradeStatus("Human V3: defeating " .. bossName)
-        local boss = CheckNameBoss(bossName)
-        if boss and boss.Parent == Workspace.Enemies then
+        local boss = FindLiveBoss(bossName)
+        -- Some game versions still expose Fajita for the Orbitus objective.
+        if not boss and bossName == "Orbitus" then boss = FindLiveBoss("Fajita") end
+        if boss then
+            ResetHumanV3BossWait()
             repeat
                 task.wait()
                 SizePart(boss)
@@ -3020,7 +3059,29 @@ function UpgradeRaceV2AndV3()
             until not IsMobAlive(boss) or not Settings["Auto Upgrade Race V2-V3"]
             if not table.find(BlBossHuman, bossName) then table.insert(BlBossHuman, bossName) end
         else
-            SetRaceUpgradeStatus("Human V3: waiting for " .. bossName .. " to spawn")
+            if humanV3WaitBoss ~= bossName then
+                humanV3WaitBoss = bossName
+                humanV3WaitSince = tick()
+            end
+
+            local template = FindBossTemplate(bossName)
+            if not template and bossName == "Orbitus" then template = FindBossTemplate("Fajita") end
+            local spawnCF = template and template.HumanoidRootPart.CFrame or HUMAN_V3_BOSS_SPAWNS[bossName]
+            if spawnCF then ToTarget(spawnCF * CFrame.new(0, 20, 0)) end
+
+            local waited = tick() - humanV3WaitSince
+            SetRaceUpgradeStatus(
+                ("Human V3: waiting for %s at spawn (%ds)"):format(bossName, math.floor(waited))
+            )
+
+            -- Jeremy/Diamond/Orbitus should not keep this worker idle forever.
+            -- Give the current server a full spawn window, then move to another.
+            if waited >= 18 * 60 then
+                ResetHumanV3BossWait()
+                SetRaceUpgradeStatus("Human V3: boss spawn timed out, changing server", true)
+                HopServer()
+                task.wait(5)
+            end
         end
     elseif race == "Mink" then
         SetRaceUpgradeStatus("Mink V3: collecting chests")
