@@ -815,7 +815,8 @@ local bnnBringTarget, bnnBringAnchor
 function BringMob(target)
     if not Settings["Bring Mob"] or getgenv().NoBringMob or not IsMobAlive(target) then return end
     -- Rate limit: không bring liên tục mỗi frame
-    if tick() - (getgenv().LastBringTick or 0) < 0.35 then return end
+    local bringDelay = getgenv().GhoulTrialBring and 1.25 or 0.35
+    if tick() - (getgenv().LastBringTick or 0) < bringDelay then return end
     getgenv().LastBringTick = tick()
     local character = localPlayer.Character
     local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
@@ -844,6 +845,9 @@ function BringMob(target)
     if not target:FindFirstChild("Ignored") then table.insert(selected, target) end
     local requestedCount = math.clamp(tonumber(Settings["Bring Mob Count"]) or 2, 1, 5)
     local radius, maximum = requestedCount > 2 and 350 or 200, requestedCount
+    if getgenv().GhoulTrialBring then
+        radius, maximum = 100, 2
+    end
     local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
     local transformed = character:FindFirstChild("RaceTransformed")
     if race and race.Value == "Cyborg" and transformed and transformed.Value then radius, maximum = 300, 6 end
@@ -1386,6 +1390,76 @@ function HopLessAll()
 end
 
 function SpecialHop(targetName)
+    if tostring(targetName):lower():find("mirage", 1, true) then
+        if getgenv().MirageApiHopBusy then return end
+        getgenv().MirageApiHopBusy = true
+
+        local function releaseHopLock()
+            task.delay(8, function()
+                getgenv().MirageApiHopBusy = false
+            end)
+        end
+
+        local ok, data = pcall(function()
+            local body = game:HttpGet("https://apiibf.kurinian-hub.xyz/api/bloxfruit/mirage")
+            return HttpService:JSONDecode(body)
+        end)
+
+        if ok and type(data) == "table" and type(data.servers) == "table" then
+            local function ageSeconds(value)
+                local h, m, s = tostring(value or ""):match("^(%d+):(%d+):(%d+)$")
+                return h and (tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)) or math.huge
+            end
+
+            local candidates = {}
+            for _, server in ipairs(data.servers) do
+                local jobId = tostring(server.jobid or "")
+                local placeId = tonumber(server.placeid)
+                local players = tonumber(server.players)
+                if jobId ~= ""
+                    and jobId ~= tostring(game.JobId)
+                    and placeId
+                    and tonumber(server.sea) == 3
+                    and players and players > 0 and players < 12
+                    and not _hopTried[jobId]
+                then
+                    table.insert(candidates, {
+                        jobId = jobId,
+                        placeId = placeId,
+                        players = players,
+                        age = ageSeconds(server.age),
+                        ageText = tostring(server.age or "?"),
+                    })
+                end
+            end
+
+            table.sort(candidates, function(a, b)
+                if a.players ~= b.players then return a.players < b.players end
+                return a.age < b.age
+            end)
+
+            local chosen = candidates[1]
+            if chosen then
+                _hopTried[chosen.jobId] = true
+                pcall(function()
+                    uiLibrary.CreateNoti({
+                        Title = "Skider Hub V4",
+                        Desc = string.format("Mirage API: %d player | age %s", chosen.players, chosen.ageText),
+                        ShowTime = 4,
+                    })
+                end)
+                local teleported = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(chosen.placeId, chosen.jobId, localPlayer)
+                end)
+                releaseHopLock()
+                if teleported then return true end
+            end
+        end
+
+        getgenv().MirageApiHopBusy = false
+        HopServer()
+        return false
+    end
     HopServer()
 end
 
@@ -2373,8 +2447,8 @@ function CheckPlayercantAttack(player)
 end
 
 function UpgradeRaceV2AndV3()
-	local value7 = CheckRace()
-	if value7 == " V3" then
+	local raceStage = CheckRace()
+	if raceStage == " V3" or raceStage == " V4" then
 		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Done V3", ShowTime = 5 })
 		wait(5)
 		return
@@ -2382,7 +2456,7 @@ function UpgradeRaceV2AndV3()
 	if not GoToSea(getgenv().CheckPlaceId2) then
 		return
 	end
-	if value7 == " V1" then
+	if raceStage == " V1" then
 		if localPlayer.Data.Beli.Value < 500000 then
 			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Beli >= 500k", ShowTime = 5 })
 			wait(5)
@@ -2392,12 +2466,36 @@ function UpgradeRaceV2AndV3()
 		if alchemistStep == 0 then
 			ReplicatedStorage.Remotes.CommF_:InvokeServer("Alchemist", "2")
 		elseif alchemistStep == 1 then
-			if not DetectItemPlr("Flower 1") and Workspace:FindFirstChild("Flower1") then
-				ToTarget(Workspace.Flower1.CFrame)
-			elseif not DetectItemPlr("Flower 2") and Workspace:FindFirstChild("Flower2") then
-				ToTarget(Workspace.Flower2.CFrame)
+			if not DetectItemPlr("Flower 1") then
+				local flower = Workspace:FindFirstChild("Flower1")
+				if flower then ToTarget(flower.CFrame) end
+			elseif not DetectItemPlr("Flower 2") then
+				local flower = Workspace:FindFirstChild("Flower2")
+				if flower then ToTarget(flower.CFrame) end
 			elseif not DetectItemPlr("Flower 3") then
-				KillMonster("Swan Pirate", CFrame.new(932.624451, 156.106079, 1180.27466))
+				local swan = DetectMob("Swan Pirate")
+				if swan then
+					repeat
+						task.wait()
+						SizePart(swan)
+						BringMob(swan)
+						UsedualFlock()
+						ClickM1(swan)
+						local offset = Settings["Select Weapon"] == "Blox Fruit"
+							and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+						ToTarget(swan.HumanoidRootPart.CFrame * offset)
+					until not IsMobAlive(swan)
+						or DetectItemPlr("Flower 3")
+						or not Settings["Auto Upgrade Race V2-V3"]
+				else
+					local spawnPart = DetectPartSpawnMob("Swan Pirate", true)
+					if spawnPart then
+						ToTarget(spawnPart.CFrame * CFrame.new(0, 60, 0))
+					else
+						DeleteIgnoredMobSpawn()
+						ToTarget(CFrame.new(932.624451, 156.106079, 1180.27466))
+					end
+				end
 			end
 		elseif alchemistStep == 2 then
 			if localPlayer:DistanceFromCharacter(Vector3.new(-2777.6001, 72.9661407, -3571.42285)) > 8 then
@@ -2421,20 +2519,23 @@ function UpgradeRaceV2AndV3()
 			wait(5)
 			return
 		end
-		remoteResult2 = localPlayer.Data.Race.Value .. value7
+		remoteResult2 = localPlayer.Data.Race.Value .. raceStage
 		if remoteResult2 == "Human V2" then
-			if not table.find(BlBossHuman, "Jeremy") then
-				if KillMonster("Jeremy", CFrame.new(2333.209228515625, 449.2427062988281, 699.5128784179688)) then
-					table.insert(BlBossHuman, "Jeremy")
-				end
-			elseif not table.find(BlBossHuman, "Diamond") then
-				if KillMonster("Diamond", CFrame.new(-1713.5589599609375, 198.99554443359375, -104.31584167480469)) then
-					table.insert(BlBossHuman, "Diamond")
-				end
-			elseif not table.find(BlBossHuman, "Orbitus") then
-				if KillMonster("Orbitus", CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375)) or KillMonster("Fajita", CFrame.new(-2148.7568359375, 73.27831268310547, -4304.4130859375)) then
-					table.insert(BlBossHuman, "Orbitus")
-				end
+			local bossName = not table.find(BlBossHuman, "Jeremy") and "Jeremy"
+				or not table.find(BlBossHuman, "Orbitus") and "Orbitus"
+				or not table.find(BlBossHuman, "Diamond") and "Diamond"
+			local boss = bossName and CheckNameBoss(bossName)
+			if boss then
+				repeat
+					task.wait()
+					SizePart(boss)
+					UsedualFlock()
+					ClickM1(boss)
+					local offset = Settings["Select Weapon"] == "Blox Fruit"
+						and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+					ToTarget(boss.HumanoidRootPart.CFrame * offset)
+				until not IsMobAlive(boss) or not Settings["Auto Upgrade Race V2-V3"]
+				if not table.find(BlBossHuman, bossName) then table.insert(BlBossHuman, bossName) end
 			else
 				uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Waiting Boss Spawn", ShowTime = 5 })
 				wait(5)
@@ -2443,16 +2544,8 @@ function UpgradeRaceV2AndV3()
 			AutoMinkV2()
 		elseif remoteResult2 == "Cyborg V2" then
 			if not CheckFruitplr() then
-				if TakeFruitInventory(true) then
-					ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadFruit", TakeFruitInventory(true))
-				end
-			else
-				local aroweCFrame = CFrame.new(288.7, 287.3, -2430.4)
-				if localPlayer:DistanceFromCharacter(aroweCFrame.Position) > 10 then
-					ToTarget(aroweCFrame)
-				else
-					ReplicatedStorage.Remotes.CommF_:InvokeServer("Wenlocktoad", "2")
-				end
+				local fruitName = TakeFruitInventory(true)
+				if fruitName then ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadFruit", fruitName) end
 			end
 		elseif remoteResult2 == "Fishman V2" then
 			AutoFishV2()
@@ -2548,6 +2641,75 @@ function BuyChipLaw()
 end
 
 local count11, enabled5, enabled6 = 0, false, false
+local cyborgStateFile = configFolder .. "/" .. username .. "-cyborg.txt"
+local cyborgStateMemory = "NaN"
+local CYBORG_MIN_SERVER_AGE = 4 * 60 * 60
+local CYBORG_MAX_CHESTS = 55
+
+local function IsCyborgChestServerOldEnough()
+	local origin = Workspace:FindFirstChild("_WorldOrigin")
+	local locations = origin and origin:FindFirstChild("Locations")
+	if not locations then return false end
+	local ok, serverNow = pcall(function() return Workspace:GetServerTimeNow() end)
+	serverNow = ok and tonumber(serverNow) or os.time()
+	local oldestTimeIn
+	for _, object in ipairs(locations:GetDescendants()) do
+		local timeIn = tonumber(object:GetAttribute("TimeIn"))
+		if timeIn and timeIn >= 1400000000 and timeIn <= serverNow + 60 then
+			oldestTimeIn = not oldestTimeIn and timeIn or math.min(oldestTimeIn, timeIn)
+		end
+	end
+	return oldestTimeIn ~= nil and serverNow - oldestTimeIn >= CYBORG_MIN_SERVER_AGE
+end
+
+local function HopForCyborgChest()
+	if getgenv().DelayHop then return end
+	getgenv().DelayHop = true
+	HopLessAll()
+	task.delay(8, function() getgenv().DelayHop = false end)
+end
+
+local function ReadCyborgState()
+	if isfile and readfile and isfile(cyborgStateFile) then
+		local ok, value = pcall(readfile, cyborgStateFile)
+		if ok and (value == "NaN" or value == "chest" or value == "unlock") then
+			cyborgStateMemory = value
+		end
+	end
+	return cyborgStateMemory
+end
+
+local function WriteCyborgState(value)
+	cyborgStateMemory = value
+	if writefile then
+		pcall(function()
+			if makefolder and isfolder and not isfolder(configFolder) then makefolder(configFolder) end
+			writefile(cyborgStateFile, value)
+		end)
+	end
+end
+
+local cyborgNotificationHooked = false
+local function HookCyborgNotifications()
+	if cyborgNotificationHooked then return end
+	cyborgNotificationHooked = true
+	pcall(function()
+		local oldNotification
+		oldNotification = hookfunction(require(ReplicatedStorage.Notification).new, newcclosure(function(...)
+			local message = ({ ... })[1]
+			if typeof(message) == "string" then
+				local lower = message:lower()
+				if lower:find("supply a <core brain>", 1, true) or lower:find("<fist of darkness> has been", 1, true) then
+					WriteCyborgState("unlock")
+				elseif lower:find("microchip not found", 1, true) then
+					WriteCyborgState("chest")
+				end
+			end
+			return oldNotification(...)
+		end))
+	end)
+end
+
 function DetectkeyCyborg(keyName)
 	if not localPlayer.PlayerGui:FindFirstChild("Notifications") then return false end
 	local iterator2, state2, initialKey2 =
@@ -2564,19 +2726,37 @@ end
 local ToggleAutoGetFullyCyborg
 
 function GetCyborg()
-	if ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Check") == 2 then
-		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Plz Turn Off", ShowTime = 5 })
-		wait(5)
+	HookCyborgNotifications()
+	local trainerState = ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Check")
+	if trainerState == 2 then
+		if Settings["Auto Get Fully Cyborg"] and not Settings["Auto Upgrade Race V2-V3"] then
+			UpgradeRaceV2AndV3()
+		end
 		return
 	end
 	if not GoToSea(getgenv().CheckPlaceId2) then
 		return
 	end
-	if ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Check") then
+	if trainerState then
 		ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Buy")
 		return
 	end
-	if not enabled6 and not DetectItemPlr("Core Brain") then
+
+	local savedState = ReadCyborgState()
+	if DetectItemPlr("Core Brain") then
+		savedState = "unlock"
+		WriteCyborgState(savedState)
+	elseif DetectkeyCyborg("{color1_Red}Microchip not found.{color1_/}") then
+		savedState = "chest"
+		WriteCyborgState(savedState)
+	elseif DetectkeyCyborg("{color1_Green}Please supply a {item1} to continue.{color1_/}") then
+		savedState = "unlock"
+		WriteCyborgState(savedState)
+	end
+	enabled5 = savedState == "unlock"
+
+	if savedState == "NaN" and not enabled6 and not DetectItemPlr("Core Brain") then
+		local detectStarted = tick()
 		repeat
 			wait(1)
 			if Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CircleIsland") and Workspace.Map.CircleIsland:FindFirstChild("RaidSummon") then
@@ -2584,32 +2764,29 @@ function GetCyborg()
 			end
 		until DetectkeyCyborg("{color1_Green}Please supply a {item1} to continue.{color1_/}")
 			or (DetectkeyCyborg("{color1_Red}Microchip not found.{color1_/}"))
+			or tick() - detectStarted >= 15
+			or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 		local callback18 = DetectkeyCyborg
 		if callback18("{color1_Red}Microchip not found.{color1_/}") then
 			enabled5 = false
+			WriteCyborgState("chest")
 		else
 			local callback19 = DetectkeyCyborg
 			if callback19("{color1_Green}Please supply a {item1} to continue.{color1_/}") then
 				enabled5 = true
+				WriteCyborgState("unlock")
 			end
 		end
-		enabled6 = true
+		enabled6 = ReadCyborgState() ~= "NaN"
 	end
 	if Settings["Auto Get Fully Cyborg"] and not CheckNameBoss("Order") and not enabled5 then
 		if not DetectItemPlr("Fist of Darkness") then
-			if count11 >= 20 and Settings["Auto Get Cyborg Hop Collect Chest"] then
-				if not getgenv().DelayHop then
-					task.delay(5, function()
-						getgenv().DelayHop = true
-						spawn(function()
-							HopLessAll()
-						end)
-						spawn(function()
-							HopServer()
-						end)
-						getgenv().DelayHop = false
-					end)
-				end
+			if Settings["Auto Get Cyborg Hop Collect Chest"] and not IsCyborgChestServerOldEnough() then
+				HopForCyborgChest()
+				return
+			end
+			if count11 >= CYBORG_MAX_CHESTS and Settings["Auto Get Cyborg Hop Collect Chest"] then
+				HopForCyborgChest()
 				return
 			end
 			local part2 = GetNearestChest()
@@ -2635,7 +2812,7 @@ function GetCyborg()
 					ToTarget(part2.CFrame, true)
 				until not part2
 					or not part2.Parent
-					or not Settings["Auto Get Cyborg"]
+					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 					or (part2:GetAttribute("IsDisabled"))
 					or (part2:FindFirstChild("Ignored"))
 					or not part2:FindFirstChild("TouchInterest")
@@ -2660,6 +2837,9 @@ function GetCyborg()
 			end
 		else
 			wait(1)
+			local fist = localPlayer.Backpack:FindFirstChild("Fist of Darkness")
+			local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if fist and humanoid then humanoid:EquipTool(fist) end
 			repeat
 				wait()
 				if Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CircleIsland") and Workspace.Map.CircleIsland:FindFirstChild("RaidSummon") then
@@ -2667,18 +2847,20 @@ function GetCyborg()
 				end
 			until not DetectItemPlr("Fist of Darkness")
 			wait(0.5)
-			if ToggleAutoGetFullyCyborg then
-				ToggleAutoGetFullyCyborg:SetValue(false)
-			end
 			enabled5 = true
+			WriteCyborgState("unlock")
 		end
 		return
 	end
 	if enabled5 then
 		if DetectItemPlr("Core Brain") then
+			local brain = localPlayer.Backpack:FindFirstChild("Core Brain")
+			local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if brain and humanoid then humanoid:EquipTool(brain) end
 			if Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CircleIsland") and Workspace.Map.CircleIsland:FindFirstChild("RaidSummon") then
 				fireclickdetector(Workspace.Map.CircleIsland.RaidSummon.Button.Main.ClickDetector)
 			end
+			WriteCyborgState("unlock")
 			return
 		end
 		local character3 = CheckNameBoss("Order")
@@ -2693,7 +2875,8 @@ function GetCyborg()
 				else
 					ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
 				end
-			until not IsMobAlive(character3) or not Settings["Auto Get Cyborg"]
+			until not IsMobAlive(character3)
+				or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 		elseif not DetectItemPlr("Microchip") and localPlayer.Data.Fragments.Value >= 1000 then
 			BuyChipLaw()
 			wait(2)
@@ -4254,10 +4437,12 @@ local function RunGhoulTrial()
 	local trial = locations and locations:FindFirstChild("Trial of Carnage")
 	if not trial then return end
 
-	-- Tắt BringMob hoàn toàn trong trial (flag toàn cục, worker khác cũng bị chặn)
+	-- Trial Ghoul chỉ gom tối đa 2 mob, bán kính nhỏ và rate-limit riêng để tránh lag.
+	-- NoBringMob vẫn chặn các worker farm khác; chỉ lời gọi cục bộ dưới đây được phép chạy.
 	getgenv().NoBringMob = true
+	getgenv().GhoulTrialBring = true
 	local prevBringMob = Settings["Bring Mob"]
-	Settings["Bring Mob"] = false
+	Settings["Bring Mob"] = true
 
 	-- Outer loop: t\u00ecm mob m\u1edbi khi mob c\u0169 ch\u1ebft (gi\u1ed1ng bnn.lua)
 	pcall(function()
@@ -4269,6 +4454,9 @@ local function RunGhoulTrial()
 			repeat
 				task.wait()
 				SizePart(mob)
+				getgenv().NoBringMob = false
+				BringMob(mob)
+				getgenv().NoBringMob = true
 				local offset = Settings["Select Weapon"] == "Blox Fruit"
 					and CFrame.new(-7, 20, 0)
 					or  CFrame.new(7, 20, 0)
@@ -4286,6 +4474,7 @@ local function RunGhoulTrial()
 
 	-- Khôi phục BringMob sau khi trial xong
 	getgenv().NoBringMob = false
+	getgenv().GhoulTrialBring = false
 	Settings["Bring Mob"] = prevBringMob
 end
 
@@ -5625,18 +5814,32 @@ end)
 
 -- Worker 1: Auto Upgrade Race V2-V3
 task.spawn(function()
+    local lastError
     while task.wait(0.1) do
         if Settings["Auto Upgrade Race V2-V3"] then
-            pcall(UpgradeRaceV2AndV3)
+            local ok, err = pcall(UpgradeRaceV2AndV3)
+            if not ok and tostring(err) ~= lastError then
+                lastError = tostring(err)
+                warn("[Auto Upgrade Race V2-V3] " .. lastError)
+            elseif ok then
+                lastError = nil
+            end
         end
     end
 end)
 
 -- Worker 2: Auto Get Cyborg
 task.spawn(function()
+    local lastError
     while task.wait(0.2) do
         if Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"] then
-            pcall(GetCyborg)
+            local ok, err = pcall(GetCyborg)
+            if not ok and tostring(err) ~= lastError then
+                lastError = tostring(err)
+                warn("[Auto Get Cyborg] " .. lastError)
+            elseif ok then
+                lastError = nil
+            end
         end
     end
 end)
