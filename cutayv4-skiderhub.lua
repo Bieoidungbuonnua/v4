@@ -1390,7 +1390,16 @@ local function getServerBrowser()
     return sb
 end
 
-local function teleportViaServerBrowser(jobId)
+local function teleportViaServerBrowser(jobId, placeId)
+    if placeId ~= nil and tonumber(placeId) ~= tonumber(game.PlaceId) then
+        warn(string.format(
+            "[ServerBrowser] Blocked cross-place JobId %s: target=%s current=%s",
+            tostring(jobId), tostring(placeId), tostring(game.PlaceId)
+        ))
+        return false
+    end
+    jobId = tostring(jobId or "")
+    if #jobId < 10 or jobId == tostring(game.JobId) then return false end
     local sb = getServerBrowser()
     if sb then
         local ok = pcall(function()
@@ -1436,6 +1445,36 @@ local function getOpenServers(maxPlayers)
         end
     end
 
+    -- Keep API discovery as a fallback, but query only the exact current PlaceId.
+    -- Joining still goes through __ServerBrowser below in HopServer.
+    if #serverList == 0 then
+        pcall(function()
+            local url = string.format(
+                "https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true",
+                tostring(game.PlaceId)
+            )
+            local req = game:HttpGet(url)
+            if req and req ~= "" then
+                local body = HttpService:JSONDecode(req)
+                if body and type(body.data) == "table" then
+                    for _, server in ipairs(body.data) do
+                        local id = tostring(server.id or "")
+                        local players = tonumber(server.playing) or 0
+                        local capacity = tonumber(server.maxPlayers) or 12
+                        if #id >= 10 and id ~= tostring(game.JobId) and not _hopTried[id]
+                            and players < capacity and players <= maxPlayers then
+                            table.insert(serverList, {
+                                id = id,
+                                count = players,
+                                placeId = tonumber(game.PlaceId),
+                            })
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
     return serverList
 end
 
@@ -1466,7 +1505,7 @@ function HopServer()
                     })
                 end
             end)
-            teleportViaServerBrowser(chosen.id)
+            teleportViaServerBrowser(chosen.id, chosen.placeId)
             return true
         else
             -- Nếu đã thử hết server trong danh sách thì xóa tried để tìm lại
@@ -1485,7 +1524,7 @@ function HopServer()
                         })
                     end
                 end)
-                teleportViaServerBrowser(chosen.id)
+                teleportViaServerBrowser(chosen.id, chosen.placeId)
                 return true
             end
         end
@@ -1496,10 +1535,92 @@ function HopLessAll()
     HopServer()
 end
 
+local function SetCuttayPullLeverStatusRuntime(text)
+    text = tostring(text or "working")
+    getgenv().CuttayPullLeverStatus = text
+    if getgenv().Mode == "CuttayV4" then
+        getgenv().CuttayV4Phase = "PULL_LEVER"
+        getgenv().CuttayV4Status = "Pull Lever: " .. text
+    end
+end
+
 function SpecialHop(targetName)
-    -- Pull-lever/Mirage hopping must stay inside the exact current place.
-    -- All candidates now come from the game's own __ServerBrowser and all joins
-    -- go through __ServerBrowser("teleport", jobId); no external API/TeleportService.
+    if tostring(targetName):lower():find("mirage", 1, true) then
+        if getgenv().MirageApiHopBusy then return false end
+        getgenv().MirageApiHopBusy = true
+
+        local function releaseHopLock()
+            task.delay(8, function() getgenv().MirageApiHopBusy = false end)
+        end
+
+        SetCuttayPullLeverStatusRuntime("fetching Mirage API for PlaceId " .. tostring(game.PlaceId))
+        local ok, data = pcall(function()
+            local body = game:HttpGet("https://apiibf.kurinian-hub.xyz/api/bloxfruit/mirage")
+            return HttpService:JSONDecode(body)
+        end)
+
+        if ok and type(data) == "table" and type(data.servers) == "table" then
+            local function ageSeconds(value)
+                local h, m, s = tostring(value or ""):match("^(%d+):(%d+):(%d+)$")
+                return h and (tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)) or math.huge
+            end
+
+            local candidates = {}
+            for _, server in ipairs(data.servers) do
+                local jobId = tostring(server.jobid or server.jobId or server.JobId or "")
+                local placeId = tonumber(server.placeid or server.placeId or server.PlaceId)
+                local players = tonumber(server.players or server.Players)
+                if #jobId >= 10
+                    and jobId ~= tostring(game.JobId)
+                    and placeId == tonumber(game.PlaceId)
+                    and players and players > 0 and players < 12
+                    and not _hopTried[jobId]
+                then
+                    table.insert(candidates, {
+                        jobId = jobId,
+                        placeId = placeId,
+                        players = players,
+                        age = ageSeconds(server.age),
+                        ageText = tostring(server.age or "?"),
+                    })
+                end
+            end
+
+            table.sort(candidates, function(a, b)
+                if a.players ~= b.players then return a.players < b.players end
+                return a.age < b.age
+            end)
+
+            local chosen = candidates[1]
+            if chosen then
+                _hopTried[chosen.jobId] = true
+                SetCuttayPullLeverStatusRuntime(string.format(
+                    "Mirage found | PlaceId %s | %d players | joining via __ServerBrowser",
+                    tostring(chosen.placeId), chosen.players
+                ))
+                pcall(function()
+                    uiLibrary.CreateNoti({
+                        Title = "Skider Hub V4",
+                        Desc = string.format(
+                            "Mirage API: Place %s | %d player | age %s",
+                            tostring(chosen.placeId), chosen.players, chosen.ageText
+                        ),
+                        ShowTime = 4,
+                    })
+                end)
+                local teleported = teleportViaServerBrowser(chosen.jobId, chosen.placeId)
+                releaseHopLock()
+                if teleported then return true end
+            else
+                SetCuttayPullLeverStatusRuntime("Mirage API has no server for current PlaceId; fallback server hop")
+            end
+        else
+            SetCuttayPullLeverStatusRuntime("Mirage API unavailable; fallback server hop")
+        end
+
+        getgenv().MirageApiHopBusy = false
+        return HopServer()
+    end
     return HopServer()
 end
 
@@ -3991,6 +4112,7 @@ end
 
 function PullLeverV4()
 	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
+		SetCuttayPullLeverStatusRuntime("missing Valkyrie Helm or Mirror Fractal")
 		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
 		task.wait(5)
 		return
@@ -4000,21 +4122,26 @@ function PullLeverV4()
 	if not doorUnlocked then
 		local progress = ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Check")
 		if progress == 1 then
+			SetCuttayPullLeverStatusRuntime("Ancient One: begin V4 quest")
 			ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Begin")
 			return
 		elseif progress == 2 then
+			SetCuttayPullLeverStatusRuntime("Ancient One: teleporting to Temple of Time")
 			-- Exception requested by the user: retain the original Fluent Temple teleport engine.
 			TeleportTempleOfTime()
 			return
 		elseif progress == 3 then
+			SetCuttayPullLeverStatusRuntime("Ancient One: continue V4 quest")
 			ReplicatedStorage.Remotes.CommF_:InvokeServer("RaceV4Progress", "Continue")
 			return
 		end
 
 		local mysticIsland = Workspace.Map:FindFirstChild("MysticIsland")
 		if mysticIsland and CheckClockTime() == "Night" then
+			SetCuttayPullLeverStatusRuntime("Mirage found: collecting Blue Gear")
 			CollectBlueGear()
 		elseif mysticIsland and CheckClockTime() ~= "Night" then
+			SetCuttayPullLeverStatusRuntime("Mirage found: waiting for night / moon resonance")
 			if not GetHighestPoint() then
 				local dealer = DetectNpc("Advanced Fruit Dealer")
 				if dealer then
@@ -4029,11 +4156,13 @@ function PullLeverV4()
 			end
         elseif not mysticIsland
             and (Settings["Hop Server [Trial Or Pull Lever]"] or getgenv().Mode == "CuttayV4") then
+			SetCuttayPullLeverStatusRuntime("searching Mirage server")
 			SpecialHop("Mirage")
 		end
 	else
 		local temple = GetTempleOfTime()
 		if not IsInTempleOfTime() then
+			SetCuttayPullLeverStatusRuntime("Temple Door unlocked: entering Temple of Time")
 			TeleportTempleOfTime()
 			return
 		end
@@ -4041,12 +4170,15 @@ function PullLeverV4()
 		local lever = temple.Lever
 		if lever.Lever.CFrame.Z > leverTargetCFrame.Z + count12 or lever.Lever.CFrame.Z < leverTargetCFrame.Z - count12 then
 			if (localPlayer.Character.HumanoidRootPart.Position - lever.Part.Position).Magnitude > 10 then
+				SetCuttayPullLeverStatusRuntime("tweening to Temple lever")
 				ToTarget(lever.Part.CFrame)
 			else
+				SetCuttayPullLeverStatusRuntime("activating Temple lever")
 				fireproximityprompt(lever.Prompt.ProximityPrompt, 1)
 			end
 		else
 			getgenv().CuttayLeverPulledVerified = true
+			SetCuttayPullLeverStatusRuntime("completed")
 			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Done Pull Lever", ShowTime = 5 })
 			return true
 		end
@@ -4788,7 +4920,7 @@ do
             local target = chosen.id
             _hopTried[target] = true
             setStatus(string.format("Hop random -> %s...", target:sub(1, 8)))
-            return teleportViaServerBrowser(target)
+            return teleportViaServerBrowser(target, chosen.placeId)
         end
         return false
     end
@@ -5751,7 +5883,7 @@ local function HopServerLessPlayer()
                     })
                 end
             end)
-            teleportViaServerBrowser(chosen.id)
+            teleportViaServerBrowser(chosen.id, chosen.placeId)
             return true
         else
             HopServer()
@@ -6623,6 +6755,7 @@ getgenv().CuttayV4HelperSlot = CUTTAY_HELPER_SLOT
 getgenv().CuttayV4GroupIndex = CUTTAY_GROUP_INDEX
 getgenv().CuttayV4Phase = getgenv().Mode == "CuttayV4" and "STARTING" or "DISABLED"
 getgenv().CuttayV4Status = getgenv().Mode == "CuttayV4" and "Starting CuttayV4..." or "Disabled"
+getgenv().CuttayPullLeverStatus = getgenv().CuttayPullLeverStatus or "Not started"
 getgenv().CuttayV4TargetRace = nil
 getgenv().CuttayV4MainRace = getgenv().CuttayV4MainRace or CUTTAY_RACES[1]
 getgenv().CuttayResourceFarmActive = false
@@ -6910,13 +7043,17 @@ local function CuttayRunStep()
 	end
 
     if not CuttayIsLeverPulled() then
-        CuttaySetStatus("PULL_LEVER", "V3 complete: checking Temple lever before Ancient One")
+		if getgenv().CuttayV4Phase ~= "PULL_LEVER" then
+			SetCuttayPullLeverStatusRuntime("V3 complete: checking Temple lever before Ancient One")
+		else
+			SetCuttayPullLeverStatusRuntime(getgenv().CuttayPullLeverStatus)
+		end
 		local pullOk, pulled = pcall(PullLeverV4)
 		if pullOk and pulled == true then
 			getgenv().CuttayLeverPulledVerified = true
-			CuttaySetStatus("PULL_LEVER", "Temple lever pulled successfully")
+			SetCuttayPullLeverStatusRuntime("Temple lever pulled successfully")
 		elseif not pullOk then
-			CuttaySetStatus("ERROR", "Pull lever error: " .. tostring(pulled))
+			SetCuttayPullLeverStatusRuntime("error: " .. tostring(pulled))
 		end
         return
     end
