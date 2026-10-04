@@ -1119,13 +1119,14 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER (API kurinian-hub: 2-6 player, fullmoonin >= 4:00, uu tien con lai lau nhat)
+    -- FIND FM SERVER (API kurinian-hub: 2-6 player, chi server dang FM co endfullmoon 4:00-9:00, uu tien con lai lau nhat)
     local function findFMServer()
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
         local FM_MIN_PLAYERS = 2
         local FM_MAX_PLAYERS = 6
-        local FM_MIN_SECONDS = 240   -- toi thieu 4:00 moi hop
+        local FM_MIN_SECONDS = 240   -- endfullmoon toi thieu 4:00
+        local FM_MAX_SECONDS = 540   -- endfullmoon toi da 9:00
 
         -- "9:15" -> 555 giay
         local function parseMMSS(s)
@@ -1166,18 +1167,19 @@ end
             local jobId   = v.jobid
             local placeId = v.placeid
             local players = tonumber(v.players)
-            local ttf     = parseMMSS(v.fullmoonin)   -- giay con lai truoc khi Full Moon bat dau
+            local ttf     = parseMMSS(v.endfullmoon)  -- giay con lai truoc khi Full Moon ket thuc
+            if v.fullmoonin ~= nil then continue end   -- chua toi FM -> bo qua
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
             if not players or players < FM_MIN_PLAYERS or players > FM_MAX_PLAYERS then continue end
-            if not ttf or ttf < FM_MIN_SECONDS then continue end
+            if not ttf or ttf < FM_MIN_SECONDS or ttf > FM_MAX_SECONDS then continue end
             table.insert(candidates, {jobId = tostring(jobId), players = players, ttf = ttf})
         end
         if #candidates == 0 then return nil end
-        -- Uu tien fullmoonin lon nhat (>= 9:15 tu nhien nam tren cung), bang nhau thi it player hon
+        -- Uu tien endfullmoon con lai lau nhat, bang nhau thi it player hon
         table.sort(candidates, function(a, b)
             if a.ttf ~= b.ttf then return a.ttf > b.ttf end
             return a.players < b.players
