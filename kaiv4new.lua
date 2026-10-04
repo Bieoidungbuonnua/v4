@@ -933,23 +933,14 @@ do
     ))
 end
 
-
---------------------------------------------------------------------------------
--- INTEGRATED JOINV4 ENGINE + DYNAMIC ISLAND STATUS UI
---------------------------------------------------------------------------------
+-- ══════════════════════════════════════════════════════════════════
 -- [3/3] JOINV4 (Kaiv4-BNN/joinv4.lua) - API Moon Hop & Group Management
 -- ══════════════════════════════════════════════════════════════════
 ;(function()
     local CFG = getgenv().JoinV4Config
-    if type(CFG) ~= "table" then
-        warn("[JoinV4] JoinV4Config is missing; runtime was not started")
-        return
-    end
-    getgenv().JoinV4Active = true
-    getgenv().JoinV4RuntimeStatus = "Starting"
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "http://163.61.183.126:3000/fullmoon"
+    local FM_API_URL      = "https://apiibf.kurinian-hub.xyz/api/bloxfruit/fullmoon"
     local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
@@ -964,7 +955,6 @@ end
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local CoreGui           = game:GetService("CoreGui")
     local Lighting          = game:GetService("Lighting")
-    local TweenService      = game:GetService("TweenService")
 
     local Player   = Players.LocalPlayer
     local USERNAME = Player.Name
@@ -1129,36 +1119,20 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER (Multi-fallback HTTP)
+    -- FIND FM SERVER (API kurinian-hub: 2-6 player, fullmoonin >= 4:00, uu tien con lai lau nhat)
     local function findFMServer()
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
-        local function getField(tbl, ...)
-            if type(tbl) ~= "table" then return nil end
-            local low = {}
-            for k, v in pairs(tbl) do if type(k) == "string" then low[k:lower()] = v end end
-            for i = 1, select("#", ...) do
-                local n = select(i, ...)
-                if n then local val = low[n:lower()]; if val ~= nil then return val end end
-            end
-            return nil
-        end
+        local FM_MIN_PLAYERS = 2
+        local FM_MAX_PLAYERS = 6
+        local FM_MIN_SECONDS = 240   -- toi thieu 4:00 moi hop
 
-        local function parsePlayers(f)
-            if not f then return nil end
-            if type(f) == "number" then return f end
-            if type(f) == "string" then
-                local cur = f:match("(%d+)%s*/%s*%d+")
-                if cur then return tonumber(cur) end
-                return tonumber(f)
-            end
-            return nil
-        end
-
-        local function parseTimeToNight(entry)
-            for _, n in ipairs({"timetonight","timeToNight","time_to_night","timeToNightSeconds","time"}) do
-                local v = getField(entry, n); if v ~= nil then return tonumber(v) end
-            end
+        -- "9:15" -> 555 giay
+        local function parseMMSS(s)
+            if type(s) == "number" then return s end
+            if type(s) ~= "string" then return nil end
+            local m, sec = s:match("^(%d+):(%d+)$")
+            if m then return tonumber(m) * 60 + tonumber(sec) end
             return nil
         end
 
@@ -1183,31 +1157,31 @@ end
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
         if not ok2 or type(parsed) ~= "table" then return nil end
 
-        local entries
-        if type(parsed.data) == "table" and #parsed.data > 0 then
-            entries = parsed.data
-        elseif type(parsed) == "table" and #parsed > 0 then
-            entries = parsed
-        else return nil end
+        local entries = parsed.data
+        if type(entries) ~= "table" or #entries == 0 then return nil end
 
         local candidates = {}
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
-            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
-            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
-            local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
+            local jobId   = v.jobid
+            local placeId = v.placeid
+            local players = tonumber(v.players)
+            local ttf     = parseMMSS(v.fullmoonin)   -- giay con lai truoc khi Full Moon bat dau
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
-                table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
-            end
+            if not players or players < FM_MIN_PLAYERS or players > FM_MAX_PLAYERS then continue end
+            if not ttf or ttf < FM_MIN_SECONDS then continue end
+            table.insert(candidates, {jobId = tostring(jobId), players = players, ttf = ttf})
         end
         if #candidates == 0 then return nil end
-        -- Chon server it player nhat de tranh race condition
-        table.sort(candidates, function(a, b) return a.players < b.players end)
+        -- Uu tien fullmoonin lon nhat (>= 9:15 tu nhien nam tren cung), bang nhau thi it player hon
+        table.sort(candidates, function(a, b)
+            if a.ttf ~= b.ttf then return a.ttf > b.ttf end
+            return a.players < b.players
+        end)
         return candidates[1].jobId
     end
 
@@ -1276,7 +1250,7 @@ end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            -- Loc: players 2..6
+            -- Loc: players 2..7
             if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
                 table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
             end
@@ -1477,168 +1451,66 @@ end
     end
 
     -- ══════════════════════════════════════════════════════════════════
-    -- JOINV4 DYNAMIC ISLAND UI (adapted from dynamic.lua)
-    -- Keeps the Dynamic Island expand/collapse, rubber-band and live animations.
+    -- UI SYSTEM (Modern Cyber Glassmorphism HUD - Draggable & Sleek)
     -- ══════════════════════════════════════════════════════════════════
-    local UserInputService = game:GetService("UserInputService")
-    local RunService = game:GetService("RunService")
-    local function makeSFFont(weight)
-        local ok, face = pcall(function()
-            return Font.new("rbxasset://fonts/families/Inter.json", weight)
+    local FONT_TITLE = Enum.Font.GothamBold
+    local FONT_BODY  = Enum.Font.GothamMedium
+    local FONT_TAG   = Enum.Font.GothamBold
+
+    local C_BG       = Color3.fromRGB(13, 16, 24)
+    local C_CARD     = Color3.fromRGB(20, 24, 36)
+    local C_STROKE   = Color3.fromRGB(0, 240, 160)
+    local C_CYAN     = Color3.fromRGB(0, 220, 255)
+    local C_GOLD     = Color3.fromRGB(255, 205, 75)
+    local C_PURPLE   = Color3.fromRGB(185, 120, 255)
+    local C_WHITE    = Color3.fromRGB(245, 248, 255)
+    local C_MUTED    = Color3.fromRGB(150, 160, 180)
+    local C_GREEN    = Color3.fromRGB(0, 255, 150)
+    local C_RED      = Color3.fromRGB(255, 90, 90)
+
+    local ScreenGui, MainCard, RolePill, GroupPill, MoonCard, MoonLabel, StatusCard, StatusLabel, MinBtn
+    local isCollapsed = false
+
+    local function makeDraggable(frame, handle)
+        local UserInputService = game:GetService("UserInputService")
+        local dragging = false
+        local dragInput, dragStart, startPos
+
+        handle.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = true
+                dragStart = input.Position
+                startPos = frame.Position
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
+                    end
+                end)
+            end
         end)
-        if ok and face then return face end
-        local fallbackOk, fallback = pcall(function()
-            return Font.fromEnum(Enum.Font.Gotham)
+
+        handle.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                dragInput = input
+            end
         end)
-        return fallbackOk and fallback or nil
-    end
-    local FONT_SF_BOLD = makeSFFont(Enum.FontWeight.Bold)
-    local FONT_SF_SEMI = makeSFFont(Enum.FontWeight.SemiBold)
-    local FONT_SF_MED  = makeSFFont(Enum.FontWeight.Medium)
-    local FONT_SF_REG  = makeSFFont(Enum.FontWeight.Regular)
 
-    local C_ORANGE = Color3.fromRGB(255, 159, 10)
-    local C_GREEN  = Color3.fromRGB(48, 209, 88)
-    local C_RED    = Color3.fromRGB(255, 59, 48)
-    local C_BLUE   = Color3.fromRGB(10, 132, 255)
-    local C_PURPLE = Color3.fromRGB(191, 90, 242)
-    local C_MUTED  = Color3.fromRGB(142, 142, 147)
-    local C_WHITE  = Color3.fromRGB(245, 245, 247)
-    local C_BG     = Color3.fromRGB(0, 0, 0)
-
-    local HOME_POSITION = UDim2.new(0.5, 0, 0, 11)
-    local COMPACT_SIZE  = UDim2.new(0, 286, 0, 40)
-    local EXPANDED_SIZE = UDim2.new(0, 390, 0, 210)
-
-    local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel
-    local CompactRole, CompactStatus, StatusDot, IslandStroke, IslandCorner
-    local CompactContent, ExpandedContent
-    local isExpanded, isAnimating = false, false
-    local statusColor = C_ORANGE
-
-    local function applyFont(label, face, size)
-        if face then
-            pcall(function() label.FontFace = face end)
-        else
-            label.Font = Enum.Font.Gotham
-        end
-        label.TextSize = size
-    end
-
-    local function round(instance, radius)
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = radius and UDim.new(0, radius) or UDim.new(1, 0)
-        corner.Parent = instance
-        return corner
-    end
-
-    local function newLabel(parent, name, value, face, size)
-        local label = Instance.new("TextLabel")
-        label.Name = name
-        label.BackgroundTransparency = 1
-        label.Text = value
-        label.TextColor3 = C_WHITE
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.TextYAlignment = Enum.TextYAlignment.Center
-        label.TextTruncate = Enum.TextTruncate.AtEnd
-        applyFont(label, face, size)
-        label.Parent = parent
-        return label
-    end
-
-    local function colorForStatus(value)
-        local s = tostring(value or ""):lower()
-        if s:find("timeout") or s:find("fail") or s:find("error") or s:find("conflict") then
-            return C_RED
-        elseif s:find("trial") or s:find("done") or s:find("complete") or s:find("full moon") or s:find("fm active") then
-            return C_GREEN
-        elseif s:find("hop") or s:find("teleport") or s:find("join") then
-            return C_BLUE
-        elseif s:find("train") or s:find("buy") then
-            return C_ORANGE
-        elseif s:find("wait") or s:find("sett") or s:find("connect") or s:find("check") then
-            return Color3.fromRGB(100, 210, 255)
-        end
-        return C_PURPLE
-    end
-
-    local function paintStatus(value)
-        statusColor = colorForStatus(value)
-        if StatusDot then StatusDot.BackgroundColor3 = statusColor end
-        if IslandStroke then
-            TweenService:Create(IslandStroke, TweenInfo.new(0.25), {
-                Color = statusColor,
-                Transparency = 0.18,
-            }):Play()
-        end
-        if CompactStatus then
-            CompactStatus.Text = tostring(value or "")
-            CompactStatus.TextColor3 = statusColor
-        end
-        if StatusLabel then
-            StatusLabel.Text = tostring(value or "")
-            StatusLabel.TextColor3 = statusColor
-        end
-    end
-
-    local function setStatus(txt)
-        currentStatus = tostring(txt or "")
-        getgenv().JoinV4RuntimeStatus = currentStatus
-        paintStatus(currentStatus)
-    end
-
-    local function expandIsland()
-        if isAnimating or isExpanded or not MainCard then return end
-        isAnimating = true
-        isExpanded = true
-        local squeeze = TweenService:Create(MainCard, TweenInfo.new(0.06, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            Size = UDim2.new(0, COMPACT_SIZE.X.Offset - 10, 0, COMPACT_SIZE.Y.Offset - 4),
-        })
-        squeeze:Play()
-        squeeze.Completed:Connect(function()
-            if not MainCard or not MainCard.Parent then return end
-            CompactContent.Visible = false
-            ExpandedContent.Visible = true
-            ExpandedContent.GroupTransparency = 1
-            TweenService:Create(MainCard, TweenInfo.new(0.48, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { Size = EXPANDED_SIZE }):Play()
-            TweenService:Create(IslandCorner, TweenInfo.new(0.48, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { CornerRadius = UDim.new(0, 42) }):Play()
-            TweenService:Create(ExpandedContent, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
-            task.delay(0.48, function() isAnimating = false end)
-        end)
-    end
-
-    local function collapseIsland()
-        if isAnimating or not isExpanded or not MainCard then return end
-        isAnimating = true
-        TweenService:Create(ExpandedContent, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { GroupTransparency = 1 }):Play()
-        task.delay(0.08, function()
-            if not MainCard or not MainCard.Parent then return end
-            ExpandedContent.Visible = false
-            CompactContent.Visible = true
-            CompactContent.GroupTransparency = 1
-            TweenService:Create(MainCard, TweenInfo.new(0.38, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { Size = COMPACT_SIZE }):Play()
-            TweenService:Create(IslandCorner, TweenInfo.new(0.38, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), { CornerRadius = UDim.new(1, 0) }):Play()
-            TweenService:Create(CompactContent, TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
-            task.delay(0.38, function()
-                isExpanded = false
-                isAnimating = false
-            end)
+        UserInputService.InputChanged:Connect(function(input)
+            if input == dragInput and dragging then
+                local delta = input.Position - dragStart
+                frame.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+            end
         end)
     end
 
     local function createUI()
-        local function resolveGuiParent()
-            if gethui then
-                local ok, result = pcall(gethui)
-                if ok and result then return result end
-            end
-            local playerGui = Player:FindFirstChildOfClass("PlayerGui") or Player:FindFirstChild("PlayerGui")
-            return playerGui or CoreGui
-        end
-
-        local guiParent = resolveGuiParent()
         pcall(function()
-            local old = guiParent:FindFirstChild("JoinV4UI")
+            local old = CoreGui:FindFirstChild("JoinV4UI")
             if old then old:Destroy() end
         end)
 
@@ -1648,269 +1520,285 @@ end
         sg.IgnoreGuiInset = true
         sg.DisplayOrder = 999999
         sg.ZIndexBehavior = Enum.ZIndexBehavior.Global
-        sg.Parent = guiParent
+        sg.Parent = CoreGui
         ScreenGui = sg
 
-        local island = Instance.new("Frame")
-        island.Name = "IslandRoot"
-        island.AnchorPoint = Vector2.new(0.5, 0)
-        island.Position = HOME_POSITION
-        island.Size = COMPACT_SIZE
-        island.BackgroundColor3 = C_BG
-        island.BorderSizePixel = 0
-        island.ClipsDescendants = true
-        island.Active = true
-        island.ZIndex = 50
-        island.Parent = sg
-        MainCard = island
-        IslandCorner = round(island)
+        local PW, PH = 320, 195
+        local Card = Instance.new("Frame")
+        Card.Name = "MainCard"
+        Card.Size = UDim2.fromOffset(PW, PH)
+        Card.Position = UDim2.new(1, -(PW + 12), 0, 42)
+        Card.BackgroundColor3 = C_BG
+        Card.BackgroundTransparency = 0.05
+        Card.BorderSizePixel = 0
+        Card.ClipsDescendants = true
+        Card.Parent = sg
+        MainCard = Card
+        Instance.new("UICorner", Card).CornerRadius = UDim.new(0, 12)
 
-        local gradient = Instance.new("UIGradient")
-        gradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 20, 22)),
-            ColorSequenceKeypoint.new(1, C_BG),
-        })
-        gradient.Rotation = 120
-        gradient.Parent = island
+        local stroke = Instance.new("UIStroke", Card)
+        stroke.Color = C_STROKE
+        stroke.Thickness = 1.5
+        stroke.Transparency = 0.35
 
-        local stroke = Instance.new("UIStroke")
-        stroke.Color = statusColor
-        stroke.Thickness = 1.25
-        stroke.Transparency = 0.18
-        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        stroke.Parent = island
-        IslandStroke = stroke
+        -- Header Bar
+        local header = Instance.new("Frame", Card)
+        header.Name = "Header"
+        header.Size = UDim2.new(1, 0, 0, 36)
+        header.BackgroundColor3 = Color3.fromRGB(18, 22, 33)
+        header.BorderSizePixel = 0
 
-        local compact = Instance.new("CanvasGroup")
-        compact.Name = "Compact"
-        compact.Size = UDim2.fromScale(1, 1)
-        compact.BackgroundTransparency = 1
-        compact.ZIndex = 51
-        compact.Parent = island
-        CompactContent = compact
+        local headerPad = Instance.new("UIPadding", header)
+        headerPad.PaddingLeft = UDim.new(0, 10)
+        headerPad.PaddingRight = UDim.new(0, 10)
 
-        local dot = Instance.new("Frame")
-        dot.Name = "LiveDot"
-        dot.Size = UDim2.fromOffset(10, 10)
-        dot.Position = UDim2.new(0, 15, 0.5, -5)
-        dot.BackgroundColor3 = statusColor
-        dot.BorderSizePixel = 0
-        dot.ZIndex = 52
-        dot.Parent = compact
-        round(dot)
-        StatusDot = dot
+        local title = Instance.new("TextLabel", header)
+        title.Size = UDim2.new(0, 140, 1, 0)
+        title.BackgroundTransparency = 1
+        title.Text = "⚡ <font color=\"#00FF96\"><b>JOIN V4 PRO</b></font>"
+        title.RichText = true
+        title.Font = FONT_TITLE
+        title.TextSize = 15
+        title.TextColor3 = C_WHITE
+        title.TextXAlignment = Enum.TextXAlignment.Left
 
-        CompactRole = newLabel(compact, "Role", "JOIN V4", FONT_SF_BOLD, 12)
-        CompactRole.Size = UDim2.new(0, 105, 1, 0)
-        CompactRole.Position = UDim2.new(0, 34, 0, 0)
-        CompactRole.ZIndex = 52
+        local userTag = Instance.new("TextLabel", header)
+        userTag.Size = UDim2.new(0, 110, 0, 20)
+        userTag.Position = UDim2.new(0, 142, 0.5, -10)
+        userTag.BackgroundColor3 = Color3.fromRGB(26, 31, 46)
+        userTag.Text = USERNAME
+        userTag.Font = FONT_BODY
+        userTag.TextSize = 11
+        userTag.TextColor3 = C_CYAN
+        userTag.TextTruncate = Enum.TextTruncate.AtEnd
+        Instance.new("UICorner", userTag).CornerRadius = UDim.new(0, 5)
 
-        CompactStatus = newLabel(compact, "Status", "Starting...", FONT_SF_SEMI, 12)
-        CompactStatus.Size = UDim2.new(1, -142, 1, 0)
-        CompactStatus.Position = UDim2.new(0, 132, 0, 0)
-        CompactStatus.TextXAlignment = Enum.TextXAlignment.Right
-        CompactStatus.ZIndex = 52
+        MinBtn = Instance.new("TextButton", header)
+        MinBtn.Size = UDim2.fromOffset(22, 22)
+        MinBtn.Position = UDim2.new(1, -22, 0.5, -11)
+        MinBtn.BackgroundColor3 = Color3.fromRGB(30, 36, 52)
+        MinBtn.Text = "—"
+        MinBtn.Font = FONT_TITLE
+        MinBtn.TextSize = 13
+        MinBtn.TextColor3 = C_MUTED
+        MinBtn.BorderSizePixel = 0
+        Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
 
-        local expanded = Instance.new("CanvasGroup")
-        expanded.Name = "Expanded"
-        expanded.Size = UDim2.fromScale(1, 1)
-        expanded.BackgroundTransparency = 1
-        expanded.Visible = false
-        expanded.GroupTransparency = 1
-        expanded.ZIndex = 51
-        expanded.Parent = island
-        ExpandedContent = expanded
+        -- Make Card draggable from Header
+        makeDraggable(Card, header)
 
-        local title = newLabel(expanded, "Title", "JOIN V4", FONT_SF_BOLD, 18)
-        title.Size = UDim2.new(0, 130, 0, 26)
-        title.Position = UDim2.new(0, 22, 0, 15)
-        title.ZIndex = 52
+        -- Content Container
+        local content = Instance.new("Frame", Card)
+        content.Name = "Content"
+        content.Size = UDim2.new(1, 0, 1, -36)
+        content.Position = UDim2.new(0, 0, 0, 36)
+        content.BackgroundTransparency = 1
 
-        local user = newLabel(expanded, "User", USERNAME, FONT_SF_MED, 12)
-        user.Size = UDim2.new(1, -175, 0, 26)
-        user.Position = UDim2.new(0, 153, 0, 15)
-        user.TextXAlignment = Enum.TextXAlignment.Right
-        user.TextColor3 = C_MUTED
-        user.ZIndex = 52
+        local cPad = Instance.new("UIPadding", content)
+        cPad.PaddingLeft   = UDim.new(0, 10)
+        cPad.PaddingRight  = UDim.new(0, 10)
+        cPad.PaddingTop    = UDim.new(0, 8)
+        cPad.PaddingBottom = UDim.new(0, 8)
 
-        local divider = Instance.new("Frame")
-        divider.Size = UDim2.new(1, -44, 0, 1)
-        divider.Position = UDim2.new(0, 22, 0, 48)
-        divider.BackgroundColor3 = Color3.fromRGB(45, 45, 48)
-        divider.BorderSizePixel = 0
-        divider.ZIndex = 52
-        divider.Parent = expanded
+        local layout = Instance.new("UIListLayout", content)
+        layout.FillDirection = Enum.FillDirection.Vertical
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Padding = UDim.new(0, 6)
 
-        local function makeInfoRow(y, caption)
-            local cap = newLabel(expanded, caption .. "Caption", caption, FONT_SF_REG, 12)
-            cap.Size = UDim2.new(0, 74, 0, 25)
-            cap.Position = UDim2.new(0, 22, 0, y)
-            cap.TextColor3 = C_MUTED
-            cap.ZIndex = 52
-            local val = newLabel(expanded, caption, "...", FONT_SF_SEMI, 13)
-            val.Size = UDim2.new(1, -118, 0, 25)
-            val.Position = UDim2.new(0, 96, 0, y)
-            val.TextXAlignment = Enum.TextXAlignment.Right
-            val.ZIndex = 52
-            return val
-        end
+        -- Row 1: Role & Group Badges
+        local row1 = Instance.new("Frame", content)
+        row1.Name = "Row1"
+        row1.Size = UDim2.new(1, 0, 0, 28)
+        row1.BackgroundTransparency = 1
+        row1.LayoutOrder = 1
 
-        RolePill = makeInfoRow(55, "Role")
-        GroupPill = makeInfoRow(84, "Group")
-        MoonLabel = makeInfoRow(113, "Moon")
+        local r1Layout = Instance.new("UIListLayout", row1)
+        r1Layout.FillDirection = Enum.FillDirection.Horizontal
+        r1Layout.Padding = UDim.new(0, 6)
 
-        local statusBox = Instance.new("Frame")
-        statusBox.Name = "JoinStatus"
-        statusBox.Size = UDim2.new(1, -44, 0, 42)
-        statusBox.Position = UDim2.new(0, 22, 1, -54)
-        statusBox.BackgroundColor3 = Color3.fromRGB(24, 24, 27)
-        statusBox.BorderSizePixel = 0
-        statusBox.ZIndex = 52
-        statusBox.Parent = expanded
-        round(statusBox, 14)
+        RolePill = Instance.new("TextLabel", row1)
+        RolePill.Size = UDim2.new(0.5, -3, 1, 0)
+        RolePill.BackgroundColor3 = C_CARD
+        RolePill.Text = "👑 MAIN"
+        RolePill.Font = FONT_TAG
+        RolePill.TextSize = 12
+        RolePill.TextColor3 = C_PURPLE
+        RolePill.BorderSizePixel = 0
+        Instance.new("UICorner", RolePill).CornerRadius = UDim.new(0, 6)
+        local rPillStroke = Instance.new("UIStroke", RolePill)
+        rPillStroke.Color = Color3.fromRGB(40, 46, 68)
+        rPillStroke.Thickness = 1
 
-        local statusAccent = Instance.new("Frame")
-        statusAccent.Name = "Accent"
-        statusAccent.Size = UDim2.new(0, 4, 0, 22)
-        statusAccent.Position = UDim2.new(0, 10, 0.5, -11)
-        statusAccent.BackgroundColor3 = statusColor
-        statusAccent.BorderSizePixel = 0
-        statusAccent.ZIndex = 53
-        statusAccent.Parent = statusBox
-        round(statusAccent)
+        GroupPill = Instance.new("TextLabel", row1)
+        GroupPill.Size = UDim2.new(0.5, -3, 1, 0)
+        GroupPill.BackgroundColor3 = C_CARD
+        GroupPill.Text = "📌 Group: ..."
+        GroupPill.Font = FONT_TAG
+        GroupPill.TextSize = 12
+        GroupPill.TextColor3 = C_GOLD
+        GroupPill.BorderSizePixel = 0
+        GroupPill.TextTruncate = Enum.TextTruncate.AtEnd
+        Instance.new("UICorner", GroupPill).CornerRadius = UDim.new(0, 6)
+        local gPillStroke = Instance.new("UIStroke", GroupPill)
+        gPillStroke.Color = Color3.fromRGB(40, 46, 68)
+        gPillStroke.Thickness = 1
 
-        StatusLabel = newLabel(statusBox, "Status", currentStatus, FONT_SF_MED, 13)
-        StatusLabel.Size = UDim2.new(1, -28, 1, 0)
-        StatusLabel.Position = UDim2.new(0, 22, 0, 0)
+        -- Row 2: Moon Radar Card
+        MoonCard = Instance.new("Frame", content)
+        MoonCard.Name = "MoonCard"
+        MoonCard.Size = UDim2.new(1, 0, 0, 32)
+        MoonCard.BackgroundColor3 = C_CARD
+        MoonCard.BorderSizePixel = 0
+        MoonCard.LayoutOrder = 2
+        Instance.new("UICorner", MoonCard).CornerRadius = UDim.new(0, 6)
+        local mStroke = Instance.new("UIStroke", MoonCard)
+        mStroke.Color = Color3.fromRGB(40, 46, 68)
+        mStroke.Thickness = 1
+
+        local mPad = Instance.new("UIPadding", MoonCard)
+        mPad.PaddingLeft = UDim.new(0, 8)
+        mPad.PaddingRight = UDim.new(0, 8)
+
+        MoonLabel = Instance.new("TextLabel", MoonCard)
+        MoonLabel.Size = UDim2.new(1, 0, 1, 0)
+        MoonLabel.BackgroundTransparency = 1
+        MoonLabel.Text = "🌑 Moon: Checking..."
+        MoonLabel.Font = FONT_BODY
+        MoonLabel.TextSize = 12
+        MoonLabel.TextColor3 = C_MUTED
+        MoonLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+        -- Row 3: Live Status Card
+        StatusCard = Instance.new("Frame", content)
+        StatusCard.Name = "StatusCard"
+        StatusCard.Size = UDim2.new(1, 0, 0, 68)
+        StatusCard.BackgroundColor3 = C_CARD
+        StatusCard.BorderSizePixel = 0
+        StatusCard.LayoutOrder = 3
+        Instance.new("UICorner", StatusCard).CornerRadius = UDim.new(0, 6)
+        local sStroke = Instance.new("UIStroke", StatusCard)
+        sStroke.Color = Color3.fromRGB(40, 46, 68)
+        sStroke.Thickness = 1
+
+        -- Left Accent Bar
+        local sBar = Instance.new("Frame", StatusCard)
+        sBar.Size = UDim2.new(0, 3, 1, 0)
+        sBar.BackgroundColor3 = C_CYAN
+        sBar.BorderSizePixel = 0
+        Instance.new("UICorner", sBar).CornerRadius = UDim.new(0, 3)
+
+        local sPad = Instance.new("UIPadding", StatusCard)
+        sPad.PaddingLeft   = UDim.new(0, 10)
+        sPad.PaddingRight  = UDim.new(0, 8)
+        sPad.PaddingTop    = UDim.new(0, 4)
+        sPad.PaddingBottom = UDim.new(0, 4)
+
+        StatusLabel = Instance.new("TextLabel", StatusCard)
+        StatusLabel.Size = UDim2.new(1, 0, 1, 0)
+        StatusLabel.BackgroundTransparency = 1
+        StatusLabel.Text = "⏳ Starting JoinV4 System..."
+        StatusLabel.Font = FONT_BODY
+        StatusLabel.TextSize = 12
+        StatusLabel.TextColor3 = C_GOLD
+        StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+        StatusLabel.TextYAlignment = Enum.TextYAlignment.Center
         StatusLabel.TextWrapped = true
-        StatusLabel.TextTruncate = Enum.TextTruncate.None
-        StatusLabel.ZIndex = 53
 
-        local isDragging = false
-        local dragStart = Vector2.zero
-        local dragDistance = 0
-        local dragConnection
-        local MAX_PULL_X, MAX_PULL_Y, RESISTANCE = 45, 35, 0.28
-
-        local function rubber(delta, maxLimit)
-            local sign = math.sign(delta)
-            local amount = math.abs(delta)
-            return sign * (1 - (1 / ((amount * RESISTANCE / maxLimit) + 1))) * maxLimit
-        end
-
-        island.InputBegan:Connect(function(input)
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-            isDragging = true
-            dragDistance = 0
-            dragStart = Vector2.new(input.Position.X, input.Position.Y)
-            local base = isExpanded and EXPANDED_SIZE or COMPACT_SIZE
-            TweenService:Create(island, TweenInfo.new(0.12, Enum.EasingStyle.Quad), {
-                Size = UDim2.new(0, base.X.Offset * 0.97, 0, base.Y.Offset * 0.97),
-            }):Play()
-            if dragConnection then dragConnection:Disconnect() end
-            dragConnection = UserInputService.InputChanged:Connect(function(changed)
-                if not isDragging then return end
-                if changed.UserInputType ~= Enum.UserInputType.MouseMovement and changed.UserInputType ~= Enum.UserInputType.Touch then return end
-                local delta = Vector2.new(changed.Position.X, changed.Position.Y) - dragStart
-                dragDistance = delta.Magnitude
-                local rx, ry = rubber(delta.X, MAX_PULL_X), rubber(delta.Y, MAX_PULL_Y)
-                island.Position = UDim2.new(HOME_POSITION.X.Scale, HOME_POSITION.X.Offset + rx, HOME_POSITION.Y.Scale, HOME_POSITION.Y.Offset + ry)
-                island.Size = UDim2.new(0, base.X.Offset + math.abs(rx) * 0.12, 0, base.Y.Offset + math.abs(ry) * 0.10)
-            end)
-        end)
-
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-            if not isDragging then return end
-            isDragging = false
-            if dragConnection then dragConnection:Disconnect(); dragConnection = nil end
-            local targetSize = isExpanded and EXPANDED_SIZE or COMPACT_SIZE
-            TweenService:Create(island, TweenInfo.new(0.48, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-                Position = HOME_POSITION,
-                Size = targetSize,
-            }):Play()
-            if dragDistance < 8 then
-                if isExpanded then collapseIsland() else expandIsland() end
+        -- Toggle Collapse Logic
+        MinBtn.MouseButton1Click:Connect(function()
+            isCollapsed = not isCollapsed
+            if isCollapsed then
+                Card.Size = UDim2.fromOffset(PW, 36)
+                content.Visible = false
+                MinBtn.Text = "+"
+            else
+                Card.Size = UDim2.fromOffset(PW, PH)
+                content.Visible = true
+                MinBtn.Text = "—"
             end
         end)
-
-        local phase = 0
-        RunService.Heartbeat:Connect(function(dt)
-            if not island.Parent then return end
-            phase = (phase + dt * 3.2) % (math.pi * 2)
-            local pulse = (math.sin(phase) + 1) * 0.5
-            dot.Size = UDim2.fromOffset(9 + pulse * 3, 9 + pulse * 3)
-            dot.Position = UDim2.new(0, 15 - pulse * 1.5, 0.5, -(9 + pulse * 3) / 2)
-            dot.BackgroundTransparency = 0.05 + (1 - pulse) * 0.3
-            statusAccent.BackgroundColor3 = statusColor
-            gradient.Rotation = (gradient.Rotation + dt * 4) % 360
-        end)
-
-        paintStatus(currentStatus)
     end
 
     local function updateUI()
         if not ScreenGui or not ScreenGui.Parent or not MainCard or not MainCard.Parent then
-            pcall(createUI)
-            return
+            pcall(createUI); return
         end
-
-        local roleText, roleColor
-        if isMain then
-            roleText, roleColor = "MAIN", C_PURPLE
-        elseif isHopFM then
-            roleText, roleColor = "HELPER (FM)", C_BLUE
-        else
-            roleText = "HELPER GR " .. tostring(MY_GROUP_IDX or "?")
-            roleColor = Color3.fromRGB(100, 180, 255)
-        end
-        RolePill.Text = roleText
-        RolePill.TextColor3 = roleColor
-        CompactRole.Text = roleText
-        CompactRole.TextColor3 = roleColor
-
-        if isHelper then
-            GroupPill.Text = tostring(MY_GROUP_NOTE or "?")
-            GroupPill.TextColor3 = C_ORANGE
-        elseif myAssignedGroupId and myAssignedGroupId ~= "" then
-            GroupPill.Text = tostring(myAssignedGroupId)
-            GroupPill.TextColor3 = C_GREEN
-        else
-            GroupPill.Text = "Assigning..."
-            GroupPill.TextColor3 = C_MUTED
-        end
-
         local hasFM = isNight() and isFullMoon()
-        if hasFM then
-            MoonLabel.Text = "FULL MOON · ACTIVE"
-            MoonLabel.TextColor3 = C_GREEN
-        else
-            local moonText = ""
-            pcall(function()
-                if type(CheckMoon) == "function" then moonText = tostring(CheckMoon()) end
-            end)
-            if moonText == "" or moonText == "nil" then moonText = "No Full Moon" end
-            MoonLabel.Text = moonText .. " · " .. string.format("%02d:%02d", math.floor(Lighting.ClockTime), math.floor((Lighting.ClockTime % 1) * 60))
-            MoonLabel.TextColor3 = C_MUTED
+
+        -- Update Role
+        if RolePill then
+            if isMain then
+                RolePill.Text = "👑 MAIN"
+                RolePill.TextColor3 = C_PURPLE
+            elseif isHopFM then
+                RolePill.Text = "🚀 HELPER [FM]"
+                RolePill.TextColor3 = C_CYAN
+            else
+                RolePill.Text = "🛡️ HELPER [G" .. tostring(MY_GROUP_IDX or "?") .. "]"
+                RolePill.TextColor3 = Color3.fromRGB(100, 180, 255)
+            end
         end
 
-        paintStatus(currentStatus)
+        -- Update Group
+        if GroupPill then
+            if isHelper then
+                GroupPill.Text = "📌 " .. tostring(MY_GROUP_NOTE or "?")
+                GroupPill.TextColor3 = C_GOLD
+            elseif myAssignedGroupId and myAssignedGroupId ~= "" then
+                GroupPill.Text = "📌 " .. tostring(myAssignedGroupId)
+                GroupPill.TextColor3 = C_GREEN
+            else
+                GroupPill.Text = "📌 Đang gán nhóm..."
+                GroupPill.TextColor3 = C_MUTED
+            end
+        end
+
+        -- Update Moon Card
+        if MoonLabel then
+            if hasFM then
+                MoonLabel.Text = "🌕 FULL MOON (ACTIVE)"
+                MoonLabel.TextColor3 = C_GREEN
+            else
+                local mTex = type(getgenv().CheckMoon) == "function" and getgenv().CheckMoon() or ""
+                if mTex ~= "" and mTex ~= "nil" then
+                    MoonLabel.Text = "🌑 Moon: " .. tostring(mTex) .. " (No Full Moon)"
+                else
+                    MoonLabel.Text = "🌑 No Full Moon"
+                end
+                MoonLabel.TextColor3 = C_MUTED
+            end
+        end
+
+        -- Update Status Card
+        if StatusLabel then
+            local s = currentStatus:lower()
+            local col = C_WHITE
+            if s:find("hop") or s:find("teleport") then
+                col = C_CYAN
+            elseif s:find("training") or s:find("train") then
+                col = C_GOLD
+            elseif s:find("trial") or s:find("done") or s:find("complete") then
+                col = C_GREEN
+            elseif s:find("timeout") or s:find("fail") or s:find("error") then
+                col = C_RED
+            elseif s:find("wait") or s:find("cho") or s:find("settle") then
+                col = Color3.fromRGB(130, 200, 255)
+            else
+                col = C_GOLD
+            end
+            StatusLabel.TextColor3 = col
+            StatusLabel.Text = "⚡ " .. currentStatus
+        end
     end
 
     -- BOOT
-    task.spawn(function()
-        local ok, err = pcall(createUI)
-        if not ok then
-            warn("[JoinV4] Dynamic Island UI failed: " .. tostring(err))
-        end
-    end)
+    task.spawn(createUI)
     pcall(function()
         if not Player:FindFirstChild("DataLoaded") then
             Player:WaitForChild("DataLoaded", 5)
         end
     end)
     setStatus("Loaded & Running")
-    getgenv().JoinV4RuntimeStatus = "Loaded & Running"
     task.wait(0.5)
 
     task.spawn(function()
