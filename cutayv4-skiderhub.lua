@@ -55,6 +55,7 @@ local _DEFAULT_JOINV4_CFG = {
     ["Note"] = {"trietautov4"},
     ["LimitMainPerGroup"] = 10,
     ["LockRace"] = false,
+    ["Roll Race Helper"] = false,
     ["LockFragment"] = "0",
 }
 
@@ -447,6 +448,7 @@ local function ApplyCuttayV4Settings()
     Settings["Hop After Trial"] = cfg["Hop After Trial"] == true
     Settings["LockRace"] = cfg["LockRace"]
     Settings["LockFragment"] = cfg["LockFragment"] or "farmkhithieu"
+    Settings["Roll Race Helper"] = cfg["Roll Race Helper"] == true
     Settings["Auto Upgrade Race V2-V3"] = false
     Settings["Auto Get Cyborg"] = false
     Settings["Auto Get Fully Cyborg"] = false
@@ -3302,6 +3304,22 @@ task.spawn(function()
 	if getgenv().Mode == "CuttayV4" then return end
 	local targetRaces = ParseLockedRaces()
 	if #targetRaces == 0 then return end
+	local function configuredAsHelper()
+		local username = localPlayer.Name
+		local function contains(raw)
+			if type(raw) == "string" then return raw == username end
+			if type(raw) ~= "table" then return false end
+			for key, value in pairs(raw) do
+				if type(key) == "string" and key == username and value == true then return true end
+				if contains(value) then return true end
+			end
+			return false
+		end
+		return contains(Settings["Name Helper TurnV3"])
+			or contains(Settings["Select Players Multi"])
+			or contains(getgenv().HelperList)
+	end
+	if configuredAsHelper() and Settings["Roll Race Helper"] ~= true then return end
 	repeat task.wait() until localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
 
 	local playerGui = localPlayer:FindFirstChild("PlayerGui")
@@ -5882,6 +5900,7 @@ local function ExportConfigTableString()
         { key = "No Frog", default = false },
         { key = "Select Weapon", default = "Melee" },
         { key = "LockRace", default = false },
+        { key = "Roll Race Helper", default = false },
         { key = "Auto Upgrade Race V2-V3", default = false },
         { key = "Auto Get Cyborg", default = false },
         { key = "Auto Get Fully Cyborg", default = false },
@@ -5936,6 +5955,12 @@ local function ExportConfigTableString()
             table.insert(lines, prefix .. spacing .. "= " .. tostring(val) .. ",")
         elseif type(val) == "string" then
             table.insert(lines, prefix .. spacing .. '= "' .. tostring(val) .. '",')
+        elseif type(val) == "table" and k == "LockRace" then
+            local races = {}
+            for _, race in ipairs(val) do
+                table.insert(races, string.format("%q", tostring(race)))
+            end
+            table.insert(lines, prefix .. spacing .. "= {" .. table.concat(races, ", ") .. (#races > 0 and "," or "") .. "},")
         elseif type(val) == "table" then
             local list = {}
             for _, subVal in pairs(val) do
@@ -5980,13 +6005,19 @@ local function ExportOneClickV4ConfigString()
     if type(lockRace) == "table" then
         local races = {}
         for _, race in ipairs(lockRace) do table.insert(races, string.format("%q", tostring(race))) end
-        table.insert(lines, '    ["LockRace"] = {' .. table.concat(races, ", ") .. "},")
+        table.insert(lines, '    ["LockRace"] = {' .. table.concat(races, ", ") .. (#races > 0 and "," or "") .. "},")
     elseif type(lockRace) == "string" and lockRace ~= "" then
         table.insert(lines, string.format('    ["LockRace"] = %q,', lockRace))
     else
         table.insert(lines, '    ["LockRace"] = false,')
     end
+    if exportMode ~= "CuttayV4" then
+        table.insert(lines, '    ["Roll Race Helper"] = ' .. (cfg["Roll Race Helper"] == true and "true" or "false") .. ",")
+    end
     table.insert(lines, string.format('    ["LockFragment"] = %q,', tostring(cfg["LockFragment"] or "0")))
+	if exportMode == "CuttayV4" then
+		table.insert(lines, '    ["Roll Race Helper"] = ' .. (cfg["Roll Race Helper"] == true and "true" or "false") .. ",")
+	end
 	if exportMode == "CuttayV4" then table.insert(lines, '    ["HideUI"] = true,') end
     table.insert(lines, '    ["Helper"] = {')
 
@@ -6289,6 +6320,9 @@ end
 
 local function CuttayTargetRace()
     if CUTTAY_HELPER_SLOT > 0 then
+		if (getgenv().JoinV4Config or {})["Roll Race Helper"] ~= true then
+			return CuttayNormalizeRace(localPlayer.Data.Race.Value)
+		end
         return CuttayHelperTargetRace(getgenv().CuttayV4MainRace)
     end
     return CuttayMainTargetRace()
