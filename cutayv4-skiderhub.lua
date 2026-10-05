@@ -3220,55 +3220,8 @@ local CYBORG_MAX_CHESTS = 55
 getgenv().CuttayCyborgRuntime = getgenv().CuttayCyborgRuntime or {
 	SummonCooldown = 10,
 	LastSummonAt = -math.huge,
-	ChestTween = nil,
-	ChestTweenTarget = nil,
 }
 getgenv().CuttayCyborgRuntime.SummonCooldown = 10
-
-function CancelCyborgChestTween()
-	local runtime = getgenv().CuttayCyborgRuntime
-	if runtime.ChestTween then
-		pcall(function() runtime.ChestTween:Cancel() end)
-	end
-	runtime.ChestTween = nil
-	runtime.ChestTweenTarget = nil
-end
-
-function TweenToCyborgChest(chest)
-	if not chest or not chest.Parent or not chest:IsA("BasePart") then
-		CancelCyborgChestTween()
-		return false
-	end
-	local character = localPlayer.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or humanoid.Health <= 0 or not root then
-		CancelCyborgChestTween()
-		return false
-	end
-
-	-- Never use ToTarget(..., true) or assign HRP.CFrame here. Chest travel is
-	-- always a real linear tween at the configured speed of 150.
-	local runtime = getgenv().CuttayCyborgRuntime
-	if runtime.ChestTweenTarget == chest and runtime.ChestTween
-		and runtime.ChestTween.PlaybackState == Enum.PlaybackState.Playing
-	then
-		return true
-	end
-
-	CancelCyborgChestTween()
-	TweenManager.CancelCurrent()
-	local distance = (root.Position - chest.Position).Magnitude
-	local duration = math.max(distance / TWEEN_SPEED, 0.08)
-	runtime.ChestTweenTarget = chest
-	runtime.ChestTween = TweenService:Create(
-		root,
-		TweenInfo.new(duration, Enum.EasingStyle.Linear),
-		{ CFrame = chest.CFrame }
-	)
-	runtime.ChestTween:Play()
-	return true
-end
 
 function TryCyborgRaidSummon()
 	local runtime = getgenv().CuttayCyborgRuntime
@@ -3438,7 +3391,9 @@ function GetCyborg()
 			local part2 = GetNearestChest()
 			if part2 then
 				local chestStartedAt = tick()
-				TweenToCyborgChest(part2)
+				-- Use the script's shared TweenService pipeline. Start it once per
+				-- chest; recreating a tween every frame makes movement unstable.
+				ToTarget(part2.CFrame)
 				repeat
 					task.wait(0.05)
 					if
@@ -3448,7 +3403,6 @@ function GetCyborg()
 						task.wait(0.05)
 						VirtualInputManager:SendKeyEvent(false, "Space", false, game)
 					end
-					TweenToCyborgChest(part2)
 				until not part2
 					or not part2.Parent
 					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
@@ -3456,7 +3410,7 @@ function GetCyborg()
 					or not part2.CanTouch
 					or DetectItemPlr("Fist of Darkness")
 					or tick() - chestStartedAt >= 60
-				CancelCyborgChestTween()
+				TweenManager.CancelCurrent()
 				if part2 and part2.Parent and tick() - chestStartedAt >= 60 then
 					if not part2:FindFirstChild("Ignored") then
 						Instance.new("IntValue", part2).Name = "Ignored"
@@ -3467,7 +3421,7 @@ function GetCyborg()
 					count11 = count11 + 1
 				end
 			else
-				CancelCyborgChestTween()
+				TweenManager.CancelCurrent()
 				if Settings["Auto Get Cyborg Hop Collect Chest"] then
 					HopForCyborgChest()
 				end
