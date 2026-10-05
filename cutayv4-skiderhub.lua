@@ -3217,6 +3217,67 @@ local cyborgStateFile = configFolder .. "/" .. username .. "-cyborg.txt"
 local cyborgStateMemory = "NaN"
 local CYBORG_MIN_SERVER_AGE = 4 * 60 * 60
 local CYBORG_MAX_CHESTS = 55
+local CYBORG_SUMMON_COOLDOWN = 10
+local cyborgLastSummonAt = -math.huge
+local cyborgChestTween = nil
+local cyborgChestTweenTarget = nil
+
+local function CancelCyborgChestTween()
+	if cyborgChestTween then
+		pcall(function() cyborgChestTween:Cancel() end)
+	end
+	cyborgChestTween = nil
+	cyborgChestTweenTarget = nil
+end
+
+local function TweenToCyborgChest(chest)
+	if not chest or not chest.Parent or not chest:IsA("BasePart") then
+		CancelCyborgChestTween()
+		return false
+	end
+	local character = localPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or humanoid.Health <= 0 or not root then
+		CancelCyborgChestTween()
+		return false
+	end
+
+	-- Never use ToTarget(..., true) or assign HRP.CFrame here. Chest travel is
+	-- always a real linear tween at the configured speed of 150.
+	if cyborgChestTweenTarget == chest and cyborgChestTween
+		and cyborgChestTween.PlaybackState == Enum.PlaybackState.Playing
+	then
+		return true
+	end
+
+	CancelCyborgChestTween()
+	TweenManager.CancelCurrent()
+	local distance = (root.Position - chest.Position).Magnitude
+	local duration = math.max(distance / TWEEN_SPEED, 0.08)
+	cyborgChestTweenTarget = chest
+	cyborgChestTween = TweenService:Create(
+		root,
+		TweenInfo.new(duration, Enum.EasingStyle.Linear),
+		{ CFrame = chest.CFrame }
+	)
+	cyborgChestTween:Play()
+	return true
+end
+
+local function TryCyborgRaidSummon()
+	if tick() - cyborgLastSummonAt < CYBORG_SUMMON_COOLDOWN then return false end
+	local map = Workspace:FindFirstChild("Map")
+	local circle = map and map:FindFirstChild("CircleIsland")
+	local raidSummon = circle and circle:FindFirstChild("RaidSummon")
+	local button = raidSummon and raidSummon:FindFirstChild("Button")
+	local main = button and button:FindFirstChild("Main")
+	local detector = main and main:FindFirstChildOfClass("ClickDetector")
+	if not detector then return false end
+	cyborgLastSummonAt = tick()
+	pcall(function() fireclickdetector(detector) end)
+	return true
+end
 
 local function IsCyborgChestServerOldEnough()
 	local origin = Workspace:FindFirstChild("_WorldOrigin")
@@ -3337,14 +3398,13 @@ function GetCyborg()
 
 	if savedState == "NaN" and not enabled6 and not DetectItemPlr("Core Brain") then
 		local detectStarted = tick()
+		TryCyborgRaidSummon()
 		repeat
-			wait(1)
-			if Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CircleIsland") and Workspace.Map.CircleIsland:FindFirstChild("RaidSummon") then
-				fireclickdetector(Workspace.Map.CircleIsland.RaidSummon.Button.Main.ClickDetector)
-			end
+			wait(0.25)
 		until DetectkeyCyborg("{color1_Green}Please supply a {item1} to continue.{color1_/}")
 			or (DetectkeyCyborg("{color1_Red}Microchip not found.{color1_/}"))
-			or tick() - detectStarted >= 15
+			or ReadCyborgState() ~= "NaN"
+			or tick() - detectStarted >= 5
 			or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 		local callback18 = DetectkeyCyborg
 		if callback18("{color1_Red}Microchip not found.{color1_/}") then
@@ -3371,48 +3431,39 @@ function GetCyborg()
 			end
 			local part2 = GetNearestChest()
 			if part2 then
-				count11 = count11 + 1
-				local chestTick = nil -- Fixed variable shadowing (ngu.md bug fix)
+				local chestStartedAt = tick()
+				TweenToCyborgChest(part2)
 				repeat
-					task.wait()
+					task.wait(0.05)
 					if
 						(localPlayer.Character.HumanoidRootPart.Position - part2.Position).Magnitude <= 5
 					then
-						if not chestTick then
-							chestTick = (tick())
-						elseif tick() - chestTick >= 5 then
-							Instance.new("IntValue", part2).Name = "Ignored"
-							wait(0.5)
-						end
 						VirtualInputManager:SendKeyEvent(true, "Space", false, game)
-						wait()
+						task.wait(0.05)
 						VirtualInputManager:SendKeyEvent(false, "Space", false, game)
-						TweenManager.CancelCurrent()
 					end
-					ToTarget(part2.CFrame, true)
+					TweenToCyborgChest(part2)
 				until not part2
 					or not part2.Parent
 					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 					or (part2:GetAttribute("IsDisabled"))
-					or (part2:FindFirstChild("Ignored"))
-					or not part2:FindFirstChild("TouchInterest")
+					or not part2.CanTouch
+					or DetectItemPlr("Fist of Darkness")
+					or tick() - chestStartedAt >= 60
+				CancelCyborgChestTween()
+				if part2 and part2.Parent and tick() - chestStartedAt >= 60 then
+					if not part2:FindFirstChild("Ignored") then
+						Instance.new("IntValue", part2).Name = "Ignored"
+					end
+				elseif not part2.Parent or part2:GetAttribute("IsDisabled")
+					or not part2.CanTouch
+				then
+					count11 = count11 + 1
+				end
 			else
-				local value7 = PathFindChest()
-				if value7 then
-					ToTarget(value7.Part.CFrame)
-					if localPlayer:DistanceFromCharacter(value7.Part.Position) <= 100 or (GetNearestChest()) then
-						Instance.new("IntValue", value7).Name = "Ignored"
-					end
-				else
-					if Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("PlayerSpawns") and Workspace._WorldOrigin.PlayerSpawns:FindFirstChild("Pirates") then
-						for unusedIndex, player in
-							pairs(Workspace._WorldOrigin.PlayerSpawns.Pirates:GetChildren())
-						do
-							if player:FindFirstChild("Ignored") then
-								player:FindFirstChild("Ignored"):Destroy()
-							end
-						end
-					end
+				CancelCyborgChestTween()
+				if Settings["Auto Get Cyborg Hop Collect Chest"] then
+					HopForCyborgChest()
 				end
 			end
 		else
@@ -3421,10 +3472,8 @@ function GetCyborg()
 			local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
 			if fist and humanoid then humanoid:EquipTool(fist) end
 			repeat
-				wait()
-				if Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CircleIsland") and Workspace.Map.CircleIsland:FindFirstChild("RaidSummon") then
-					fireclickdetector(Workspace.Map.CircleIsland.RaidSummon.Button.Main.ClickDetector)
-				end
+				wait(0.25)
+				TryCyborgRaidSummon()
 			until not DetectItemPlr("Fist of Darkness")
 			wait(0.5)
 			enabled5 = true
@@ -3437,9 +3486,7 @@ function GetCyborg()
 			local brain = localPlayer.Backpack:FindFirstChild("Core Brain")
 			local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
 			if brain and humanoid then humanoid:EquipTool(brain) end
-			if Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CircleIsland") and Workspace.Map.CircleIsland:FindFirstChild("RaidSummon") then
-				fireclickdetector(Workspace.Map.CircleIsland.RaidSummon.Button.Main.ClickDetector)
-			end
+			TryCyborgRaidSummon()
 			WriteCyborgState("unlock")
 			return
 		end
@@ -3466,9 +3513,7 @@ function GetCyborg()
 		then
 			getgenv().RequestFragmentFarm(1000)
 		elseif DetectItemPlr("Microchip") then
-			if Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("CircleIsland") and Workspace.Map.CircleIsland:FindFirstChild("RaidSummon") then
-				fireclickdetector(Workspace.Map.CircleIsland.RaidSummon.Button.Main.ClickDetector)
-			end
+			TryCyborgRaidSummon()
 		end
 	end
 end
