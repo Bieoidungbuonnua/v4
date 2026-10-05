@@ -1389,6 +1389,19 @@ function GoToSea(placeId)
 
     local currentSea, detectionSource = DetectCurrentSea()
     local targetSea = ResolveTargetSea(placeId)
+
+    -- A race worker may ask for Sea 2 again while the Tyrant fragment worker
+    -- is travelling to/farming in Sea 3. Keep fragment farming as the sole
+    -- owner of sea travel until its requested balance has been reached.
+    local fragmentTarget = tonumber(getgenv().TyrantFragmentFarmRequired) or 0
+    local currentFragments = 0
+    pcall(function() currentFragments = tonumber(localPlayer.Data.Fragments.Value) or 0 end)
+    if fragmentTarget > 0 and currentFragments < fragmentTarget and targetSea ~= 3 then
+        targetSea = 3
+        placeId = tonumber(getgenv().CheckPlaceId) or 7449423635
+        getgenv().TyrantFragmentFarmActive = true
+        getgenv().TyrantFragmentStatus = "TRAVEL_SEA_3"
+    end
     if tonumber(game.PlaceId) == tonumber(placeId) or (targetSea and currentSea == targetSea) then
         if getgenv().SeaTravelTarget then
             print(string.format("[Sea Travel] Arrived Sea %s (%s)", tostring(targetSea or currentSea), detectionSource))
@@ -3427,23 +3440,35 @@ function GetCyborg()
 		end
 		return
 	end
+
+	-- Resolve every fragment requirement before requesting Sea 2. This order is
+	-- essential after a teleport/re-execute: otherwise GetCyborg drags the player
+	-- back to Sea 2 before the Tyrant worker can restore its Sea 3 farming phase.
+	local fragments = 0
+	pcall(function() fragments = tonumber(localPlayer.Data.Fragments.Value) or 0 end)
+	local fragmentMode = tostring(Settings["LockFragment"] or ""):lower()
+	local savedState = ReadCyborgState()
+	if fragmentMode == "farmkhithieu" and type(getgenv().RequestFragmentFarm) == "function" then
+		if trainerState and fragments < 2500 then
+			getgenv().RequestFragmentFarm(2500)
+			return
+		end
+		if not trainerState and savedState == "unlock" and fragments < 1000
+			and not DetectItemPlr("Microchip") and not DetectItemPlr("Core Brain")
+			and not CheckNameBoss("Order")
+		then
+			getgenv().RequestFragmentFarm(1000)
+			return
+		end
+	end
 	if not GoToSea(getgenv().CheckPlaceId2) then
 		return
 	end
 	if trainerState then
-		local fragments = 0
-		pcall(function() fragments = tonumber(localPlayer.Data.Fragments.Value) or 0 end)
-		if tostring(Settings["LockFragment"] or ""):lower() == "farmkhithieu"
-			and fragments < 2500 and type(getgenv().RequestFragmentFarm) == "function"
-		then
-			getgenv().RequestFragmentFarm(2500)
-			return
-		end
 		ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Buy")
 		return
 	end
 
-	local savedState = ReadCyborgState()
 	if DetectItemPlr("Core Brain") then
 		savedState = "unlock"
 		WriteCyborgState(savedState)
@@ -3751,14 +3776,14 @@ end
 local TYRANT_TIKI_POSITION = CFrame.new(-16204.0810546875, 9.0863618850708, 479.2259521484375)
 local TYRANT_MOBS = { "Isle Champion", "Serpent Hunter", "Skull Slayer", "Sun-kissed Warrior" }
 local tyrantSpawnCursor = 0
-local requestedFragmentTarget = 0
+local requestedFragmentTarget = tonumber(getgenv().TyrantFragmentFarmRequired) or 0
 local cachedGearFragmentTarget = 0
 local lastGearFragmentCheck = 0
 local TyrantMouse
 pcall(function() TyrantMouse = require(ReplicatedStorage.Mouse) end)
 
-getgenv().TyrantFragmentFarmActive = false
-getgenv().TyrantFragmentStatus = "IDLE"
+getgenv().TyrantFragmentFarmActive = requestedFragmentTarget > 0
+getgenv().TyrantFragmentStatus = requestedFragmentTarget > 0 and "RESTORING_REQUEST" or "IDLE"
 
 local function GetLockConfigValue(key)
 	local joinConfig = getgenv().JoinV4Config
@@ -3771,6 +3796,8 @@ end
 
 local function RequestFragmentFarm(amount)
 	requestedFragmentTarget = math.max(requestedFragmentTarget, tonumber(amount) or 0)
+	getgenv().TyrantFragmentFarmRequired = requestedFragmentTarget
+	getgenv().TyrantFragmentFarmActive = requestedFragmentTarget > 0
 end
 getgenv().RequestFragmentFarm = RequestFragmentFarm
 
@@ -3955,7 +3982,7 @@ local function GetNeededFragmentTarget()
 		return getgenv().Mode == "CuttayV4" and requestedFragmentTarget or 0
 	end
 
-	local target = requestedFragmentTarget
+	local target = math.max(requestedFragmentTarget, tonumber(getgenv().TyrantFragmentFarmRequired) or 0)
 	local fragments = 0
 	pcall(function() fragments = tonumber(localPlayer.Data.Fragments.Value) or 0 end)
 	if tick() - lastGearFragmentCheck >= 2 then
@@ -4010,7 +4037,10 @@ task.spawn(function()
 			if getgenv().TyrantFragmentFarmActive then TweenManager.CancelCurrent() end
 			getgenv().TyrantFragmentFarmActive = false
 			getgenv().TyrantFragmentStatus = target > 0 and "TARGET_REACHED" or "DISABLED"
-			if target > 0 and fragments >= target then requestedFragmentTarget = 0 end
+			if target > 0 and fragments >= target then
+				requestedFragmentTarget = 0
+				getgenv().TyrantFragmentFarmRequired = 0
+			end
 		end
 	end
 end)
