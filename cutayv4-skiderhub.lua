@@ -694,24 +694,31 @@ function TweenManager.CancelCurrent()
     end
 end
 
-function ToTarget(targetCFrame, skipTween)
+function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     local char = localPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
     local head = char:FindFirstChild("Head") or hrp
-    if not head:FindFirstChild("eltrul") then
-        local bv = Instance.new("BodyVelocity")
-        bv.Name = "eltrul"
-        bv.MaxForce = Vector3.new(0, math.huge, 0)
-        bv.Velocity = Vector3.zero
-        bv.Parent = head
-    end
+    if preserveCollision then
+        -- Chest collection must not leave the character in the noclip/hover
+        -- state used by combat travel; that state causes visible rubber-banding.
+        local lift = head:FindFirstChild("eltrul")
+        if lift then lift:Destroy() end
+    else
+        if not head:FindFirstChild("eltrul") then
+            local bv = Instance.new("BodyVelocity")
+            bv.Name = "eltrul"
+            bv.MaxForce = Vector3.new(0, math.huge, 0)
+            bv.Velocity = Vector3.zero
+            bv.Parent = head
+        end
 
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = false
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
         end
     end
 
@@ -719,7 +726,7 @@ function ToTarget(targetCFrame, skipTween)
     local targetCF = typeof(targetCFrame) == "CFrame" and targetCFrame or CFrame.new(targetPos)
     local dist = (hrp.Position - targetPos).Magnitude
 
-    if skipTween or dist <= 15 then
+    if skipTween or (dist <= 15 and not forceTween) then
         TweenManager.CancelCurrent()
         hrp.CFrame = targetCF
         return
@@ -2068,7 +2075,17 @@ function GetNearestChest()
     local nearest, minDist = nil, 99999
     local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
-    for _, v in ipairs(Workspace:GetDescendants()) do
+
+    -- Tagged chests are much cheaper to scan than every Workspace descendant.
+    -- Fall back to the full scan only when the game has not tagged any chest.
+    local candidates = {}
+    pcall(function()
+        candidates = game:GetService("CollectionService"):GetTagged("_ChestTagged")
+    end)
+    if #candidates == 0 then
+        candidates = Workspace:GetDescendants()
+    end
+    for _, v in ipairs(candidates) do
         if (v.Name == "Chest1" or v.Name == "Chest2" or v.Name == "Chest3") and v:IsA("BasePart") and v.CanTouch and not v:FindFirstChild("Ignored") and not v:GetAttribute("IsDisabled") then
             local dist = (v.Position - hrp.Position).Magnitude
             if dist < minDist then
@@ -3388,43 +3405,73 @@ function GetCyborg()
 				HopForCyborgChest()
 				return
 			end
-			local part2 = GetNearestChest()
-			if part2 then
+			-- Stay in one collector loop so the next chest starts immediately after
+			-- the previous one is touched; do not return to the 0.5s race scheduler.
+			while (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
+				and not DetectItemPlr("Fist of Darkness")
+				and count11 < CYBORG_MAX_CHESTS
+			do
+				local chest = GetNearestChest()
+				if not chest then
+					TweenManager.CancelCurrent()
+					if Settings["Auto Get Cyborg Hop Collect Chest"] then HopForCyborgChest() end
+					return
+				end
+
+				local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+				if not root then
+					task.wait(0.1)
+					continue
+				end
+
+				local delta = chest.Position - root.Position
+				local direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
+				local passPosition = chest.Position + direction * 7
+				local passCFrame = CFrame.lookAt(passPosition, passPosition + direction)
 				local chestStartedAt = tick()
-				-- Use the script's shared TweenService pipeline. Start it once per
-				-- chest; recreating a tween every frame makes movement unstable.
-				ToTarget(part2.CFrame)
+				local lastPassAt = chestStartedAt
+
+				-- Existing shared TweenService, forced even inside 15 studs. Preserve
+				-- normal collision and pass through the chest instead of stopping on it.
+				ToTarget(passCFrame, false, true, true)
 				repeat
-					task.wait(0.05)
-					if
-						(localPlayer.Character.HumanoidRootPart.Position - part2.Position).Magnitude <= 5
-					then
-						VirtualInputManager:SendKeyEvent(true, "Space", false, game)
-						task.wait(0.05)
-						VirtualInputManager:SendKeyEvent(false, "Space", false, game)
+					task.wait()
+					root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+					if root and chest and chest.Parent then
+						local distance = (root.Position - chest.Position).Magnitude
+						-- If physics interrupted the pass, retry only after the shared tween
+						-- has stopped; never replace an active tween every frame.
+						if distance > 5 and tick() - lastPassAt >= 3
+							and (not CurrentTween or CurrentTween.PlaybackState ~= Enum.PlaybackState.Playing)
+						then
+							delta = chest.Position - root.Position
+							direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
+							passPosition = chest.Position + direction * 7
+							passCFrame = CFrame.lookAt(passPosition, passPosition + direction)
+							ToTarget(passCFrame, false, true, true)
+							lastPassAt = tick()
+						end
 					end
-				until not part2
-					or not part2.Parent
-					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
-					or (part2:GetAttribute("IsDisabled"))
-					or not part2.CanTouch
+				until not chest
+					or not chest.Parent
+					or chest:GetAttribute("IsDisabled")
+					or not chest.CanTouch
 					or DetectItemPlr("Fist of Darkness")
-					or tick() - chestStartedAt >= 60
+					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
+					or tick() - chestStartedAt >= 15
+
 				TweenManager.CancelCurrent()
-				if part2 and part2.Parent and tick() - chestStartedAt >= 60 then
-					if not part2:FindFirstChild("Ignored") then
-						Instance.new("IntValue", part2).Name = "Ignored"
-					end
-				elseif not part2.Parent or part2:GetAttribute("IsDisabled")
-					or not part2.CanTouch
-				then
+				local collected = not chest.Parent or chest:GetAttribute("IsDisabled") or not chest.CanTouch
+				if collected then
 					count11 = count11 + 1
+				elseif tick() - chestStartedAt >= 15 and not chest:FindFirstChild("Ignored") then
+					Instance.new("IntValue", chest).Name = "Ignored"
 				end
-			else
-				TweenManager.CancelCurrent()
-				if Settings["Auto Get Cyborg Hop Collect Chest"] then
-					HopForCyborgChest()
-				end
+				-- No delay here: loop immediately resolves and starts the next chest.
+			end
+
+			if count11 >= CYBORG_MAX_CHESTS and Settings["Auto Get Cyborg Hop Collect Chest"] then
+				HopForCyborgChest()
 			end
 		else
 			wait(1)
