@@ -687,11 +687,24 @@ local TweenManager = {}
 local CurrentTween = nil
 local TWEEN_SPEED = 150 -- TOÀN BỘ TWEEN ĐỀU Ở 150
 
-function TweenManager.CancelCurrent()
+function TweenManager.CancelTweenOnly()
     if CurrentTween then
         pcall(function() CurrentTween:Cancel() end)
         CurrentTween = nil
     end
+end
+
+function TweenManager.CancelCurrent()
+    TweenManager.CancelTweenOnly()
+    local character = localPlayer.Character
+    if not character then return end
+    for _, object in ipairs(character:GetDescendants()) do
+        if object:IsA("BodyVelocity") and (object.Name == "eltrul" or object.Name == "FloatForce") then
+            pcall(function() object:Destroy() end)
+        end
+    end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.PlatformStand = false end
 end
 
 function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
@@ -712,6 +725,7 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
             bv.Name = "eltrul"
             bv.MaxForce = Vector3.new(0, math.huge, 0)
             bv.Velocity = Vector3.zero
+            bv.P = 10000
             bv.Parent = head
         end
 
@@ -727,12 +741,14 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     local dist = (hrp.Position - targetPos).Magnitude
 
     if skipTween or (dist <= 15 and not forceTween) then
-        TweenManager.CancelCurrent()
+        TweenManager.CancelTweenOnly()
         hrp.CFrame = targetCF
         return
     end
 
-    TweenManager.CancelCurrent()
+    -- Retarget only the tween. Keep the character lock alive so switching
+    -- directly from one chest to the next does not produce a camera jerk.
+    TweenManager.CancelTweenOnly()
     local tweenDuration = dist / TWEEN_SPEED
     local tweenInfo = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear)
     CurrentTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCF })
@@ -3433,11 +3449,11 @@ function GetCyborg()
 				local chestStartedAt = tick()
 				local lastPassAt = chestStartedAt
 
-				-- Existing shared TweenService, forced even inside 15 studs. Preserve
-				-- normal collision and pass through the chest instead of stopping on it.
+				-- Existing shared TweenService, forced even inside 15 studs. Keep the
+				-- manager's character lock active while passing through the chest.
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
-				ToTarget(passCFrame, false, true, true)
+				ToTarget(passCFrame, false, true)
 				repeat
 					task.wait()
 					root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -3454,7 +3470,7 @@ function GetCyborg()
 							passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
 							root.AssemblyLinearVelocity = Vector3.zero
 							root.AssemblyAngularVelocity = Vector3.zero
-							ToTarget(passCFrame, false, true, true)
+							ToTarget(passCFrame, false, true)
 							lastPassAt = tick()
 						end
 					end
