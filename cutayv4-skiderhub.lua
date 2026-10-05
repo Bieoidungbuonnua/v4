@@ -696,6 +696,7 @@ end
 
 function TweenManager.CancelCurrent()
     TweenManager.CancelTweenOnly()
+    getgenv().CuttayTweenNoclipActive = false
     local character = localPlayer.Character
     if not character then return end
     for _, object in ipairs(character:GetDescendants()) do
@@ -715,11 +716,16 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
 
     local head = char:FindFirstChild("Head") or hrp
     if preserveCollision then
+        getgenv().CuttayTweenNoclipActive = false
         -- Chest collection must not leave the character in the noclip/hover
         -- state used by combat travel; that state causes visible rubber-banding.
         local lift = head:FindFirstChild("eltrul")
         if lift then lift:Destroy() end
     else
+        -- bnn.lua keeps noclip alive every frame while travelling. Setting
+        -- CanCollide once is not enough because Roblox can restore collision
+        -- while the root is crossing a wall, which causes rubber-banding.
+        getgenv().CuttayTweenNoclipActive = true
         if not head:FindFirstChild("eltrul") then
             local bv = Instance.new("BodyVelocity")
             bv.Name = "eltrul"
@@ -755,6 +761,23 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     CurrentTween:Play()
     return CurrentTween
 end
+
+-- Continuous internal noclip, matching the worker used by bnn.lua. Keep one
+-- connection across re-executes and enable it only while TweenManager travels.
+if getgenv().CuttayTweenNoclipConnection then
+    pcall(function() getgenv().CuttayTweenNoclipConnection:Disconnect() end)
+end
+getgenv().CuttayTweenNoclipActive = false
+getgenv().CuttayTweenNoclipConnection = RunService.Stepped:Connect(function()
+    if not getgenv().CuttayTweenNoclipActive then return end
+    local character = localPlayer.Character
+    if not character then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end
+end)
 
 -- [COMBAT, FAST ATTACK & BRING MOB] Ported from bnn.lua
 if Settings["Bring Mob"] == nil then Settings["Bring Mob"] = true end
@@ -1433,14 +1456,16 @@ local function teleportViaServerBrowser(jobId, placeId)
     return false
 end
 
-local function getOpenServers(maxPlayers)
+local function getOpenServers(maxPlayers, maxPages, minPlayers)
     maxPlayers = maxPlayers or 11
+    maxPages = maxPages or 3
+    minPlayers = minPlayers or 0
     local serverList = {}
     local sb = getServerBrowser()
 
     -- 1. Thử lấy danh sách từ __ServerBrowser của game
     if sb then
-        for page = 1, 3 do
+        for page = 1, maxPages do
             local ok, res = pcall(function() return sb:InvokeServer(page) end)
             if ok and type(res) == "table" and next(res) ~= nil then
                 for jid, data in pairs(res) do
@@ -1459,7 +1484,7 @@ local function getOpenServers(maxPlayers)
                     -- match so a Sea 3 JobId can never be used for another sub-place.
                     local correctPlace = listedPlaceId == nil or listedPlaceId == tonumber(game.PlaceId)
                     if #idStr >= 10 and correctPlace and idStr ~= tostring(game.JobId)
-                        and not _hopTried[idStr] and count <= maxPlayers then
+                        and not _hopTried[idStr] and count >= minPlayers and count <= maxPlayers then
                         table.insert(serverList, { id = idStr, count = count, placeId = listedPlaceId or game.PlaceId })
                     end
                 end
@@ -1485,7 +1510,7 @@ local function getOpenServers(maxPlayers)
                         local players = tonumber(server.playing) or 0
                         local capacity = tonumber(server.maxPlayers) or 12
                         if #id >= 10 and id ~= tostring(game.JobId) and not _hopTried[id]
-                            and players < capacity and players <= maxPlayers then
+                            and players < capacity and players >= minPlayers and players <= maxPlayers then
                             table.insert(serverList, {
                                 id = id,
                                 count = players,
@@ -3280,18 +3305,61 @@ local function IsCyborgChestServerOldEnough()
 	local oldestTimeIn
 	for _, object in ipairs(locations:GetDescendants()) do
 		local timeIn = tonumber(object:GetAttribute("TimeIn"))
-		if timeIn and timeIn >= 1400000000 and timeIn <= serverNow + 60 then
+		if timeIn and timeIn >= 1400000000 and timeIn <= serverNow + 60
+			and serverNow - timeIn <= 14 * 24 * 60 * 60
+		then
 			oldestTimeIn = not oldestTimeIn and timeIn or math.min(oldestTimeIn, timeIn)
 		end
 	end
 	return oldestTimeIn ~= nil and serverNow - oldestTimeIn >= CYBORG_MIN_SERVER_AGE
 end
 
+function ShouldCyborgHopChest()
+	return Settings["Auto Get Cyborg Hop Collect Chest"] == true or getgenv().Mode == "CuttayV4"
+end
+
 local function HopForCyborgChest()
-	if getgenv().DelayHop then return end
+	if getgenv().DelayHop then return false end
 	getgenv().DelayHop = true
-	HopLessAll()
+	TweenManager.CancelCurrent()
+	task.spawn(function()
+		-- Match autocy.lua: scan __ServerBrowser for a low server (1-7
+		-- players), prefer the least populated result, and join through the
+		-- game's own __ServerBrowser remote. Server age is verified again
+		-- after arriving because the browser does not expose TimeIn.
+		local pool = getOpenServers(7, 100, 1)
+		local lowPool = {}
+		for _, server in ipairs(pool) do
+			if server.count >= 1 and server.count <= 7 then
+				table.insert(lowPool, server)
+			end
+		end
+		table.sort(lowPool, function(a, b) return a.count < b.count end)
+		local chosen = lowPool[1]
+		if chosen then
+			_hopTried[chosen.id] = true
+			teleportViaServerBrowser(chosen.id, chosen.placeId)
+		else
+			-- Clear only the visited cache and rescan once, rather than falling
+			-- back to the patched TeleportService route.
+			table.clear(_hopTried)
+			_hopTried[tostring(game.JobId)] = true
+			pool = getOpenServers(7, 100, 1)
+			for _, server in ipairs(pool) do
+				if server.count >= 1 and server.count <= 7 then
+					table.insert(lowPool, server)
+				end
+			end
+			table.sort(lowPool, function(a, b) return a.count < b.count end)
+			chosen = lowPool[1]
+			if chosen then
+				_hopTried[chosen.id] = true
+				teleportViaServerBrowser(chosen.id, chosen.placeId)
+			end
+		end
+	end)
 	task.delay(8, function() getgenv().DelayHop = false end)
+	return true
 end
 
 local function ReadCyborgState()
@@ -3413,11 +3481,11 @@ function GetCyborg()
 	end
 	if Settings["Auto Get Fully Cyborg"] and not CheckNameBoss("Order") and not enabled5 then
 		if not DetectItemPlr("Fist of Darkness") then
-			if Settings["Auto Get Cyborg Hop Collect Chest"] and not IsCyborgChestServerOldEnough() then
+			if ShouldCyborgHopChest() and not IsCyborgChestServerOldEnough() then
 				HopForCyborgChest()
 				return
 			end
-			if count11 >= CYBORG_MAX_CHESTS and Settings["Auto Get Cyborg Hop Collect Chest"] then
+			if count11 >= CYBORG_MAX_CHESTS and ShouldCyborgHopChest() then
 				HopForCyborgChest()
 				return
 			end
@@ -3427,10 +3495,22 @@ function GetCyborg()
 				and not DetectItemPlr("Fist of Darkness")
 				and count11 < CYBORG_MAX_CHESTS
 			do
+				-- Same safety check as autocy.lua: revalidate TimeIn every ten
+				-- collected chests so a bad/stale age reading cannot consume all 55.
+				if count11 > 0 and count11 % 10 == 0
+					and getgenv().CuttayCyborgRuntime.LastAgeCheckChest ~= count11
+				then
+					getgenv().CuttayCyborgRuntime.LastAgeCheckChest = count11
+					if ShouldCyborgHopChest() and not IsCyborgChestServerOldEnough() then
+						TweenManager.CancelCurrent()
+						HopForCyborgChest()
+						return
+					end
+				end
 				local chest = GetNearestChest()
 				if not chest then
 					TweenManager.CancelCurrent()
-					if Settings["Auto Get Cyborg Hop Collect Chest"] then HopForCyborgChest() end
+					if ShouldCyborgHopChest() then HopForCyborgChest() end
 					return
 				end
 
@@ -3448,6 +3528,7 @@ function GetCyborg()
 				local passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
 				local chestStartedAt = tick()
 				local lastPassAt = chestStartedAt
+				local passedChest = false
 
 				-- Existing shared TweenService, forced even inside 15 studs. Keep the
 				-- manager's character lock active while passing through the chest.
@@ -3459,6 +3540,12 @@ function GetCyborg()
 					root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
 					if root and chest and chest.Parent then
 						local distance = (root.Position - chest.Position).Magnitude
+						-- The endpoint is 3.5 studs beyond the chest, so reaching this
+						-- radius means the root crossed its touch volume. Retarget on this
+						-- frame instead of waiting for replication to remove the chest.
+						if distance <= 4.25 then
+							passedChest = true
+						end
 						-- If physics interrupted the pass, retry only after the shared tween
 						-- has stopped; never replace an active tween every frame.
 						if distance > 5 and tick() - lastPassAt >= 3
@@ -3478,13 +3565,19 @@ function GetCyborg()
 					or not chest.Parent
 					or chest:GetAttribute("IsDisabled")
 					or not chest.CanTouch
+					or passedChest
 					or DetectItemPlr("Fist of Darkness")
 					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 					or tick() - chestStartedAt >= 15
 
-				local collected = not chest.Parent or chest:GetAttribute("IsDisabled") or not chest.CanTouch
+				local collected = passedChest or not chest.Parent or chest:GetAttribute("IsDisabled") or not chest.CanTouch
 				if collected then
 					count11 = count11 + 1
+					-- Replication can disable the chest one frame later. Ignore it now
+					-- so GetNearestChest immediately resolves the next route.
+					if chest.Parent and chest.CanTouch and not chest:FindFirstChild("Ignored") then
+						Instance.new("IntValue", chest).Name = "Ignored"
+					end
 				elseif tick() - chestStartedAt >= 15 and not chest:FindFirstChild("Ignored") then
 					Instance.new("IntValue", chest).Name = "Ignored"
 				end
@@ -3497,7 +3590,7 @@ function GetCyborg()
 			end
 
 			TweenManager.CancelCurrent()
-			if count11 >= CYBORG_MAX_CHESTS and Settings["Auto Get Cyborg Hop Collect Chest"] then
+			if count11 >= CYBORG_MAX_CHESTS and ShouldCyborgHopChest() then
 				HopForCyborgChest()
 			end
 		else
