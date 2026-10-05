@@ -7082,7 +7082,8 @@ local function CuttayResolveRole()
         if type(group) == "table" then
             for slot, rawName in ipairs(group) do
                 if tostring(rawName):gsub("^%s+", ""):gsub("%s+$", "") == username then
-                    return "Helper " .. tostring(slot), tostring((cfg["Note"] or {})[groupIndex] or ("group" .. groupIndex)), slot, groupIndex
+					local role = slot == 1 and "Helper FM" or ("Helper " .. tostring(slot))
+					return role, tostring((cfg["Note"] or {})[groupIndex] or ("group" .. groupIndex)), slot, groupIndex
                 end
             end
         end
@@ -8196,7 +8197,8 @@ end)
     local isHopFM  = AllHopFMSet[USERNAME]  ~= nil   -- là slot[1] của group nào đó
     local isMain   = not isHelper
 	if getgenv().Mode == "CuttayV4" then
-		getgenv().CuttayV4Role = isMain and "Main" or ("Helper " .. tostring(table.find(MY_GROUP_HELPERS, USERNAME) or "?"))
+		getgenv().CuttayV4Role = isMain and "Main"
+			or (isHopFM and "Helper FM" or ("Helper " .. tostring(table.find(MY_GROUP_HELPERS, USERNAME) or "?")))
 		if isHelper then getgenv().CuttayV4Group = MY_GROUP_NOTE or "?" end
 	end
 
@@ -8808,7 +8810,10 @@ end)
     end
 
     local function setStatus(txt)
-        currentStatus = _CUTTAY_MODE and tostring(getgenv().CuttayV4Status or txt or "") or tostring(txt or "")
+		-- Helper slot 1 keeps the original JoinV4 HopFM status instead of
+		-- having it hidden by the Cuttay farming status.
+		currentStatus = (_CUTTAY_MODE and not isHopFM)
+			and tostring(getgenv().CuttayV4Status or txt or "") or tostring(txt or "")
         getgenv().JoinV4RuntimeStatus = currentStatus
         paintStatus(currentStatus)
     end
@@ -9081,7 +9086,7 @@ end)
             return
         end
 
-        if _CUTTAY_MODE and getgenv().CuttayV4Status then
+		if _CUTTAY_MODE and not isHopFM and getgenv().CuttayV4Status then
 			currentStatus = tostring(getgenv().CuttayV4Status)
 		end
 
@@ -9117,7 +9122,7 @@ end)
         end
 
         local hasFM = isNight() and isFullMoon()
-		if _CUTTAY_MODE then
+		if _CUTTAY_MODE and not isHopFM then
 			local currentRace = CuttayDisplayRace(Player.Data.Race.Value)
 			local targetRace = tostring(getgenv().CuttayV4TargetRace or currentRace)
 			MoonLabel.Text = currentRace == targetRace and currentRace or (currentRace .. " → " .. targetRace)
@@ -9175,16 +9180,6 @@ end)
             local lastConflictCheckAt = 0
 
             while task.wait(0.25) do
-				if getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Phase ~= "V4" then
-					setStatus(getgenv().CuttayV4Status)
-					lastHopT = ""
-					continue
-				end
-				if getgenv().TyrantFragmentFarmActive then
-					setStatus("Farm Tyrant: " .. tostring(getgenv().TyrantFragmentStatus or "running"))
-					lastHopT = ""
-					continue
-				end
                 local nowTick = tick()
 
                 if isNight() and isFullMoon() then
@@ -9357,13 +9352,6 @@ end)
 
                     local resp = syncToAPI()
 					updateCuttayGroupState(resp)
-					if getgenv().TyrantFragmentFarmActive
-						or (getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Phase ~= "V4") then
-						setStatus(getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Status
-							or ("Farm Tyrant: " .. tostring(getgenv().TyrantFragmentStatus or "running")))
-						lastHopTHelper = ""
-						return
-					end
 
                     if isHopFM then
                         setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
@@ -9461,13 +9449,6 @@ end)
                     if myAssignedGroupId == nil or myAssignedGroupId == "" then
                         myAssignedGroupId = myDefaultGroup or trim(noteList[1] or "group1")
                     end
-					if getgenv().TyrantFragmentFarmActive
-						or (getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Phase ~= "V4") then
-						setStatus(getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Status
-							or ("Farm Tyrant: " .. tostring(getgenv().TyrantFragmentStatus or "running")))
-						lastHopTMain = ""
-						return
-					end
 
                     if not resp or not resp.accounts then
                         setStatus("Connecting...")
