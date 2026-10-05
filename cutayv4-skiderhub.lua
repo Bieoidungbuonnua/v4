@@ -3878,23 +3878,16 @@ end
 local function TyrantSpamSkullGuitar(targetCFrame)
 	local character = localPlayer.Character
 	if not character then return false end
+	-- Fire only from the equipped Character tool. Never reuse a Backpack
+	-- reference in the same frame that Humanoid:EquipTool moves the instance.
 	local guitar = character:FindFirstChild("Skull Guitar")
-	if not guitar then
-		local backpackGuitar = localPlayer.Backpack:FindFirstChild("Skull Guitar")
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if backpackGuitar and humanoid then
-			humanoid:EquipTool(backpackGuitar)
-			guitar = character:FindFirstChild("Skull Guitar") or backpackGuitar
-		end
-	end
 	if not guitar then return false end
 	local remote = guitar:FindFirstChild("RemoteEvent")
 	if not remote then return false end
-	local reloading = false
-	pcall(function()
-		reloading = require(ReplicatedStorage.Modules.CombatUtil):IsGunReloading(guitar)
+	local ok, reloading = pcall(function()
+		return require(ReplicatedStorage.Modules.CombatUtil):IsGunReloading(guitar)
 	end)
-	if reloading then return false end
+	if not ok or reloading then return false end
 	remote:FireServer("TAP", targetCFrame.Position)
 	return true
 end
@@ -3915,14 +3908,30 @@ local function TyrantDestroyTree(tree)
 			TyrantMouse.Target = tree
 		end
 	end)
-	if CheckItemInventory("Skull Guitar") then
-		local character = localPlayer.Character
-		local loadedGuitar = character and character:FindFirstChild("Skull Guitar")
-			or localPlayer.Backpack:FindFirstChild("Skull Guitar")
-		if not loadedGuitar then
-			ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadItem", "Skull Guitar")
-		else
+	local character = localPlayer.Character
+	local guitarAvailable = character and character:FindFirstChild("Skull Guitar")
+		or localPlayer.Backpack:FindFirstChild("Skull Guitar")
+		or CheckItemInventory("Skull Guitar")
+	if guitarAvailable then
+		local equippedGuitar = character and character:FindFirstChild("Skull Guitar")
+		if equippedGuitar then
+			-- Keep the guitar equipped. This function simply waits through reload
+			-- cycles and fires again as soon as CombatUtil reports ready.
 			TyrantSpamSkullGuitar(targetCFrame)
+			return
+		end
+
+		local backpackGuitar = localPlayer.Backpack:FindFirstChild("Skull Guitar")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if backpackGuitar and humanoid then
+			humanoid:EquipTool(backpackGuitar)
+			-- Wait for the next farm tick so the tool is confirmed under Character.
+			return
+		end
+
+		if tick() - (getgenv().TyrantLastSkullGuitarLoadAt or 0) >= 2 then
+			getgenv().TyrantLastSkullGuitarLoadAt = tick()
+			ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadItem", "Skull Guitar")
 		end
 	else
 		EquipTool(NameWeapon(Settings["Select Weapon"] or "Melee"))
