@@ -3426,13 +3426,17 @@ function GetCyborg()
 
 				local delta = chest.Position - root.Position
 				local direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
-				local passPosition = chest.Position + direction * 7
-				local passCFrame = CFrame.lookAt(passPosition, passPosition + direction)
+				local passPosition = chest.Position + direction * 3.5
+				-- Preserve current rotation. Reorienting the whole character toward
+				-- every chest makes the root visibly snap when the next target changes.
+				local passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
 				local chestStartedAt = tick()
 				local lastPassAt = chestStartedAt
 
 				-- Existing shared TweenService, forced even inside 15 studs. Preserve
 				-- normal collision and pass through the chest instead of stopping on it.
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
 				ToTarget(passCFrame, false, true, true)
 				repeat
 					task.wait()
@@ -3446,8 +3450,10 @@ function GetCyborg()
 						then
 							delta = chest.Position - root.Position
 							direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
-							passPosition = chest.Position + direction * 7
-							passCFrame = CFrame.lookAt(passPosition, passPosition + direction)
+							passPosition = chest.Position + direction * 3.5
+							passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
+							root.AssemblyLinearVelocity = Vector3.zero
+							root.AssemblyAngularVelocity = Vector3.zero
 							ToTarget(passCFrame, false, true, true)
 							lastPassAt = tick()
 						end
@@ -3460,16 +3466,21 @@ function GetCyborg()
 					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 					or tick() - chestStartedAt >= 15
 
-				TweenManager.CancelCurrent()
 				local collected = not chest.Parent or chest:GetAttribute("IsDisabled") or not chest.CanTouch
 				if collected then
 					count11 = count11 + 1
 				elseif tick() - chestStartedAt >= 15 and not chest:FindFirstChild("Ignored") then
 					Instance.new("IntValue", chest).Name = "Ignored"
 				end
+				if not collected or DetectItemPlr("Fist of Darkness")
+					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
+				then
+					TweenManager.CancelCurrent()
+				end
 				-- No delay here: loop immediately resolves and starts the next chest.
 			end
 
+			TweenManager.CancelCurrent()
 			if count11 >= CYBORG_MAX_CHESTS and Settings["Auto Get Cyborg Hop Collect Chest"] then
 				HopForCyborgChest()
 			end
