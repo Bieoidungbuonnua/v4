@@ -449,7 +449,6 @@ local ONECLICK_V4_SETTINGS = {
     ["Stack Train With Trial Race"] = true,
     ["Multi Trial"] = true,
     ["Select Team"] = "Marines",
-    ["No Frog"] = true,
 }
 
 local function ApplyOneClickV4Settings()
@@ -504,6 +503,29 @@ if getgenv().Mode == "OneClickV4" or getgenv().Mode == "CuttayV4" then
     Settings["Select Players Multi"] = helperSelection
     getgenv().HelperList = helperNames
 end
+
+-- Hidden mandatory No Fog runtime. This is deliberately not part of the
+-- exported/saved config and cannot be turned off by a stale user setting.
+getgenv().CuttayHiddenRuntimeSettings = getgenv().CuttayHiddenRuntimeSettings or {}
+getgenv().CuttayHiddenRuntimeSettings["No Frog"] = true
+Settings["No Frog"] = nil
+pcall(function()
+    Lighting.FogEnd = 100000
+    for _, child in ipairs(Lighting:GetDescendants()) do
+        if child:IsA("Atmosphere") then child:Destroy() end
+    end
+end)
+if getgenv().CuttayNoFogConnection then
+    pcall(function() getgenv().CuttayNoFogConnection:Disconnect() end)
+end
+getgenv().CuttayNoFogConnection = Lighting.DescendantAdded:Connect(function(child)
+    if child:IsA("Atmosphere") then
+        task.defer(function()
+            if child and child.Parent then child:Destroy() end
+        end)
+    end
+    Lighting.FogEnd = 100000
+end)
 
 if Settings["Auto Click"] == nil then
     Settings["Auto Click"] = true
@@ -3795,7 +3817,16 @@ local function GetLockConfigValue(key)
 end
 
 local function RequestFragmentFarm(amount)
-	requestedFragmentTarget = math.max(requestedFragmentTarget, tonumber(amount) or 0)
+	local requestedAmount = tonumber(amount) or 0
+	-- farmkhithieu is a reserve-building mode: once any race/gear workflow
+	-- reports insufficient fragments, farm all the way to 10,000 before the
+	-- caller is allowed to continue. Numeric LockFragment keeps its old logic.
+	if tostring(GetLockConfigValue("LockFragment") or ""):lower() == "farmkhithieu"
+		and requestedAmount > 0
+	then
+		requestedAmount = 10000
+	end
+	requestedFragmentTarget = math.max(requestedFragmentTarget, requestedAmount)
 	getgenv().TyrantFragmentFarmRequired = requestedFragmentTarget
 	getgenv().TyrantFragmentFarmActive = requestedFragmentTarget > 0
 end
@@ -3846,7 +3877,16 @@ end
 
 local function TyrantSpamSkullGuitar(targetCFrame)
 	local character = localPlayer.Character
-	local guitar = character and character:FindFirstChild("Skull Guitar")
+	if not character then return false end
+	local guitar = character:FindFirstChild("Skull Guitar")
+	if not guitar then
+		local backpackGuitar = localPlayer.Backpack:FindFirstChild("Skull Guitar")
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if backpackGuitar and humanoid then
+			humanoid:EquipTool(backpackGuitar)
+			guitar = character:FindFirstChild("Skull Guitar") or backpackGuitar
+		end
+	end
 	if not guitar then return false end
 	local remote = guitar:FindFirstChild("RemoteEvent")
 	if not remote then return false end
@@ -3854,7 +3894,8 @@ local function TyrantSpamSkullGuitar(targetCFrame)
 	pcall(function()
 		reloading = require(ReplicatedStorage.Modules.CombatUtil):IsGunReloading(guitar)
 	end)
-	if not reloading then remote:FireServer("TAP", targetCFrame.Position) end
+	if reloading then return false end
+	remote:FireServer("TAP", targetCFrame.Position)
 	return true
 end
 
@@ -3875,10 +3916,12 @@ local function TyrantDestroyTree(tree)
 		end
 	end)
 	if CheckItemInventory("Skull Guitar") then
-		if NameWeapon("Gun") ~= "Skull Guitar" then
+		local character = localPlayer.Character
+		local loadedGuitar = character and character:FindFirstChild("Skull Guitar")
+			or localPlayer.Backpack:FindFirstChild("Skull Guitar")
+		if not loadedGuitar then
 			ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadItem", "Skull Guitar")
 		else
-			EquipTool("Skull Guitar")
 			TyrantSpamSkullGuitar(targetCFrame)
 		end
 	else
@@ -3893,8 +3936,6 @@ local function TyrantAttackMob(mob, isBoss)
 	if not IsMobAlive(mob) then return end
 	SizePart(mob)
 	if not isBoss then BringMob(mob) end
-	UsedualFlock()
-	ClickM1(mob)
 	getgenv().AimPos = mob.HumanoidRootPart.CFrame
 	getgenv().TyrantAimPosition = mob.HumanoidRootPart.CFrame
 	pcall(function()
@@ -3906,7 +3947,10 @@ local function TyrantAttackMob(mob, isBoss)
 	local offset = Settings["Select Weapon"] == "Blox Fruit"
 		and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
 	ToTarget(mob.HumanoidRootPart.CFrame * offset)
-	AutoAllSkill()
+	-- Exact bnn.lua Tyrant combat path: selected weapon + real Fast Attack M1.
+	-- Skills are intentionally never fired while attacking Tyrant or its mobs.
+	UsedualFlock()
+	ClickM1(mob)
 end
 
 local function TyrantMoveToNextSpawn()
@@ -3983,8 +4027,24 @@ local function GetNeededFragmentTarget()
 	end
 
 	local target = math.max(requestedFragmentTarget, tonumber(getgenv().TyrantFragmentFarmRequired) or 0)
+	-- Normalize requests restored from an older execution that may still carry
+	-- the former 1,000/2,500/3,000 target.
+	if target > 0 then
+		target = 10000
+		requestedFragmentTarget = 10000
+		getgenv().TyrantFragmentFarmRequired = 10000
+	end
 	local fragments = 0
 	pcall(function() fragments = tonumber(localPlayer.Data.Fragments.Value) or 0 end)
+	local gearReserveTarget = tonumber(getgenv().TyrantFragmentGearRequired) or 0
+	if gearReserveTarget > 0 then
+		if fragments < gearReserveTarget then
+			target = math.max(target, gearReserveTarget)
+		else
+			getgenv().TyrantFragmentGearRequired = 0
+			gearReserveTarget = 0
+		end
+	end
 	if tick() - lastGearFragmentCheck >= 2 then
 		lastGearFragmentCheck = tick()
 		local ok, code, _, cost = pcall(function()
@@ -3996,7 +4056,11 @@ local function GetNeededFragmentTarget()
 		end
 	end
 	if fragments < cachedGearFragmentTarget then
-		target = math.max(target, cachedGearFragmentTarget)
+		-- Gear shortage has its own smaller reserve target. Keep it separate
+		-- from race/reroll requests so farmkhithieu does not normalize it to 10k.
+		gearReserveTarget = math.max(6000, cachedGearFragmentTarget)
+		getgenv().TyrantFragmentGearRequired = gearReserveTarget
+		target = math.max(target, gearReserveTarget)
 	end
 	return target
 end
@@ -6438,22 +6502,6 @@ Tabs.RaceNormal:AddToggle("HopServerGetGhoul", {
 -- [[ TAB: RACE V4 ]]
 local RaceV4Section = Tabs.RaceV4:AddSection("Race V4")
 
-Tabs.RaceV4:AddToggle("NoFrog", {
-    Title = "No Fog",
-    Default = Settings["No Frog"] or false,
-    Callback = function(enabled)
-        SaveSettings("No Frog", enabled)
-        if enabled then
-            Lighting.FogEnd = 100000
-            for unusedIndex, child in pairs(Lighting:GetDescendants()) do
-                if child:IsA("Atmosphere") then
-                    child:Destroy()
-                end
-            end
-        end
-    end
-})
-
 Tabs.RaceV4:AddToggle("TeleportAcientClock", {
     Title = "Teleport Acient Clock",
     Default = Settings["Teleport Acient Clock"] or false,
@@ -6691,7 +6739,6 @@ Tabs.KillTrial:AddToggle("JustUseSkillWhenPlayerActiveKen", {
 local function ExportConfigTableString()
     local configKeysOrder = {
         { key = "Select Team", default = (localPlayer.Team and localPlayer.Team.Name) or "Marines" },
-        { key = "No Frog", default = false },
         { key = "Select Weapon", default = "Melee" },
         { key = "LockRace", default = false },
         { key = "Roll Race Helper", default = false },
