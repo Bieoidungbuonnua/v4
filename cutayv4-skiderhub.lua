@@ -1535,7 +1535,7 @@ function HopLessAll()
     HopServer()
 end
 
-local function SetCuttayPullLeverStatusRuntime(text)
+function SetCuttayPullLeverStatusRuntime(text)
     text = tostring(text or "working")
     getgenv().CuttayPullLeverStatus = text
     if getgenv().Mode == "CuttayV4" then
@@ -3217,20 +3217,24 @@ local cyborgStateFile = configFolder .. "/" .. username .. "-cyborg.txt"
 local cyborgStateMemory = "NaN"
 local CYBORG_MIN_SERVER_AGE = 4 * 60 * 60
 local CYBORG_MAX_CHESTS = 55
-local CYBORG_SUMMON_COOLDOWN = 10
-local cyborgLastSummonAt = -math.huge
-local cyborgChestTween = nil
-local cyborgChestTweenTarget = nil
+getgenv().CuttayCyborgRuntime = getgenv().CuttayCyborgRuntime or {
+	SummonCooldown = 10,
+	LastSummonAt = -math.huge,
+	ChestTween = nil,
+	ChestTweenTarget = nil,
+}
+getgenv().CuttayCyborgRuntime.SummonCooldown = 10
 
-local function CancelCyborgChestTween()
-	if cyborgChestTween then
-		pcall(function() cyborgChestTween:Cancel() end)
+function CancelCyborgChestTween()
+	local runtime = getgenv().CuttayCyborgRuntime
+	if runtime.ChestTween then
+		pcall(function() runtime.ChestTween:Cancel() end)
 	end
-	cyborgChestTween = nil
-	cyborgChestTweenTarget = nil
+	runtime.ChestTween = nil
+	runtime.ChestTweenTarget = nil
 end
 
-local function TweenToCyborgChest(chest)
+function TweenToCyborgChest(chest)
 	if not chest or not chest.Parent or not chest:IsA("BasePart") then
 		CancelCyborgChestTween()
 		return false
@@ -3245,8 +3249,9 @@ local function TweenToCyborgChest(chest)
 
 	-- Never use ToTarget(..., true) or assign HRP.CFrame here. Chest travel is
 	-- always a real linear tween at the configured speed of 150.
-	if cyborgChestTweenTarget == chest and cyborgChestTween
-		and cyborgChestTween.PlaybackState == Enum.PlaybackState.Playing
+	local runtime = getgenv().CuttayCyborgRuntime
+	if runtime.ChestTweenTarget == chest and runtime.ChestTween
+		and runtime.ChestTween.PlaybackState == Enum.PlaybackState.Playing
 	then
 		return true
 	end
@@ -3255,18 +3260,19 @@ local function TweenToCyborgChest(chest)
 	TweenManager.CancelCurrent()
 	local distance = (root.Position - chest.Position).Magnitude
 	local duration = math.max(distance / TWEEN_SPEED, 0.08)
-	cyborgChestTweenTarget = chest
-	cyborgChestTween = TweenService:Create(
+	runtime.ChestTweenTarget = chest
+	runtime.ChestTween = TweenService:Create(
 		root,
 		TweenInfo.new(duration, Enum.EasingStyle.Linear),
 		{ CFrame = chest.CFrame }
 	)
-	cyborgChestTween:Play()
+	runtime.ChestTween:Play()
 	return true
 end
 
-local function TryCyborgRaidSummon()
-	if tick() - cyborgLastSummonAt < CYBORG_SUMMON_COOLDOWN then return false end
+function TryCyborgRaidSummon()
+	local runtime = getgenv().CuttayCyborgRuntime
+	if tick() - runtime.LastSummonAt < runtime.SummonCooldown then return false end
 	local map = Workspace:FindFirstChild("Map")
 	local circle = map and map:FindFirstChild("CircleIsland")
 	local raidSummon = circle and circle:FindFirstChild("RaidSummon")
@@ -3274,7 +3280,7 @@ local function TryCyborgRaidSummon()
 	local main = button and button:FindFirstChild("Main")
 	local detector = main and main:FindFirstChildOfClass("ClickDetector")
 	if not detector then return false end
-	cyborgLastSummonAt = tick()
+	runtime.LastSummonAt = tick()
 	pcall(function() fireclickdetector(detector) end)
 	return true
 end
@@ -3972,7 +3978,7 @@ local leverTargetCFrame, count12 =
 	),
 	0.2
 
-local function GetMysticIslandModel()
+function GetMysticIslandModel()
 	local map = Workspace:FindFirstChild("Map")
 	if not map then return nil end
 	return map:FindFirstChild("MysticIsland")
@@ -3980,7 +3986,7 @@ local function GetMysticIslandModel()
 		or map:FindFirstChild("Mirage Island")
 end
 
-local function GetMirageLocationMarker()
+function GetMirageLocationMarker()
 	local origin = Workspace:FindFirstChild("_WorldOrigin")
 	local locations = origin and origin:FindFirstChild("Locations")
 	if not locations then return nil end
@@ -3989,7 +3995,7 @@ local function GetMirageLocationMarker()
 		or locations:FindFirstChild("MysticIsland")
 end
 
-local function IsMiragePresentInServer()
+function IsMiragePresentInServer()
 	return GetMysticIslandModel() ~= nil or GetMirageLocationMarker() ~= nil
 end
 
@@ -4219,17 +4225,21 @@ local function PullLeverV4Legacy()
 	end
 end
 
-local MIRAGE_MAP_LOAD_GRACE = 5
-local cuttayMirageCheckJobId = tostring(game.JobId)
-local cuttayMirageCheckStartedAt = tick()
+getgenv().CuttayMirageRuntime = getgenv().CuttayMirageRuntime or {
+	LoadGrace = 5,
+	JobId = tostring(game.JobId),
+	CheckStartedAt = tick(),
+}
+getgenv().CuttayMirageRuntime.LoadGrace = 5
 
-local function MirageMapLoadWaitRemaining()
+function MirageMapLoadWaitRemaining()
+	local runtime = getgenv().CuttayMirageRuntime
 	local currentJobId = tostring(game.JobId)
-	if cuttayMirageCheckJobId ~= currentJobId then
-		cuttayMirageCheckJobId = currentJobId
-		cuttayMirageCheckStartedAt = tick()
+	if runtime.JobId ~= currentJobId then
+		runtime.JobId = currentJobId
+		runtime.CheckStartedAt = tick()
 	end
-	return math.max(0, MIRAGE_MAP_LOAD_GRACE - (tick() - cuttayMirageCheckStartedAt))
+	return math.max(0, runtime.LoadGrace - (tick() - runtime.CheckStartedAt))
 end
 
 function PullLeverV4()
