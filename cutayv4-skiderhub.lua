@@ -718,49 +718,32 @@ end
 
 function TweenManager.CancelCurrent()
     TweenManager.CancelTweenOnly()
-    getgenv().CuttayTweenNoclipActive = false
-    local character = localPlayer.Character
-    if not character then return end
-    for _, object in ipairs(character:GetDescendants()) do
-        if object:IsA("BodyVelocity") and (object.Name == "eltrul" or object.Name == "FloatForce") then
-            pcall(function() object:Destroy() end)
-        end
-    end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid then humanoid.PlatformStand = false end
 end
 
-function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
+function ToTarget(targetCFrame, skipTween)
+    -- Chest travel has its own mover. Normal farm travel always takes control
+    -- back before starting so a stale chest Heartbeat cannot fight Flower/mob tween.
+    if ChestTweenManager and ChestTweenManager.Cancel then
+        ChestTweenManager.Cancel()
+    end
+
     local char = localPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
     local head = char:FindFirstChild("Head") or hrp
-    if preserveCollision then
-        getgenv().CuttayTweenNoclipActive = false
-        -- Chest collection must not leave the character in the noclip/hover
-        -- state used by combat travel; that state causes visible rubber-banding.
-        local lift = head:FindFirstChild("eltrul")
-        if lift then lift:Destroy() end
-    else
-        -- bnn.lua keeps noclip alive every frame while travelling. Setting
-        -- CanCollide once is not enough because Roblox can restore collision
-        -- while the root is crossing a wall, which causes rubber-banding.
-        getgenv().CuttayTweenNoclipActive = true
-        if not head:FindFirstChild("eltrul") then
-            local bv = Instance.new("BodyVelocity")
-            bv.Name = "eltrul"
-            bv.MaxForce = Vector3.new(0, math.huge, 0)
-            bv.Velocity = Vector3.zero
-            bv.P = 10000
-            bv.Parent = head
-        end
+    if not head:FindFirstChild("eltrul") then
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "eltrul"
+        bv.MaxForce = Vector3.new(0, math.huge, 0)
+        bv.Velocity = Vector3.zero
+        bv.Parent = head
+    end
 
-        for _, part in ipairs(char:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
         end
     end
 
@@ -768,15 +751,13 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     local targetCF = typeof(targetCFrame) == "CFrame" and targetCFrame or CFrame.new(targetPos)
     local dist = (hrp.Position - targetPos).Magnitude
 
-    if skipTween or (dist <= 15 and not forceTween) then
-        TweenManager.CancelTweenOnly()
+    if skipTween or dist <= 15 then
+        TweenManager.CancelCurrent()
         hrp.CFrame = targetCF
         return
     end
 
-    -- Retarget only the tween. Keep the character lock alive so switching
-    -- directly from one chest to the next does not produce a camera jerk.
-    TweenManager.CancelTweenOnly()
+    TweenManager.CancelCurrent()
     local tweenDuration = dist / TWEEN_SPEED
     local tweenInfo = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear)
     CurrentTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCF })
@@ -784,22 +765,91 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     return CurrentTween
 end
 
--- Continuous internal noclip, matching the worker used by bnn.lua. Keep one
--- connection across re-executes and enable it only while TweenManager travels.
+-- Remove the experimental shared noclip worker from older executions. Normal
+-- ToTarget is restored above; only chest collection uses the special mover.
 if getgenv().CuttayTweenNoclipConnection then
     pcall(function() getgenv().CuttayTweenNoclipConnection:Disconnect() end)
+    getgenv().CuttayTweenNoclipConnection = nil
 end
 getgenv().CuttayTweenNoclipActive = false
-getgenv().CuttayTweenNoclipConnection = RunService.Stepped:Connect(function()
-    if not getgenv().CuttayTweenNoclipActive then return end
-    local character = localPlayer.Character
-    if not character then return end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = false
-        end
+
+-- Dedicated chest mover ported from autocy.lua. It never creates/cancels
+-- CurrentTween, so chest retargeting cannot disturb normal farm movement.
+if getgenv().CuttayChestMoveConnection then
+    pcall(function() getgenv().CuttayChestMoveConnection:Disconnect() end)
+end
+getgenv().CuttayChestMoveConnection = nil
+getgenv().CuttayChestMoveTarget = nil
+getgenv().CuttayChestMoveActive = false
+
+ChestTweenManager = {}
+
+function ChestTweenManager.Cancel()
+    if getgenv().CuttayChestMoveConnection then
+        pcall(function() getgenv().CuttayChestMoveConnection:Disconnect() end)
     end
-end)
+    getgenv().CuttayChestMoveConnection = nil
+    getgenv().CuttayChestMoveTarget = nil
+    getgenv().CuttayChestMoveActive = false
+end
+
+function ChestTweenManager.IsMoving()
+    return getgenv().CuttayChestMoveActive == true
+end
+
+function ChestTweenManager.MoveTo(target)
+    local targetPosition = typeof(target) == "CFrame" and target.Position or target
+    if typeof(targetPosition) ~= "Vector3" then return false end
+
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health <= 0 then
+        ChestTweenManager.Cancel()
+        return false
+    end
+
+    if (root.Position - targetPosition).Magnitude <= 5 then
+        root.CFrame = CFrame.new(targetPosition)
+        return true
+    end
+
+    getgenv().CuttayChestMoveTarget = targetPosition
+    if getgenv().CuttayChestMoveConnection then return true end
+
+    getgenv().CuttayChestMoveActive = true
+    getgenv().CuttayChestMoveConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        local currentCharacter = localPlayer.Character
+        local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+        local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+        local moveTarget = getgenv().CuttayChestMoveTarget
+        if not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 or not moveTarget then
+            ChestTweenManager.Cancel()
+            return
+        end
+
+        for _, part in ipairs(currentCharacter:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+
+        local difference = moveTarget - currentRoot.Position
+        local remaining = difference.Magnitude
+        if remaining <= 3 then
+            currentRoot.CFrame = CFrame.new(moveTarget)
+            currentRoot.AssemblyLinearVelocity = Vector3.zero
+            currentRoot.AssemblyAngularVelocity = Vector3.zero
+            ChestTweenManager.Cancel()
+            return
+        end
+
+        currentRoot.CFrame = CFrame.new(
+            currentRoot.Position + difference.Unit * math.min(TWEEN_SPEED * deltaTime, remaining)
+        )
+        currentRoot.AssemblyLinearVelocity = Vector3.zero
+        currentRoot.AssemblyAngularVelocity = Vector3.zero
+    end)
+    return true
+end
 
 -- [COMBAT, FAST ATTACK & BRING MOB] Ported from bnn.lua
 if Settings["Bring Mob"] == nil then Settings["Bring Mob"] = true end
@@ -2698,36 +2748,48 @@ end
 function AutoMinkV2()
 	local part2 = GetNearestChest()
 	if part2 then
-		local npcNames
+		local chestStartedAt = tick()
+		ChestTweenManager.MoveTo(part2.Position)
 		repeat
-			task.wait()
-			if (localPlayer.Character.HumanoidRootPart.Position - part2.Position).Magnitude <= 5 then
-				if not npcNames then
-					npcNames = (tick())
-				elseif tick() - npcNames >= 5 then
-					Instance.new("IntValue", part2).Name = "Ignored"
-					wait(0.5)
+			task.wait(0.05)
+			local character = localPlayer.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			if root and part2 and part2.Parent then
+				local distance = (root.Position - part2.Position).Magnitude
+				if distance <= 5 then
+					-- Same final touch used by autocy.lua. Chest movement remains
+					-- isolated from the normal TweenService farm path.
+					root.CFrame = CFrame.new(part2.Position)
 				end
-				VirtualInputManager:SendKeyEvent(true, "Space", false, game)
-				wait()
-				VirtualInputManager:SendKeyEvent(false, "Space", false, game)
-				TweenManager.CancelCurrent()
 			end
-			ToTarget(part2.CFrame, true)
 		until not part2
 			or not part2.Parent
 			or not Settings["Auto Upgrade Race V2-V3"]
 			or (part2:GetAttribute("IsDisabled"))
 			or (part2:FindFirstChild("Ignored"))
-			or not part2:FindFirstChild("TouchInterest")
+			or not part2.CanTouch
+			or tick() - chestStartedAt >= 60
+
+		ChestTweenManager.Cancel()
+		if part2 and part2.Parent and part2.CanTouch
+			and not part2:GetAttribute("IsDisabled")
+			and tick() - chestStartedAt >= 60
+			and not part2:FindFirstChild("Ignored")
+		then
+			Instance.new("IntValue", part2).Name = "Ignored"
+		end
 	else
 		local value7 = PathFindChest()
 		if value7 then
-			ToTarget(value7.Part.CFrame)
-			if localPlayer:DistanceFromCharacter(value7.Part.Position) <= 100 or (GetNearestChest()) then
-				Instance.new("IntValue", value7).Name = "Ignored"
+			ChestTweenManager.MoveTo(value7.Part.Position)
+			if localPlayer:DistanceFromCharacter(value7.Part.Position) <= 5 or GetNearestChest() then
+				ChestTweenManager.Cancel()
+				if value7.Part and not value7.Part:FindFirstChild("Ignored") then
+					Instance.new("IntValue", value7.Part).Name = "Ignored"
+				end
 			end
 		else
+			ChestTweenManager.Cancel()
 			if Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("PlayerSpawns") and Workspace._WorldOrigin.PlayerSpawns:FindFirstChild("Pirates") then
 				for unusedIndex, player in pairs(Workspace._WorldOrigin.PlayerSpawns.Pirates:GetChildren()) do
 					if player:FindFirstChild("Ignored") then
@@ -8197,8 +8259,7 @@ end)
     local isHopFM  = AllHopFMSet[USERNAME]  ~= nil   -- là slot[1] của group nào đó
     local isMain   = not isHelper
 	if getgenv().Mode == "CuttayV4" then
-		getgenv().CuttayV4Role = isMain and "Main"
-			or (isHopFM and "Helper FM" or ("Helper " .. tostring(table.find(MY_GROUP_HELPERS, USERNAME) or "?")))
+		getgenv().CuttayV4Role = isMain and "Main" or ("Helper " .. tostring(table.find(MY_GROUP_HELPERS, USERNAME) or "?"))
 		if isHelper then getgenv().CuttayV4Group = MY_GROUP_NOTE or "?" end
 	end
 
@@ -8312,39 +8373,22 @@ end)
         return ok and result == true
     end
 
-    -- FIND FM SERVER (Multi-fallback HTTP)
+    -- FIND FM SERVER (API kurinian-hub: 2-6 player, chi server dang FM co endfullmoon 4:00-9:00, uu tien con lai lau nhat)
     local function findFMServer()
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
-        local function getField(tbl, ...)
-            if type(tbl) ~= "table" then return nil end
-            local low = {}
-            for k, v in pairs(tbl) do if type(k) == "string" then low[k:lower()] = v end end
-            for i = 1, select("#", ...) do
-                local n = select(i, ...)
-                if n then local val = low[n:lower()]; if val ~= nil then return val end end
-            end
-            return nil
-        end
+        local FM_MIN_PLAYERS = 2
+        local FM_MAX_PLAYERS = 6
+        local FM_MIN_SECONDS = 240   -- endfullmoon toi thieu 4:00
+        local FM_MAX_SECONDS = 540   -- endfullmoon toi da 9:00
 
-        local function parsePlayers(f)
-            if not f then return nil end
-            if type(f) == "number" then return f end
-            if type(f) == "string" then
-                local cur = f:match("(%d+)%s*/%s*%d+")
-                if cur then return tonumber(cur) end
-                return tonumber(f)
-            end
+        -- "9:15" -> 555 giay
+        local function parseMMSS(s)
+            if type(s) == "number" then return s end
+            if type(s) ~= "string" then return nil end
+            local m, sec = s:match("^(%d+):(%d+)$")
+            if m then return tonumber(m) * 60 + tonumber(sec) end
             return nil
-        end
-
-        local function parseFullMoonIn(entry)
-            local value = getField(entry, "fullmoonin", "fullMoonIn", "full_moon_in")
-            if type(value) == "number" then return value end
-            if type(value) ~= "string" then return nil end
-            local minutes, seconds = value:match("^(%d+):(%d+)$")
-            if not minutes then return nil end
-            return tonumber(minutes) * 60 + tonumber(seconds)
         end
 
         local resp = nil
@@ -8368,42 +8412,31 @@ end)
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
         if not ok2 or type(parsed) ~= "table" then return nil end
 
-        local entries
-        if type(parsed.data) == "table" and #parsed.data > 0 then
-            entries = parsed.data
-        elseif type(parsed) == "table" and #parsed > 0 then
-            entries = parsed
-        else return nil end
+        local entries = parsed.data
+        if type(entries) ~= "table" or #entries == 0 then return nil end
 
         local candidates = {}
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
-            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
-            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
-            local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
-            local fullMoonIn = parseFullMoonIn(v)
+            local jobId   = v.jobid
+            local placeId = v.placeid
+            local players = tonumber(v.players)
+            local ttf     = parseMMSS(v.endfullmoon)  -- giay con lai truoc khi Full Moon ket thuc
+            if v.fullmoonin ~= nil then continue end   -- chua toi FM -> bo qua
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            if players and tonumber(players) >= 2 and tonumber(players) <= 6
-                and fullMoonIn and fullMoonIn >= 4 * 60
-            then
-                table.insert(candidates, {
-                    jobId = tostring(jobId),
-                    players = tonumber(players),
-                    fullMoonIn = fullMoonIn,
-                    priority = fullMoonIn >= 9 * 60,
-                })
-            end
+            if not players or players < FM_MIN_PLAYERS or players > FM_MAX_PLAYERS then continue end
+            if not ttf or ttf < FM_MIN_SECONDS or ttf > FM_MAX_SECONDS then continue end
+            table.insert(candidates, {jobId = tostring(jobId), players = players, ttf = ttf})
         end
         if #candidates == 0 then return nil end
-        -- Ưu tiên >=9 phút; fallback thấp nhất 4 phút; trong cùng nhóm chọn ít player trước.
+        -- Uu tien endfullmoon con lai lau nhat, bang nhau thi it player hon
         table.sort(candidates, function(a, b)
-            if a.priority ~= b.priority then return a.priority end
-            if a.players ~= b.players then return a.players < b.players end
-            return a.fullMoonIn > b.fullMoonIn
+            if a.ttf ~= b.ttf then return a.ttf > b.ttf end
+            return a.players < b.players
         end)
         return candidates[1].jobId
     end
@@ -8729,12 +8762,12 @@ end)
     local C_BLUE   = Color3.fromRGB(10, 132, 255)
     local C_PURPLE = Color3.fromRGB(191, 90, 242)
     local C_MUTED  = Color3.fromRGB(142, 142, 147)
-    local C_WHITE  = Color3.fromRGB(245, 245, 247)
-    local C_BG     = Color3.fromRGB(0, 0, 0)
+    local C_WHITE  = _CUTTAY_MODE and Color3.fromRGB(28, 28, 30) or Color3.fromRGB(245, 245, 247)
+    local C_BG     = _CUTTAY_MODE and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(0, 0, 0)
 
     local HOME_POSITION = UDim2.new(0.5, 0, 0, 11)
-    local COMPACT_SIZE  = UDim2.new(0, 286, 0, 40)
-    local EXPANDED_SIZE = UDim2.new(0, 390, 0, 210)
+    local COMPACT_SIZE  = _CUTTAY_MODE and UDim2.new(0, 429, 0, 60) or UDim2.new(0, 286, 0, 40)
+    local EXPANDED_SIZE = _CUTTAY_MODE and UDim2.new(0, 585, 0, 315) or UDim2.new(0, 390, 0, 210)
 
     local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel
     local CompactRole, CompactStatus, StatusDot, IslandStroke, IslandCorner
@@ -8810,10 +8843,7 @@ end)
     end
 
     local function setStatus(txt)
-		-- Helper slot 1 keeps the original JoinV4 HopFM status instead of
-		-- having it hidden by the Cuttay farming status.
-		currentStatus = (_CUTTAY_MODE and not isHopFM)
-			and tostring(getgenv().CuttayV4Status or txt or "") or tostring(txt or "")
+        currentStatus = _CUTTAY_MODE and tostring(getgenv().CuttayV4Status or txt or "") or tostring(txt or "")
         getgenv().JoinV4RuntimeStatus = currentStatus
         paintStatus(currentStatus)
     end
@@ -8898,7 +8928,7 @@ end)
 
         local gradient = Instance.new("UIGradient")
         gradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 20, 22)),
+            ColorSequenceKeypoint.new(0, _CUTTAY_MODE and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(20, 20, 22)),
             ColorSequenceKeypoint.new(1, C_BG),
         })
         gradient.Rotation = 120
@@ -8952,7 +8982,7 @@ end)
         expanded.Parent = island
         ExpandedContent = expanded
 
-        local title = newLabel(expanded, "Title", _CUTTAY_MODE and "CUTTAY V4" or "JOIN V4", FONT_SF_BOLD, 18)
+        local title = newLabel(expanded, "Title", _CUTTAY_MODE and "CUTTAY V4" or "JOIN V4", FONT_SF_BOLD, _CUTTAY_MODE and 22 or 18)
         title.Size = UDim2.new(0, 130, 0, 26)
         title.Position = UDim2.new(0, 22, 0, 15)
         title.ZIndex = 52
@@ -8967,7 +8997,7 @@ end)
         local divider = Instance.new("Frame")
         divider.Size = UDim2.new(1, -44, 0, 1)
         divider.Position = UDim2.new(0, 22, 0, 48)
-        divider.BackgroundColor3 = Color3.fromRGB(45, 45, 48)
+        divider.BackgroundColor3 = _CUTTAY_MODE and Color3.fromRGB(220, 220, 224) or Color3.fromRGB(45, 45, 48)
         divider.BorderSizePixel = 0
         divider.ZIndex = 52
         divider.Parent = expanded
@@ -8994,7 +9024,7 @@ end)
         statusBox.Name = "JoinStatus"
         statusBox.Size = UDim2.new(1, -44, 0, 42)
         statusBox.Position = UDim2.new(0, 22, 1, -54)
-        statusBox.BackgroundColor3 = Color3.fromRGB(24, 24, 27)
+        statusBox.BackgroundColor3 = _CUTTAY_MODE and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(24, 24, 27)
         statusBox.BorderSizePixel = 0
         statusBox.ZIndex = 52
         statusBox.Parent = expanded
@@ -9086,7 +9116,7 @@ end)
             return
         end
 
-		if _CUTTAY_MODE and not isHopFM and getgenv().CuttayV4Status then
+        if _CUTTAY_MODE and getgenv().CuttayV4Status then
 			currentStatus = tostring(getgenv().CuttayV4Status)
 		end
 
@@ -9122,7 +9152,7 @@ end)
         end
 
         local hasFM = isNight() and isFullMoon()
-		if _CUTTAY_MODE and not isHopFM then
+		if _CUTTAY_MODE then
 			local currentRace = CuttayDisplayRace(Player.Data.Race.Value)
 			local targetRace = tostring(getgenv().CuttayV4TargetRace or currentRace)
 			MoonLabel.Text = currentRace == targetRace and currentRace or (currentRace .. " → " .. targetRace)
@@ -9190,7 +9220,6 @@ end)
                         lastConflictCheckAt = nowTick
                         pcall(function()
                             local resp = syncToAPI()
-							updateCuttayGroupState(resp)
                             takenJobIds = {}
                             if resp and resp.accounts then
                                 for name, data in pairs(resp.accounts) do
@@ -9247,7 +9276,6 @@ end)
                     lastConflictCheckAt = nowTick
                     pcall(function()
                         local resp = syncToAPI()
-						updateCuttayGroupState(resp)
                         takenJobIds = {}
                         if resp and resp.accounts then
                             for name, data in pairs(resp.accounts) do
@@ -9352,6 +9380,13 @@ end)
 
                     local resp = syncToAPI()
 					updateCuttayGroupState(resp)
+					if getgenv().TyrantFragmentFarmActive
+						or (getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Phase ~= "V4") then
+						setStatus(getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Status
+							or ("Farm Tyrant: " .. tostring(getgenv().TyrantFragmentStatus or "running")))
+						lastHopTHelper = ""
+						return
+					end
 
                     if isHopFM then
                         setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
@@ -9449,6 +9484,13 @@ end)
                     if myAssignedGroupId == nil or myAssignedGroupId == "" then
                         myAssignedGroupId = myDefaultGroup or trim(noteList[1] or "group1")
                     end
+					if getgenv().TyrantFragmentFarmActive
+						or (getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Phase ~= "V4") then
+						setStatus(getgenv().Mode == "CuttayV4" and getgenv().CuttayV4Status
+							or ("Farm Tyrant: " .. tostring(getgenv().TyrantFragmentStatus or "running")))
+						lastHopTMain = ""
+						return
+					end
 
                     if not resp or not resp.accounts then
                         setStatus("Connecting...")
