@@ -8161,6 +8161,11 @@ end)
         warn("[JoinV4] JoinV4Config is missing; runtime was not started")
         return
     end
+    getgenv().JoinV4RuntimeGeneration = (tonumber(getgenv().JoinV4RuntimeGeneration) or 0) + 1
+    local JOINV4_RUNTIME_GENERATION = getgenv().JoinV4RuntimeGeneration
+    local function joinV4RuntimeAlive()
+        return getgenv().JoinV4RuntimeGeneration == JOINV4_RUNTIME_GENERATION
+    end
     getgenv().JoinV4Active = true
     getgenv().JoinV4RuntimeStatus = "Starting"
 
@@ -8618,12 +8623,32 @@ end)
     end)
 
     local function hopTo(jobId)
-        pcall(function()
+        jobId = tostring(jobId or "")
+        if jobId == "" or jobId == tostring(game.JobId) then return false end
+
+        -- Keep the reference __ServerBrowser hop, but single-flight the same
+        -- source server -> target JobId. Helper/Main loops may tick repeatedly
+        -- while Roblox is still processing the first teleport request.
+        local now = tick()
+        local hopKey = tostring(game.JobId) .. "->" .. jobId
+        local gate = getgenv().JoinV4HopGate
+        if type(gate) == "table" and gate.Key == hopKey
+            and now - (tonumber(gate.At) or 0) < 8
+        then
+            return false
+        end
+        getgenv().JoinV4HopGate = { Key = hopKey, At = now }
+
+        local ok = pcall(function()
             local sb = ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
             if sb then
                 sb:InvokeServer("teleport", jobId)
             end
         end)
+        if not ok then
+            getgenv().JoinV4HopGate = nil
+        end
+        return ok
     end
 
     -- NATIVE V4 STATUS CHECK
@@ -9282,7 +9307,7 @@ end)
     task.wait(0.5)
 
     task.spawn(function()
-        while task.wait(0.4) do pcall(updateUI) end
+        while joinV4RuntimeAlive() and task.wait(0.4) do pcall(updateUI) end
     end)
 
     if not isHelper and not isMain then
@@ -9301,7 +9326,7 @@ end)
             local isHopping  = false   -- guard: khong retry khi dang teleport
             local lastConflictCheckAt = 0
 
-            while task.wait(0.25) do
+            while joinV4RuntimeAlive() and task.wait(0.25) do
                 local nowTick = tick()
 
                 if isNight() and isFullMoon() then
@@ -9465,7 +9490,7 @@ end)
             local lastHopTHelper  = ""
             local lastHopAtHelper = 0
 
-            while task.wait(SYNC_INTERVAL) do
+            while joinV4RuntimeAlive() and task.wait(SYNC_INTERVAL) do
                 pcall(function()
                     if fmHopPending and tick() < fmPendingCheckAt then
                         setStatus(string.format("Settling... %ds", math.ceil(fmPendingCheckAt - tick())))
@@ -9557,7 +9582,7 @@ end)
             local lastHopTMain  = ""
             local lastHopAtMain = 0
 
-            while task.wait(1.5) do
+            while joinV4RuntimeAlive() and task.wait(1.5) do
                 pcall(function()
                     local resp = syncToAPI()
 					updateCuttayGroupState(resp)
