@@ -1232,7 +1232,9 @@ end
 -- Tạo instance và kết nối Heartbeat
 local _FastAttackInst = FastAttackClass.new()
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
-    if Settings["Auto Click"] then
+    if Settings["Auto Click"]
+        and tick() >= (getgenv().Flower3ClusterUntil or 0)
+    then
         _FastAttackInst:Attack()
     end
 end))
@@ -1269,6 +1271,80 @@ function ClickM1(target, wideRange)
     _FastAttackInst:Attack()
 end
 getgenv().ClickM1 = ClickM1
+
+-- Flower 3 needs the Swan Pirate used by BringMob to stay as the primary hit.
+-- The generic fast attack scans every enemy and may choose another model first;
+-- when that happens the second brought Swan is visible at the stack but is not
+-- included in the same RegisterHit packet. Keep this scoped to Flower 3 so the
+-- combat behaviour of every other farm remains unchanged.
+function AttackFlower3Cluster(primary)
+    local character = localPlayer.Character
+    local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local equipped = character and character:FindFirstChildOfClass("Tool")
+    local primaryHumanoid = primary and primary:FindFirstChildOfClass("Humanoid")
+    local primaryRoot = primary and primary:FindFirstChild("HumanoidRootPart")
+    if not playerRoot or not humanoid or not equipped or not primaryRoot
+        or not primaryHumanoid or primaryHumanoid.Health <= 0
+        or (playerRoot.Position - primaryRoot.Position).Magnitude >= 70
+    then
+        return
+    end
+
+    -- Blox Fruit and Gun keep their native M1/shoot path. The BNN multi-hit
+    -- packet below is the Melee/Sword path used to kill a brought mob stack.
+    if equipped.ToolTip ~= "Melee" and equipped.ToolTip ~= "Sword" then
+        ClickM1(primary)
+        return
+    end
+    -- Pause the generic Heartbeat attacker while this scoped packet owns the
+    -- Flower 3 stack; otherwise it can consume the shared attack debounce first.
+    getgenv().Flower3ClusterUntil = tick() + 0.35
+    if not _FastAttackInst:CheckStun(character, humanoid, equipped.ToolTip)
+        or (tick() - (_FastAttackInst.Flower3Debounce or 0)) < _AtkConfig.AttackCooldown
+    then
+        return
+    end
+
+    local function hitPart(model)
+        for _, partName in ipairs(_AtkConfig.HitboxLimbs) do
+            local part = model:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then return part end
+        end
+        return model:FindFirstChild("HumanoidRootPart")
+    end
+
+    local primaryPart = hitPart(primary)
+    if not primaryPart then return end
+    local extraHits = {}
+    local enemies = Workspace:FindFirstChild("Enemies")
+    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
+        if mob ~= primary and mob.Name == primary.Name and IsMobAlive(mob) then
+            local root = mob:FindFirstChild("HumanoidRootPart")
+            local part = hitPart(mob)
+            -- BringMob stacks the models at one spawn anchor. Checking both the
+            -- player radius and stack radius prevents unrelated Swan Pirates
+            -- elsewhere on the island from entering the packet.
+            if root and part
+                and (playerRoot.Position - root.Position).Magnitude < 70
+                and (primaryRoot.Position - root.Position).Magnitude < 15
+            then
+                table.insert(extraHits, {mob, part})
+            end
+        end
+    end
+
+    local combo = _FastAttackInst:GetCombo()
+    local cooldown = equipped:FindFirstChild("Cooldown") and equipped.Cooldown.Value
+        or _AtkConfig.AttackCooldown
+    cooldown = cooldown + (combo >= _AtkConfig.MaxCombo and 0.05 or 0)
+    _FastAttackInst.Flower3Debounce = tick()
+    _FastAttackInst.Debounce = combo >= _AtkConfig.MaxCombo and tick() + 0.05 or tick()
+    _RegisterAttack:FireServer(cooldown)
+    -- BNN sends this packet straight to RegisterHit; do the same here so no
+    -- local SendHitsToServer filter can collapse the stack back to one mob.
+    _RegisterHit:FireServer(primaryPart, extraHits)
+end
 
 getgenv().ClickM1Dungeon = function(target, wideRange)
     local character = localPlayer.Character
@@ -2142,11 +2218,11 @@ function FFCMatch(model, pattern)
     return nil
 end
 
-function AutoAllSkill(pvp)
+function AutoAllSkill(pvp, keyDelay)
     local skills = {"Z", "X", "C", "V", "F"}
     for _, k in ipairs(skills) do
         VirtualInputManager:SendKeyEvent(true, k, false, game)
-        task.wait(0.05)
+        task.wait(keyDelay or 0.05)
         VirtualInputManager:SendKeyEvent(false, k, false, game)
     end
 end
@@ -2957,7 +3033,7 @@ function UpgradeRaceV2AndV3Legacy()
 						SizePart(swan)
 						BringMob(swan)
 						UsedualFlock()
-						ClickM1(swan)
+						AttackFlower3Cluster(swan)
 						local offset = Settings["Select Weapon"] == "Blox Fruit"
 							and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
 						ToTarget(swan.HumanoidRootPart.CFrame * offset)
@@ -3138,7 +3214,9 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         if localPlayer:DistanceFromCharacter(root.Position) < 50 then
             local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
             if myRoot then myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 3) end
-            AutoAllSkill(true)
+            -- Preserve the existing BNN Ghoul/Angel flow; only shorten the
+            -- key hold from 0.05s to 0.03s for this player-kill branch.
+            AutoAllSkill(true, 0.03)
             pcall(getgenv().AttackFunctionnhungSuperTrial)
         else
             ToTarget(root.CFrame * CFrame.new(0, 0, 3))
@@ -3251,7 +3329,7 @@ function UpgradeRaceV2AndV3()
                         SizePart(swan)
                         BringMob(swan)
                         UsedualFlock()
-                        ClickM1(swan)
+                        AttackFlower3Cluster(swan)
                         if Settings["Select Weapon"] == "Blox Fruit" then
                             ToTarget(swan.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
                         else
