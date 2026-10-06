@@ -468,6 +468,7 @@ local function ApplyCuttayV4Settings()
     Settings["LockRace"] = cfg["LockRace"]
     Settings["LockFragment"] = cfg["LockFragment"] or "farmkhithieu"
     Settings["Roll Race Helper"] = cfg["Roll Race Helper"] == true
+    Settings["Bring Mob"] = true
     Settings["Auto Upgrade Race V2-V3"] = false
     Settings["Auto Get Cyborg"] = false
     Settings["Auto Get Fully Cyborg"] = false
@@ -936,7 +937,10 @@ end
 
 local bnnBringTarget, bnnBringAnchor
 function BringMob(target)
-    if not Settings["Bring Mob"] or getgenv().NoBringMob or not IsMobAlive(target) then return end
+    -- BNN V2/V3 calls BringMob directly. A stale NoBringMob flag left by a
+    -- trial must not disable Flower 3 or Bartilo farming until re-execution.
+    local blockedByTrial = getgenv().NoBringMob and not Settings["Auto Upgrade Race V2-V3"]
+    if not Settings["Bring Mob"] or blockedByTrial or not IsMobAlive(target) then return end
     -- Rate limit: không bring liên tục mỗi frame
     local bringDelay = getgenv().GhoulTrialBring and 1.25 or 0.35
     if tick() - (getgenv().LastBringTick or 0) < bringDelay then return end
@@ -2332,6 +2336,59 @@ function TakeFruitInventory(bool)
     return nil
 end
 
+-- Cyborg V3 uses the current Inventory controller first because the legacy
+-- CommF_ getInventory response is patched on newer game builds.
+function TakeCyborgV3FruitInventory()
+    if InventoryController and ItemConfig and InventoryController:GetIfInitialized() then
+        local ok, tiles = pcall(function() return InventoryController:GetTiles() end)
+        if ok and type(tiles) == "table" then
+            local cheapestValue, cheapestName = math.huge, nil
+            for _, tile in ipairs(tiles) do
+                local cfg
+                pcall(function() cfg = ItemConfig.match(tile.ItemId):asNullable() end)
+                if cfg then
+                    local itemType = cfg.Type or (cfg.Index and cfg.Index.Type)
+                    local displayName = cfg.DisplayName or cfg.Name
+                    local value = tonumber(cfg.Value or cfg.Price or 0) or 0
+                    if itemType == "Blox Fruit" and displayName and value < cheapestValue then
+                        cheapestValue, cheapestName = value, displayName
+                    end
+                end
+            end
+            if cheapestName then return cheapestName end
+        end
+    end
+    return TakeFruitInventory(true)
+end
+
+-- Current Blox Fruits fruit gacha API. Kept isolated for the Cyborg V3
+-- physical-fruit requirement so other fruit/raid workflows are unchanged.
+getgenv().CuttayCyborgV3Gacha = getgenv().CuttayCyborgV3Gacha or {}
+getgenv().CuttayCyborgV3Gacha.LastBuyAt = getgenv().CuttayCyborgV3Gacha.LastBuyAt or -math.huge
+getgenv().CuttayCyborgV3Gacha.Remote = ReplicatedStorage
+    :WaitForChild("Modules")
+    :WaitForChild("Net")
+    :WaitForChild("RF/GachaNetworkRF")
+getgenv().CuttayCyborgV3Gacha.CheckCooldown = function(self)
+    if not self.Remote then return false end
+    local ok, response = pcall(function()
+        return self.Remote:InvokeServer({ Context = "Check", BoxName = "ZiolesGacha" })
+    end)
+    return ok and type(response) == "table"
+        and type(response.Cooldown) == "table"
+        and response.Cooldown.RequirementMet == true
+end
+getgenv().CuttayCyborgV3Gacha.Buy = function(self)
+    if not self.Remote then return false end
+    if tick() - (tonumber(self.LastBuyAt) or -math.huge) < 5 then return false end
+    self.LastBuyAt = tick()
+    local ok = pcall(function()
+        self.Remote:InvokeServer({ Context = "Purchase", BoxName = "ZiolesGacha" })
+    end)
+    if not ok then self.LastBuyAt = -math.huge end
+    return ok
+end
+
 local bnnRaceStatusCache, bnnRaceStatusCheckedAt = nil, 0
 
 local function BnnReadAncientOneStatus()
@@ -3299,12 +3356,22 @@ function UpgradeRaceV2AndV3()
         AutoFishV2()
     elseif race == "Cyborg" then
         if not CheckFruitplr() then
-            local fruitName = TakeFruitInventory(true)
+            local fruitName = TakeCyborgV3FruitInventory()
             if fruitName then
                 SetRaceUpgradeStatus("Cyborg V3: loading physical fruit " .. fruitName)
                 ReplicatedStorage.Remotes.CommF_:InvokeServer("LoadFruit", fruitName)
             else
-                SetRaceUpgradeStatus("Cyborg V3: need one physical fruit", true)
+                local gacha = getgenv().CuttayCyborgV3Gacha
+                if gacha and gacha:CheckCooldown() then
+                    SetRaceUpgradeStatus("Cyborg V3: buying physical fruit from Zioles Gacha")
+                    gacha:Buy()
+                    task.wait(1)
+                    -- Refresh the new API state after purchase. A true result means
+                    -- another purchase is currently permitted by the server.
+                    gacha:CheckCooldown()
+                else
+                    SetRaceUpgradeStatus("Cyborg V3: Zioles Gacha cooldown / need physical fruit", true)
+                end
             end
         else
             SetRaceUpgradeStatus("Cyborg V3: physical fruit ready for Arowe")
