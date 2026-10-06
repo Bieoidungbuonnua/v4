@@ -3157,17 +3157,52 @@ function UpgradeRaceV2AndV3()
                 SetRaceUpgradeStatus("Race V2: farming Swan Pirate for Flower 3")
                 local swan = DetectMob("Swan Pirate")
                 if swan then
-                    SizePart(swan)
-                    BringMob(swan)
-                    UsedualFlock()
-                    ClickM1(swan)
-                    local offset = Settings["Select Weapon"] == "Blox Fruit"
-                        and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-                    ToTarget(swan.HumanoidRootPart.CFrame * offset)
+                    -- Match bnn.lua: lock one Swan Pirate and keep attacking it
+                    -- until it dies or Flower 3 drops. Do not return after one M1.
+                    repeat
+                        task.wait()
+                        if IsMobAlive(swan) then
+                            SizePart(swan)
+                            BringMob(swan)
+                            UsedualFlock()
+                            ClickM1(swan)
+                            local offset = Settings["Select Weapon"] == "Blox Fruit"
+                                and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+                            local targetCF = swan.HumanoidRootPart.CFrame * offset
+                            local myRoot = localPlayer.Character
+                                and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+                            -- bnn.lua snaps to combat targets below 150 studs.
+                            -- Scope this behavior to Flower 3 so normal farming,
+                            -- Tyrant and chest tween logic remain untouched.
+                            local closeCombat = myRoot
+                                and (myRoot.Position - targetCF.Position).Magnitude < 150
+                            ToTarget(targetCF, closeCombat == true)
+                        end
+                    until not IsMobAlive(swan)
+                        or DetectItemPlr("Flower 3")
+                        or not Settings["Auto Upgrade Race V2-V3"]
                 else
                     local spawnPart = DetectPartSpawnMob("Swan Pirate", true)
                     if spawnPart then
-                        ToTarget(spawnPart.CFrame * CFrame.new(0, 60, 0))
+                        if not spawnPart:FindFirstChild("Ignored") then
+                            Instance.new("IntValue", spawnPart).Name = "Ignored"
+                        end
+                        repeat
+                            task.wait()
+                            local spawnTarget = spawnPart.CFrame * CFrame.new(0, 60, 0)
+                            local myRoot = localPlayer.Character
+                                and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+                            local closeSpawn = myRoot
+                                and (myRoot.Position - spawnTarget.Position).Magnitude < 150
+                            ToTarget(spawnTarget, closeSpawn == true)
+                        until not spawnPart.Parent
+                            or DetectMob("Swan Pirate")
+                            or DetectItemPlr("Flower 3")
+                            or not Settings["Auto Upgrade Race V2-V3"]
+                            or (localPlayer.Character
+                                and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                and (spawnPart.Position - localPlayer.Character.HumanoidRootPart.Position).Magnitude <= 100)
+                        task.wait(1)
                     else
                         DeleteIgnoredMobSpawn()
                         ToTarget(CFrame.new(932.624451, 156.106079, 1180.27466))
