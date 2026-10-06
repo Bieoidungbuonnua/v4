@@ -718,32 +718,49 @@ end
 
 function TweenManager.CancelCurrent()
     TweenManager.CancelTweenOnly()
+    getgenv().CuttayTweenNoclipActive = false
+    local character = localPlayer.Character
+    if not character then return end
+    for _, object in ipairs(character:GetDescendants()) do
+        if object:IsA("BodyVelocity") and (object.Name == "eltrul" or object.Name == "FloatForce") then
+            pcall(function() object:Destroy() end)
+        end
+    end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.PlatformStand = false end
 end
 
-function ToTarget(targetCFrame, skipTween)
-    -- Normal farm movement always owns the character. A chest route from a
-    -- previous phase must not keep writing HumanoidRootPart.CFrame.
-    if ChestTweenManager and ChestTweenManager.Cancel then
-        ChestTweenManager.Cancel()
-    end
-
+function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     local char = localPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
     local head = char:FindFirstChild("Head") or hrp
-    if not head:FindFirstChild("eltrul") then
-        local bv = Instance.new("BodyVelocity")
-        bv.Name = "eltrul"
-        bv.MaxForce = Vector3.new(0, math.huge, 0)
-        bv.Velocity = Vector3.zero
-        bv.Parent = head
-    end
+    if preserveCollision then
+        getgenv().CuttayTweenNoclipActive = false
+        -- Chest collection must not leave the character in the noclip/hover
+        -- state used by combat travel; that state causes visible rubber-banding.
+        local lift = head:FindFirstChild("eltrul")
+        if lift then lift:Destroy() end
+    else
+        -- bnn.lua keeps noclip alive every frame while travelling. Setting
+        -- CanCollide once is not enough because Roblox can restore collision
+        -- while the root is crossing a wall, which causes rubber-banding.
+        getgenv().CuttayTweenNoclipActive = true
+        if not head:FindFirstChild("eltrul") then
+            local bv = Instance.new("BodyVelocity")
+            bv.Name = "eltrul"
+            bv.MaxForce = Vector3.new(0, math.huge, 0)
+            bv.Velocity = Vector3.zero
+            bv.P = 10000
+            bv.Parent = head
+        end
 
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = false
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
         end
     end
 
@@ -751,13 +768,15 @@ function ToTarget(targetCFrame, skipTween)
     local targetCF = typeof(targetCFrame) == "CFrame" and targetCFrame or CFrame.new(targetPos)
     local dist = (hrp.Position - targetPos).Magnitude
 
-    if skipTween or dist <= 15 then
-        TweenManager.CancelCurrent()
+    if skipTween or (dist <= 15 and not forceTween) then
+        TweenManager.CancelTweenOnly()
         hrp.CFrame = targetCF
         return
     end
 
-    TweenManager.CancelCurrent()
+    -- Retarget only the tween. Keep the character lock alive so switching
+    -- directly from one chest to the next does not produce a camera jerk.
+    TweenManager.CancelTweenOnly()
     local tweenDuration = dist / TWEEN_SPEED
     local tweenInfo = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear)
     CurrentTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCF })
@@ -765,116 +784,22 @@ function ToTarget(targetCFrame, skipTween)
     return CurrentTween
 end
 
--- Clean up the experimental shared noclip worker from an older execution.
+-- Continuous internal noclip, matching the worker used by bnn.lua. Keep one
+-- connection across re-executes and enable it only while TweenManager travels.
 if getgenv().CuttayTweenNoclipConnection then
     pcall(function() getgenv().CuttayTweenNoclipConnection:Disconnect() end)
-    getgenv().CuttayTweenNoclipConnection = nil
 end
 getgenv().CuttayTweenNoclipActive = false
-
--- Chest movement is fully separate from CurrentTween. It deliberately aims a
--- few studs beyond the chest, so touching it immediately hands the next route
--- to the collector without stopping on top of the chest.
-ChestTweenManager = {}
-
-function ChestTweenManager.CancelTweenOnly()
-    if getgenv().CuttayChestTween then
-        pcall(function() getgenv().CuttayChestTween:Cancel() end)
-        getgenv().CuttayChestTween = nil
-    end
-end
-
-function ChestTweenManager.Cancel()
-    ChestTweenManager.CancelTweenOnly()
-    if getgenv().CuttayChestNoclipConnection then
-        pcall(function() getgenv().CuttayChestNoclipConnection:Disconnect() end)
-    end
-    getgenv().CuttayChestNoclipConnection = nil
-    getgenv().CuttayChestTweenActive = false
+getgenv().CuttayTweenNoclipConnection = RunService.Stepped:Connect(function()
+    if not getgenv().CuttayTweenNoclipActive then return end
     local character = localPlayer.Character
-    local head = character and character:FindFirstChild("Head")
-    local force = head and head:FindFirstChild("CuttayChestFloat")
-    if force then pcall(function() force:Destroy() end) end
-end
-
-function ChestTweenManager.IsMoving()
-    local tween = getgenv().CuttayChestTween
-    return tween and tween.PlaybackState == Enum.PlaybackState.Playing
-end
-
-function ChestTweenManager.EnableLock()
-    local character = localPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    local head = character and (character:FindFirstChild("Head") or root)
-    if not root or not head then return false end
-
-    if not head:FindFirstChild("CuttayChestFloat") then
-        local force = Instance.new("BodyVelocity")
-        force.Name = "CuttayChestFloat"
-        force.MaxForce = Vector3.new(0, math.huge, 0)
-        force.Velocity = Vector3.zero
-        force.Parent = head
+    if not character then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
     end
-
-    if not getgenv().CuttayChestNoclipConnection then
-        getgenv().CuttayChestNoclipConnection = RunService.Stepped:Connect(function()
-            local currentCharacter = localPlayer.Character
-            if not getgenv().CuttayChestTweenActive or not currentCharacter then return end
-            for _, part in ipairs(currentCharacter:GetDescendants()) do
-                if part:IsA("BasePart") then part.CanCollide = false end
-            end
-        end)
-    end
-    return true
-end
-
-function ChestTweenManager.TweenThrough(chest)
-    if not chest or not chest.Parent then return false end
-    local character = localPlayer.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
-    if not root or not ChestTweenManager.EnableLock() then return false end
-
-    -- Stop normal travel once when chest mode starts. Further chest retargets
-    -- only touch the dedicated chest tween.
-    TweenManager.CancelTweenOnly()
-    ChestTweenManager.CancelTweenOnly()
-    getgenv().CuttayChestTweenActive = true
-
-    local delta = chest.Position - root.Position
-    local direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
-    local passPosition = chest.Position + direction * 3.5
-    local passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
-    local duration = math.max((root.Position - passPosition).Magnitude / TWEEN_SPEED, 0.03)
-
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
-    local chestTween = TweenService:Create(
-        root,
-        TweenInfo.new(duration, Enum.EasingStyle.Linear),
-        { CFrame = passCFrame }
-    )
-    getgenv().CuttayChestTween = chestTween
-    chestTween.Completed:Connect(function()
-        if getgenv().CuttayChestTween ~= chestTween then return end
-        getgenv().CuttayChestTween = nil
-        task.delay(0.3, function()
-            -- Keep the lock through an immediate chest-to-chest retarget, but
-            -- release it when the collector has actually gone idle.
-            if not getgenv().CuttayChestTween then ChestTweenManager.Cancel() end
-        end)
-    end)
-    chestTween:Play()
-    return true
-end
-
-function ChestTweenManager.MarkIgnored(chest)
-    if chest and chest.Parent and not chest:FindFirstChild("Ignored") then
-        Instance.new("IntValue", chest).Name = "Ignored"
-    end
-end
-
--- Re-execute safety: remove any chest tween/connection left by the prior run.
-ChestTweenManager.Cancel()
+end)
 
 -- [COMBAT, FAST ATTACK & BRING MOB] Ported from bnn.lua
 if Settings["Bring Mob"] == nil then Settings["Bring Mob"] = true end
@@ -2773,50 +2698,36 @@ end
 function AutoMinkV2()
 	local part2 = GetNearestChest()
 	if part2 then
-		local chestStartedAt = tick()
-		local lastRetargetAt = chestStartedAt
-		local passedChest = false
-		ChestTweenManager.TweenThrough(part2)
+		local npcNames
 		repeat
 			task.wait()
-			local character = localPlayer.Character
-			local root = character and character:FindFirstChild("HumanoidRootPart")
-			if root and part2 and part2.Parent then
-				local distance = (root.Position - part2.Position).Magnitude
-				if distance <= 4.25 then
-					passedChest = true
-				elseif not ChestTweenManager.IsMoving() and tick() - lastRetargetAt >= 0.15 then
-					ChestTweenManager.TweenThrough(part2)
-					lastRetargetAt = tick()
+			if (localPlayer.Character.HumanoidRootPart.Position - part2.Position).Magnitude <= 5 then
+				if not npcNames then
+					npcNames = (tick())
+				elseif tick() - npcNames >= 5 then
+					Instance.new("IntValue", part2).Name = "Ignored"
+					wait(0.5)
 				end
+				VirtualInputManager:SendKeyEvent(true, "Space", false, game)
+				wait()
+				VirtualInputManager:SendKeyEvent(false, "Space", false, game)
+				TweenManager.CancelCurrent()
 			end
+			ToTarget(part2.CFrame, true)
 		until not part2
 			or not part2.Parent
 			or not Settings["Auto Upgrade Race V2-V3"]
 			or (part2:GetAttribute("IsDisabled"))
 			or (part2:FindFirstChild("Ignored"))
-			or not part2.CanTouch
-			or passedChest
-			or tick() - chestStartedAt >= 15
-
-		local collected = passedChest or not part2.Parent
-			or part2:GetAttribute("IsDisabled") or not part2.CanTouch
-		if collected or tick() - chestStartedAt >= 15 then
-			ChestTweenManager.MarkIgnored(part2)
-		end
-		if not collected then ChestTweenManager.CancelTweenOnly() end
-		if not Settings["Auto Upgrade Race V2-V3"] then
-			ChestTweenManager.Cancel()
-		end
+			or not part2:FindFirstChild("TouchInterest")
 	else
 		local value7 = PathFindChest()
 		if value7 then
-			ChestTweenManager.TweenThrough(value7.Part)
-			if localPlayer:DistanceFromCharacter(value7.Part.Position) <= 4.25 or GetNearestChest() then
-				ChestTweenManager.MarkIgnored(value7.Part)
+			ToTarget(value7.Part.CFrame)
+			if localPlayer:DistanceFromCharacter(value7.Part.Position) <= 100 or (GetNearestChest()) then
+				Instance.new("IntValue", value7).Name = "Ignored"
 			end
 		else
-			ChestTweenManager.Cancel()
 			if Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("PlayerSpawns") and Workspace._WorldOrigin.PlayerSpawns:FindFirstChild("Pirates") then
 				for unusedIndex, player in pairs(Workspace._WorldOrigin.PlayerSpawns.Pirates:GetChildren()) do
 					if player:FindFirstChild("Ignored") then
@@ -3445,7 +3356,6 @@ end
 local function HopForCyborgChest()
 	if getgenv().DelayHop then return false end
 	getgenv().DelayHop = true
-	if ChestTweenManager and ChestTweenManager.Cancel then ChestTweenManager.Cancel() end
 	TweenManager.CancelCurrent()
 	task.spawn(function()
 		-- Match autocy.lua: scan __ServerBrowser for a low server (1-7
@@ -3639,14 +3549,14 @@ function GetCyborg()
 				then
 					getgenv().CuttayCyborgRuntime.LastAgeCheckChest = count11
 					if ShouldCyborgHopChest() and not IsCyborgChestServerOldEnough() then
-						ChestTweenManager.Cancel()
+						TweenManager.CancelCurrent()
 						HopForCyborgChest()
 						return
 					end
 				end
 				local chest = GetNearestChest()
 				if not chest then
-					ChestTweenManager.Cancel()
+					TweenManager.CancelCurrent()
 					if ShouldCyborgHopChest() then HopForCyborgChest() end
 					return
 				end
@@ -3667,9 +3577,11 @@ function GetCyborg()
 				local lastPassAt = chestStartedAt
 				local passedChest = false
 
-				-- Chest movement has its own tween/lock and never retargets the
-				-- normal farm CurrentTween.
-				ChestTweenManager.TweenThrough(chest)
+				-- Existing shared TweenService, forced even inside 15 studs. Keep the
+				-- manager's character lock active while passing through the chest.
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+				ToTarget(passCFrame, false, true)
 				repeat
 					task.wait()
 					root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -3684,13 +3596,15 @@ function GetCyborg()
 						-- If physics interrupted the pass, retry only after the shared tween
 						-- has stopped; never replace an active tween every frame.
 						if distance > 5 and tick() - lastPassAt >= 3
-							and not ChestTweenManager.IsMoving()
+							and (not CurrentTween or CurrentTween.PlaybackState ~= Enum.PlaybackState.Playing)
 						then
 							delta = chest.Position - root.Position
 							direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
 							passPosition = chest.Position + direction * 3.5
 							passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
-							ChestTweenManager.TweenThrough(chest)
+							root.AssemblyLinearVelocity = Vector3.zero
+							root.AssemblyAngularVelocity = Vector3.zero
+							ToTarget(passCFrame, false, true)
 							lastPassAt = tick()
 						end
 					end
@@ -3717,12 +3631,12 @@ function GetCyborg()
 				if not collected or DetectItemPlr("Fist of Darkness")
 					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 				then
-					ChestTweenManager.Cancel()
+					TweenManager.CancelCurrent()
 				end
 				-- No delay here: loop immediately resolves and starts the next chest.
 			end
 
-			ChestTweenManager.Cancel()
+			TweenManager.CancelCurrent()
 			if count11 >= CYBORG_MAX_CHESTS and ShouldCyborgHopChest() then
 				HopForCyborgChest()
 			end
@@ -4544,6 +4458,7 @@ function MirageMapLoadWaitRemaining()
 end
 
 function PullLeverV4()
+	if getgenv().CuttayLeverPulledVerified == true then return true end
 	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
 		SetCuttayPullLeverStatusRuntime("missing Valkyrie Helm or Mirror Fractal")
 		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
@@ -7278,22 +7193,58 @@ local function CuttayIsRaceFullGear()
 end
 
 local function CuttayIsLeverPulled()
-    if localPlayer.Character and localPlayer.Character:FindFirstChild("RaceTransformed") then return true end
-    if getgenv().CuttayLeverPulledVerified == true then return true end
+    local cacheName = "cuttay_v4_lever_" .. tostring(localPlayer.UserId) .. ".txt"
 
-	-- RaceV4Progress is Ancient One quest progress, NOT lever state. The old
-	-- `progress >= 4` check skipped PullLeverV4 entirely for fresh V3 accounts.
-	-- Only accept physical lever position while the character is really inside
-	-- Temple. GetTempleOfTime() can borrow the template from MapStash, whose
-	-- default lever transform is not proof that this account pulled it.
+	local function markVerified(source)
+		getgenv().CuttayLeverPulledVerified = true
+		getgenv().CuttayLeverPulledSource = tostring(source or "verified")
+		pcall(function()
+			if type(writefile) == "function" then writefile(cacheName, "true") end
+		end)
+		return true
+	end
+
+	if getgenv().CuttayLeverPulledVerified == true then return true end
+	if localPlayer.Character and localPlayer.Character:FindFirstChild("RaceTransformed") then
+		return markVerified("RaceTransformed")
+	end
+	local cached = false
+	pcall(function()
+		cached = type(isfile) == "function" and type(readfile) == "function"
+			and isfile(cacheName) and readfile(cacheName) == "true"
+	end)
+	if cached then return markVerified("saved account state") end
+
+	-- TempleClock only returns a usable table after the account has access to
+	-- post-lever V4 progression. This survives server changes and does not rely
+	-- on the streamed lever model.
+	local clockOk, clockState = pcall(function()
+		return ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
+	end)
+	if clockOk and type(clockState) == "table" then
+		return markVerified("TempleClock")
+	end
+
+	-- UpgradeRace numeric states are Ancient One states reached after the lever:
+	-- 0=ready for trial; 1..8=training/gear/completed states. A fresh pre-lever
+	-- V3 account does not expose one of these numeric states.
+	local upgradeOk, upgradeCode = pcall(function()
+		return ReplicatedStorage.Remotes.CommF_:InvokeServer("UpgradeRace", "Check")
+	end)
+	upgradeCode = upgradeOk and tonumber(upgradeCode) or nil
+	if upgradeCode and upgradeCode >= 0 and upgradeCode <= 8 then
+		return markVerified("UpgradeRace:" .. tostring(upgradeCode))
+	end
+
+	-- RaceV4Progress is the Ancient One quest and is intentionally not used as
+	-- lever proof. Its late values can also occur before the physical pull.
 	if not IsInTempleOfTime() then return false end
 	local map = Workspace:FindFirstChild("Map")
 	local temple = map and map:FindFirstChild("Temple of Time")
 	local leverModel = temple and temple:FindFirstChild("Lever")
 	local leverPart = leverModel and (leverModel:FindFirstChild("Lever") or leverModel:FindFirstChild("Part"))
 	if leverPart and math.abs(leverPart.CFrame.Z - leverTargetCFrame.Z) <= count12 then
-		getgenv().CuttayLeverPulledVerified = true
-		return true
+		return markVerified("physical lever")
 	end
 	return false
 end
@@ -8398,7 +8349,7 @@ end)
         return ok and result == true
     end
 
-    -- FIND FM SERVER: endfullmoon -> fullmoonin -> ordinary Fullmoon entry.
+    -- FIND FM SERVER (Multi-fallback HTTP)
     local function findFMServer()
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
@@ -8424,7 +8375,8 @@ end)
             return nil
         end
 
-        local function parseClock(value)
+        local function parseFullMoonIn(entry)
+            local value = getField(entry, "fullmoonin", "fullMoonIn", "full_moon_in")
             if type(value) == "number" then return value end
             if type(value) ~= "string" then return nil end
             local minutes, seconds = value:match("^(%d+):(%d+)$")
@@ -8456,82 +8408,41 @@ end)
         local entries
         if type(parsed.data) == "table" and #parsed.data > 0 then
             entries = parsed.data
-        elseif type(parsed.servers) == "table" and #parsed.servers > 0 then
-            entries = parsed.servers
         elseif type(parsed) == "table" and #parsed > 0 then
             entries = parsed
         else return nil end
 
-        local endingCandidates = {}
-        local incomingCandidates = {}
-        local ordinaryCandidates = {}
+        local candidates = {}
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
             local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
             local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
             local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
-            local maxPlayers = parsePlayers(getField(v, "maxplayers", "maxPlayers", "MaxPlayers")) or 12
-            local endValue = getField(v, "endfullmoon", "endFullMoon", "end_full_moon")
-            local incomingValue = getField(v, "fullmoonin", "fullMoonIn", "full_moon_in")
-            local endSeconds = parseClock(endValue)
-            local incomingSeconds = parseClock(incomingValue)
-            local moonName = tostring(getField(v, "moon", "Moon") or ""):lower():gsub("%s+", "")
+            local fullMoonIn = parseFullMoonIn(v)
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            if not players or players < 0 or players >= maxPlayers then continue end
-
-            -- Type 1: Full Moon is active and ends in the whole 4:00-9:00 range.
-            if endSeconds and endSeconds >= 4 * 60 and endSeconds <= 9 * 60 then
-                table.insert(endingCandidates, {
-                    jobId = tostring(jobId),
-                    players = players,
-                    seconds = endSeconds,
-                })
-                continue
-            end
-
-            -- Type 2: no valid endfullmoon candidate; Full Moon starts within 1 minute.
-            if incomingSeconds and incomingSeconds >= 0 and incomingSeconds <= 60 then
-                table.insert(incomingCandidates, {
-                    jobId = tostring(jobId),
-                    players = players,
-                    seconds = incomingSeconds,
-                })
-                continue
-            end
-
-            -- Type 3: ordinary API record has neither timer field. Only this
-            -- fallback is restricted to 2-6 players.
-            if endValue == nil and incomingValue == nil and moonName == "fullmoon"
-                and players >= 2 and players <= 6
+            if players and tonumber(players) >= 2 and tonumber(players) <= 6
+                and fullMoonIn and fullMoonIn >= 4 * 60
             then
-                table.insert(ordinaryCandidates, {
+                table.insert(candidates, {
                     jobId = tostring(jobId),
-                    players = players,
+                    players = tonumber(players),
+                    fullMoonIn = fullMoonIn,
+                    priority = fullMoonIn >= 9 * 60,
                 })
             end
         end
-
-        table.sort(endingCandidates, function(a, b)
-            if a.seconds ~= b.seconds then return a.seconds > b.seconds end
-            return a.players < b.players
-        end)
-        if #endingCandidates > 0 then return endingCandidates[1].jobId end
-
-        table.sort(incomingCandidates, function(a, b)
-            if a.seconds ~= b.seconds then return a.seconds < b.seconds end
-            return a.players < b.players
-        end)
-        if #incomingCandidates > 0 then return incomingCandidates[1].jobId end
-
-        table.sort(ordinaryCandidates, function(a, b)
+        if #candidates == 0 then return nil end
+        -- Ưu tiên >=9 phút; fallback thấp nhất 4 phút; trong cùng nhóm chọn ít player trước.
+        table.sort(candidates, function(a, b)
+            if a.priority ~= b.priority then return a.priority end
             if a.players ~= b.players then return a.players < b.players end
-            return a.jobId < b.jobId
+            return a.fullMoonIn > b.fullMoonIn
         end)
-        return ordinaryCandidates[1] and ordinaryCandidates[1].jobId or nil
+        return candidates[1].jobId
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
@@ -8865,9 +8776,7 @@ end)
     local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel
     local CompactRole, CompactStatus, StatusDot, IslandStroke, IslandCorner
     local CompactContent, ExpandedContent
-    -- Cuttay mode opens on the full black status card. The compact white/pill
-    -- appearance is still available by clicking the card, but is not the boot UI.
-    local isExpanded, isAnimating = _CUTTAY_MODE, false
+    local isExpanded, isAnimating = false, false
     local statusColor = C_ORANGE
 
     local function applyFont(label, face, size)
@@ -8995,11 +8904,27 @@ end)
             return playerGui or CoreGui
         end
 
+        -- A re-execute can change the preferred GUI parent (gethui, PlayerGui,
+        -- or CoreGui). Remove every stale JoinV4UI first; otherwise the old
+        -- expanded card remains visible on top of the new compact UI.
+        isExpanded = false
+        isAnimating = false
+        local guiRoots = { CoreGui }
+        local playerGui = Player:FindFirstChildOfClass("PlayerGui") or Player:FindFirstChild("PlayerGui")
+        if playerGui then table.insert(guiRoots, playerGui) end
+        if gethui then
+            local huiOk, hui = pcall(gethui)
+            if huiOk and hui then table.insert(guiRoots, hui) end
+        end
+        for _, root in ipairs(guiRoots) do
+            pcall(function()
+                for _, child in ipairs(root:GetDescendants()) do
+                    if child.Name == "JoinV4UI" then child:Destroy() end
+                end
+            end)
+        end
+
         local guiParent = resolveGuiParent()
-        pcall(function()
-            local old = guiParent:FindFirstChild("JoinV4UI")
-            if old then old:Destroy() end
-        end)
 
         local sg = Instance.new("ScreenGui")
         sg.Name = "JoinV4UI"
@@ -9014,7 +8939,7 @@ end)
         island.Name = "IslandRoot"
         island.AnchorPoint = Vector2.new(0.5, 0)
         island.Position = HOME_POSITION
-        island.Size = isExpanded and EXPANDED_SIZE or COMPACT_SIZE
+        island.Size = COMPACT_SIZE
         island.BackgroundColor3 = C_BG
         island.BorderSizePixel = 0
         island.ClipsDescendants = true
@@ -9022,7 +8947,7 @@ end)
         island.ZIndex = 50
         island.Parent = sg
         MainCard = island
-        IslandCorner = round(island, isExpanded and 42 or nil)
+        IslandCorner = round(island)
 
         local gradient = Instance.new("UIGradient")
         gradient.Color = ColorSequence.new({
@@ -9046,7 +8971,6 @@ end)
         compact.BackgroundTransparency = 1
         compact.ZIndex = 51
         compact.Parent = island
-        compact.Visible = not isExpanded
         CompactContent = compact
 
         local dot = Instance.new("Frame")
@@ -9075,8 +8999,8 @@ end)
         expanded.Name = "Expanded"
         expanded.Size = UDim2.fromScale(1, 1)
         expanded.BackgroundTransparency = 1
-        expanded.Visible = isExpanded
-        expanded.GroupTransparency = isExpanded and 0 or 1
+        expanded.Visible = false
+        expanded.GroupTransparency = 1
         expanded.ZIndex = 51
         expanded.Parent = island
         ExpandedContent = expanded
