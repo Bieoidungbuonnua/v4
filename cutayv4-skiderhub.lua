@@ -2923,37 +2923,56 @@ function AutoMinkV2()
 		local startedAt = tick()
 		local lastRouteAt = 0
 		local passedChest = false
+		local travelDirection
+		local chestPosition = part2.Position
 		repeat
 			task.wait()
 			local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-			if root and part2 and part2.Parent then
-				local delta = part2.Position - root.Position
+			if root then
+				local delta = chestPosition - root.Position
 				local distance = delta.Magnitude
-				if distance <= 4.25 then passedChest = true end
+				if travelDirection
+					and (root.Position - chestPosition):Dot(travelDirection) >= 0
+				then
+					passedChest = true
+					-- Stop on the exact frame the root has crossed the chest plane.
+					-- The next route is allowed to start immediately below.
+					TweenManager.CancelChestTweenOnly()
+				end
 
 				-- Route through and slightly beyond the touch volume. Retarget only
 				-- when no chest tween is running, never every render frame.
-				if not TweenManager.IsChestTweenPlaying() and tick() - lastRouteAt >= 0.1 then
+				if not passedChest and not TweenManager.IsChestTweenPlaying()
+					and tick() - lastRouteAt >= 0.1
+				then
 					local direction = distance > 0.01 and delta.Unit or root.CFrame.LookVector
-					local passPosition = part2.Position + direction * 3.5
+					travelDirection = direction
+					local passPosition = chestPosition + direction * 3.5
 					local passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
 					TweenManager.TweenChest(passCFrame)
 					lastRouteAt = tick()
 				end
 			end
 		until not part2
-			or not part2.Parent
 			or not Settings["Auto Upgrade Race V2-V3"]
-			or (part2:GetAttribute("IsDisabled"))
 			or (part2:FindFirstChild("Ignored"))
-			or not part2:FindFirstChild("TouchInterest")
 			or passedChest
 			or tick() - startedAt >= 15
 
+		local collectedChest = passedChest or not part2 or not part2.Parent
+			or part2:GetAttribute("IsDisabled") or not part2:FindFirstChild("TouchInterest")
 		if part2 and part2.Parent and not part2:FindFirstChild("Ignored")
-			and (passedChest or tick() - startedAt >= 15)
+			and (collectedChest or tick() - startedAt >= 15)
 		then
 			Instance.new("IntValue", part2).Name = "Ignored"
+		end
+		if collectedChest and Settings["Auto Upgrade Race V2-V3"] then
+			TweenManager.CancelChestTweenOnly()
+			-- Resolve the next chest locally. Do not insert a quest-remote round trip
+			-- here: that network wait was visible as a pause between two routes.
+			if GetNearestChest() then
+				return AutoMinkV2()
+			end
 		end
 	else
 		local value7 = PathFindChest()
@@ -3854,8 +3873,9 @@ function GetCyborg()
 				-- every chest makes the root visibly snap when the next target changes.
 				local passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
 				local chestStartedAt = tick()
-				local lastPassAt = chestStartedAt
 				local passedChest = false
+				local travelDirection = direction
+				local chestPosition = chest.Position
 
 				-- Existing shared TweenService, forced even inside 15 studs. Keep the
 				-- manager's character lock active while passing through the chest.
@@ -3865,39 +3885,24 @@ function GetCyborg()
 				repeat
 					task.wait()
 					root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-					if root and chest and chest.Parent then
-						local distance = (root.Position - chest.Position).Magnitude
-						-- The endpoint is 3.5 studs beyond the chest, so reaching this
-						-- radius means the root crossed its touch volume. Retarget on this
-						-- frame instead of waiting for replication to remove the chest.
-						if distance <= 4.25 then
+					if root then
+						-- Crossing the chest plane proves the root actually travelled through
+						-- it; a radius check could stop several studs before contact.
+						if (root.Position - chestPosition):Dot(travelDirection) >= 0 then
 							passedChest = true
-						end
-						-- If physics interrupted the pass, retry only after the shared tween
-						-- has stopped; never replace an active tween every frame.
-						if distance > 5 and tick() - lastPassAt >= 3
-							and not TweenManager.IsChestTweenPlaying()
-						then
-							delta = chest.Position - root.Position
-							direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
-							passPosition = chest.Position + direction * 3.5
-							passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
-							root.AssemblyLinearVelocity = Vector3.zero
-							root.AssemblyAngularVelocity = Vector3.zero
-							TweenManager.TweenChest(passCFrame)
-							lastPassAt = tick()
+							TweenManager.CancelChestTweenOnly()
 						end
 					end
 				until not chest
-					or not chest.Parent
-					or chest:GetAttribute("IsDisabled")
-					or not chest.CanTouch
 					or passedChest
 					or DetectItemPlr("Fist of Darkness")
 					or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 					or tick() - chestStartedAt >= 15
 
 				local collected = passedChest or not chest.Parent or chest:GetAttribute("IsDisabled") or not chest.CanTouch
+				-- Never let the old route finish after collection. The while-loop
+				-- resolves the next chest immediately and creates one new straight tween.
+				if collected then TweenManager.CancelChestTweenOnly() end
 				if collected then
 					count11 = count11 + 1
 					-- Replication can disable the chest one frame later. Ignore it now
