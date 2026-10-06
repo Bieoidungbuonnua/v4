@@ -708,6 +708,10 @@ local items18 = { "Last Resort", "Agility", "Water Body", "Heavenly Blood", "Ene
 -- [TWEEN MODULE] Speed locked at 150 according to requirements
 local TweenManager = {}
 local CurrentTween = nil
+if getgenv().CuttayCurrentChestTween then
+    pcall(function() getgenv().CuttayCurrentChestTween:Cancel() end)
+end
+getgenv().CuttayCurrentChestTween = nil
 local TWEEN_SPEED = 150 -- TOÀN BỘ TWEEN ĐỀU Ở 150
 
 function TweenManager.CancelTweenOnly()
@@ -717,8 +721,87 @@ function TweenManager.CancelTweenOnly()
     end
 end
 
+function TweenManager.CancelChestTweenOnly()
+    if getgenv().CuttayCurrentChestTween then
+        pcall(function() getgenv().CuttayCurrentChestTween:Cancel() end)
+        getgenv().CuttayCurrentChestTween = nil
+    end
+end
+
+function TweenManager.IsChestTweenPlaying()
+    return getgenv().CuttayCurrentChestTween
+        and getgenv().CuttayCurrentChestTween.PlaybackState == Enum.PlaybackState.Playing
+end
+
+function TweenManager.ReleaseChestWhenIdle()
+    local ownedTween = getgenv().CuttayCurrentChestTween
+    if not ownedTween then return end
+    task.delay(0.3, function()
+        if getgenv().CuttayCurrentChestTween == ownedTween
+            and not TweenManager.IsChestTweenPlaying()
+        then
+            TweenManager.CancelChestTweenOnly()
+            if not CurrentTween or CurrentTween.PlaybackState ~= Enum.PlaybackState.Playing then
+                TweenManager.CancelCurrent()
+            end
+        end
+    end)
+end
+
+-- Dedicated chest travel. This deliberately never uses the short-distance
+-- CFrame branch in ToTarget: even a chest under 15 studs is crossed by a real
+-- TweenService tween, preventing the old autocy-style bypass teleport.
+function TweenManager.TweenChest(targetCFrame)
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+
+    local targetPosition = typeof(targetCFrame) == "CFrame"
+        and targetCFrame.Position or targetCFrame
+    local target = typeof(targetCFrame) == "CFrame"
+        and targetCFrame or CFrame.new(targetPosition)
+    if typeof(targetPosition) ~= "Vector3" then return nil end
+
+    -- Chest owns movement while collecting. Cancel an old route without
+    -- dropping the noclip/hover lock between two consecutive chests.
+    if CurrentTween then
+        pcall(function() CurrentTween:Cancel() end)
+        CurrentTween = nil
+    end
+    if getgenv().CuttayCurrentChestTween then
+        pcall(function() getgenv().CuttayCurrentChestTween:Cancel() end)
+        getgenv().CuttayCurrentChestTween = nil
+    end
+
+    getgenv().CuttayTweenNoclipActive = true
+    local head = character:FindFirstChild("Head") or root
+    if not head:FindFirstChild("eltrul") then
+        local velocityLock = Instance.new("BodyVelocity")
+        velocityLock.Name = "eltrul"
+        velocityLock.MaxForce = Vector3.new(0, math.huge, 0)
+        velocityLock.Velocity = Vector3.zero
+        velocityLock.P = 10000
+        velocityLock.Parent = head
+    end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = false end
+    end
+
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    local duration = math.max((root.Position - targetPosition).Magnitude / TWEEN_SPEED, 0.03)
+    getgenv().CuttayCurrentChestTween = TweenService:Create(
+        root,
+        TweenInfo.new(duration, Enum.EasingStyle.Linear),
+        {CFrame = target}
+    )
+    getgenv().CuttayCurrentChestTween:Play()
+    return getgenv().CuttayCurrentChestTween
+end
+
 function TweenManager.CancelCurrent()
     TweenManager.CancelTweenOnly()
+    TweenManager.CancelChestTweenOnly()
     getgenv().CuttayTweenNoclipActive = false
     local character = localPlayer.Character
     if not character then return end
@@ -736,6 +819,12 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
+
+    -- A chest route has exclusive ownership of the root until it finishes.
+    -- Ordinary farm/navigation calls must not cancel it and cause a snap.
+    if TweenManager.IsChestTweenPlaying() then
+        return getgenv().CuttayCurrentChestTween
+    end
 
     local head = char:FindFirstChild("Head") or hrp
     if preserveCollision then
@@ -2831,34 +2920,50 @@ end
 function AutoMinkV2()
 	local part2 = GetNearestChest()
 	if part2 then
-		local npcNames
+		local startedAt = tick()
+		local lastRouteAt = 0
+		local passedChest = false
 		repeat
 			task.wait()
-			if (localPlayer.Character.HumanoidRootPart.Position - part2.Position).Magnitude <= 5 then
-				if not npcNames then
-					npcNames = (tick())
-				elseif tick() - npcNames >= 5 then
-					Instance.new("IntValue", part2).Name = "Ignored"
-					wait(0.5)
+			local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if root and part2 and part2.Parent then
+				local delta = part2.Position - root.Position
+				local distance = delta.Magnitude
+				if distance <= 4.25 then passedChest = true end
+
+				-- Route through and slightly beyond the touch volume. Retarget only
+				-- when no chest tween is running, never every render frame.
+				if not TweenManager.IsChestTweenPlaying() and tick() - lastRouteAt >= 0.1 then
+					local direction = distance > 0.01 and delta.Unit or root.CFrame.LookVector
+					local passPosition = part2.Position + direction * 3.5
+					local passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
+					TweenManager.TweenChest(passCFrame)
+					lastRouteAt = tick()
 				end
-				VirtualInputManager:SendKeyEvent(true, "Space", false, game)
-				wait()
-				VirtualInputManager:SendKeyEvent(false, "Space", false, game)
-				TweenManager.CancelCurrent()
 			end
-			ToTarget(part2.CFrame, true)
 		until not part2
 			or not part2.Parent
 			or not Settings["Auto Upgrade Race V2-V3"]
 			or (part2:GetAttribute("IsDisabled"))
 			or (part2:FindFirstChild("Ignored"))
 			or not part2:FindFirstChild("TouchInterest")
+			or passedChest
+			or tick() - startedAt >= 15
+
+		if part2 and part2.Parent and not part2:FindFirstChild("Ignored")
+			and (passedChest or tick() - startedAt >= 15)
+		then
+			Instance.new("IntValue", part2).Name = "Ignored"
+		end
 	else
 		local value7 = PathFindChest()
 		if value7 then
-			ToTarget(value7.Part.CFrame)
-			if localPlayer:DistanceFromCharacter(value7.Part.Position) <= 100 or (GetNearestChest()) then
-				Instance.new("IntValue", value7).Name = "Ignored"
+			local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if root and value7.Part then
+				local delta = value7.Part.Position - root.Position
+				local direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
+				TweenManager.TweenChest(CFrame.new(value7.Part.Position + direction * 3.5)
+					* (root.CFrame - root.Position))
 			end
 		else
 			if Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("PlayerSpawns") and Workspace._WorldOrigin.PlayerSpawns:FindFirstChild("Pirates") then
@@ -2870,6 +2975,7 @@ function AutoMinkV2()
 			end
 		end
 	end
+	TweenManager.ReleaseChestWhenIdle()
 end
 
 function DetectSeabeast()
@@ -3755,7 +3861,7 @@ function GetCyborg()
 				-- manager's character lock active while passing through the chest.
 				root.AssemblyLinearVelocity = Vector3.zero
 				root.AssemblyAngularVelocity = Vector3.zero
-				ToTarget(passCFrame, false, true)
+				TweenManager.TweenChest(passCFrame)
 				repeat
 					task.wait()
 					root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -3770,7 +3876,7 @@ function GetCyborg()
 						-- If physics interrupted the pass, retry only after the shared tween
 						-- has stopped; never replace an active tween every frame.
 						if distance > 5 and tick() - lastPassAt >= 3
-							and (not CurrentTween or CurrentTween.PlaybackState ~= Enum.PlaybackState.Playing)
+							and not TweenManager.IsChestTweenPlaying()
 						then
 							delta = chest.Position - root.Position
 							direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
@@ -3778,7 +3884,7 @@ function GetCyborg()
 							passCFrame = CFrame.new(passPosition) * (root.CFrame - root.Position)
 							root.AssemblyLinearVelocity = Vector3.zero
 							root.AssemblyAngularVelocity = Vector3.zero
-							ToTarget(passCFrame, false, true)
+							TweenManager.TweenChest(passCFrame)
 							lastPassAt = tick()
 						end
 					end
