@@ -8349,9 +8349,13 @@ end)
         return ok and result == true
     end
 
-    -- FIND FM SERVER (Multi-fallback HTTP)
+    -- FIND FM SERVER: endfullmoon -> fullmoonin -> ordinary Fullmoon row.
     local function findFMServer()
-        if not FM_API_URL or FM_API_URL == "" then return nil end
+        getgenv().JoinV4FMFilterStatus = "requesting kurinian Full Moon API"
+        if not FM_API_URL or FM_API_URL == "" then
+            getgenv().JoinV4FMFilterStatus = "FM API URL missing"
+            return nil
+        end
 
         local function getField(tbl, ...)
             if type(tbl) ~= "table" then return nil end
@@ -8375,11 +8379,10 @@ end)
             return nil
         end
 
-        local function parseFullMoonIn(entry)
-            local value = getField(entry, "fullmoonin", "fullMoonIn", "full_moon_in")
+        local function parseClock(value)
             if type(value) == "number" then return value end
             if type(value) ~= "string" then return nil end
-            local minutes, seconds = value:match("^(%d+):(%d+)$")
+            local minutes, seconds = value:match("^%s*(%d+):(%d+)%s*$")
             if not minutes then return nil end
             return tonumber(minutes) * 60 + tonumber(seconds)
         end
@@ -8400,49 +8403,115 @@ end)
                 break
             end
         end
-        if not resp or resp.StatusCode ~= 200 then return nil end
+        if not resp or resp.StatusCode ~= 200 then
+            getgenv().JoinV4FMFilterStatus = "FM API HTTP failed"
+            return nil
+        end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
-        if not ok2 or type(parsed) ~= "table" then return nil end
+        if not ok2 or type(parsed) ~= "table" then
+            getgenv().JoinV4FMFilterStatus = "FM API JSON decode failed"
+            return nil
+        end
 
         local entries
         if type(parsed.data) == "table" and #parsed.data > 0 then
             entries = parsed.data
+        elseif type(parsed.servers) == "table" and #parsed.servers > 0 then
+            entries = parsed.servers
         elseif type(parsed) == "table" and #parsed > 0 then
             entries = parsed
-        else return nil end
+        else
+            getgenv().JoinV4FMFilterStatus = "FM API has no data[]/servers[]"
+            return nil
+        end
 
-        local candidates = {}
+        local endingCandidates = {}
+        local incomingCandidates = {}
+        local ordinaryCandidates = {}
+        local currentPlaceRows = 0
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
             local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
             local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
             local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
-            local fullMoonIn = parseFullMoonIn(v)
+            local maxPlayers = parsePlayers(getField(v, "maxplayers", "maxPlayers", "MaxPlayers")) or 12
+            local endValue = getField(v, "endfullmoon", "endFullMoon", "end_full_moon")
+            local incomingValue = getField(v, "fullmoonin", "fullMoonIn", "full_moon_in")
+            local endSeconds = parseClock(endValue)
+            local incomingSeconds = parseClock(incomingValue)
+            local moonName = tostring(getField(v, "moon", "Moon") or ""):lower():gsub("%s+", "")
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            if players and tonumber(players) >= 2 and tonumber(players) <= 6
-                and fullMoonIn and fullMoonIn >= 4 * 60
-            then
-                table.insert(candidates, {
+            currentPlaceRows = currentPlaceRows + 1
+            if not players or players < 0 or players >= maxPlayers then continue end
+
+            -- Priority 1: active Full Moon with 4:00-9:00 remaining.
+            if endSeconds and endSeconds >= 4 * 60 and endSeconds <= 9 * 60 then
+                table.insert(endingCandidates, {
                     jobId = tostring(jobId),
-                    players = tonumber(players),
-                    fullMoonIn = fullMoonIn,
-                    priority = fullMoonIn >= 9 * 60,
+                    players = players,
+                    seconds = endSeconds,
+                })
+                continue
+            end
+
+            -- Priority 2: only when priority 1 is empty; Full Moon starts in <=1:00.
+            if incomingSeconds and incomingSeconds >= 0 and incomingSeconds <= 60 then
+                table.insert(incomingCandidates, {
+                    jobId = tostring(jobId),
+                    players = players,
+                    seconds = incomingSeconds,
+                })
+                continue
+            end
+
+            -- Priority 3: ordinary records have no timer fields. The requested
+            -- 2-6 player restriction applies only to this fallback group.
+            if endValue == nil and incomingValue == nil and moonName == "fullmoon"
+                and players >= 2 and players <= 6
+            then
+                table.insert(ordinaryCandidates, {
+                    jobId = tostring(jobId),
+                    players = players,
                 })
             end
         end
-        if #candidates == 0 then return nil end
-        -- Ưu tiên >=9 phút; fallback thấp nhất 4 phút; trong cùng nhóm chọn ít player trước.
-        table.sort(candidates, function(a, b)
-            if a.priority ~= b.priority then return a.priority end
-            if a.players ~= b.players then return a.players < b.players end
-            return a.fullMoonIn > b.fullMoonIn
+
+        table.sort(endingCandidates, function(a, b)
+            if a.seconds ~= b.seconds then return a.seconds > b.seconds end
+            return a.players < b.players
         end)
-        return candidates[1].jobId
+        if #endingCandidates > 0 then
+            getgenv().JoinV4FMFilterStatus = "endfullmoon"
+            return endingCandidates[1].jobId
+        end
+
+        table.sort(incomingCandidates, function(a, b)
+            if a.seconds ~= b.seconds then return a.seconds < b.seconds end
+            return a.players < b.players
+        end)
+        if #incomingCandidates > 0 then
+            getgenv().JoinV4FMFilterStatus = "fullmoonin"
+            return incomingCandidates[1].jobId
+        end
+
+        table.sort(ordinaryCandidates, function(a, b)
+            if a.players ~= b.players then return a.players < b.players end
+            return a.jobId < b.jobId
+        end)
+        if #ordinaryCandidates > 0 then
+            getgenv().JoinV4FMFilterStatus = "ordinary"
+            return ordinaryCandidates[1].jobId
+        end
+        getgenv().JoinV4FMFilterStatus = string.format(
+            "no match P%s rows %d/%d",
+            tostring(game.PlaceId), currentPlaceRows, #entries
+        )
+        return nil
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
@@ -9333,7 +9402,9 @@ end)
                             lastFmApiResult = nil
                         else
                             lastFmApiResult = (found and found ~= game.JobId) and found or nil
-                            if not lastFmApiResult then setStatus("No FM server, retrying...") end
+                            if not lastFmApiResult then
+                                setStatus("No FM: " .. tostring(getgenv().JoinV4FMFilterStatus or "retrying"))
+                            end
                         end
                         isFetching = false
                     end)
