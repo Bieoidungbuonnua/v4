@@ -1920,8 +1920,26 @@ function SpecialHop(targetName)
 end
 
 function TeleportSeaEvents(mob)
-    if mob and mob:FindFirstChild("HumanoidRootPart") then
-        ToTarget(mob.HumanoidRootPart.CFrame * CFrame.new(0, 50, 0))
+    local mobRoot = mob and mob:FindFirstChild("HumanoidRootPart")
+    local playerRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not mobRoot or not playerRoot then return end
+
+    -- Use a world-space vertical offset. Multiplying the Sea Beast CFrame made
+    -- the destination rotate/tilt with the model and produced camera jerks.
+    local targetCFrame = CFrame.new(mobRoot.Position + Vector3.new(0, 50, 0))
+    local distance = (playerRoot.Position - targetCFrame.Position).Magnitude
+    local lastTarget = getgenv().FishmanMoveTarget
+    local targetMoved = typeof(lastTarget) ~= "Vector3"
+        or (lastTarget - targetCFrame.Position).Magnitude >= 30
+    local tweenPlaying = CurrentTween and CurrentTween.PlaybackState == Enum.PlaybackState.Playing
+
+    -- Do not cancel/recreate the same tween every frame. Let one route finish;
+    -- only replace it if the moving Sea Beast displaced the target by 30 studs.
+    if distance > 18 and (not tweenPlaying or targetMoved) then
+        getgenv().FishmanMoveTarget = targetCFrame.Position
+        ToTarget(targetCFrame, false, true)
+    elseif distance <= 18 and tweenPlaying then
+        TweenManager.CancelTweenOnly()
     end
 end
 
@@ -3016,6 +3034,7 @@ end
 function AutoFishV2()
 	local humanoid4, value7 = DetectSeabeast(), CheckBoat()
 	if not humanoid4 then
+		_G.SHOULDSPAMSKILLS = false
 		if not value7 then
 			local targetCFrame2 = CFrame.new(-11.94833755493164, 10.293913841247559, 2957.010498046875)
 			if localPlayer:DistanceFromCharacter(targetCFrame2.Position) > 8 then
@@ -3032,20 +3051,21 @@ function AutoFishV2()
 			end
 		end
 	else
+		_G.SHOULDSPAMSKILLS = true
 		repeat
 			task.wait()
 			TeleportSeaEvents(humanoid4)
 			local rootPart7 = humanoid4:FindFirstChild("HumanoidRootPart")
 			if rootPart7 then
-				getgenv().AimPos = CFrame.new(rootPart7.Position.X, 40, rootPart7.Position.Z)
-				if localPlayer:DistanceFromCharacter(rootPart7.Position) < 400 then
-					AutoAllSkill()
-				end
+				local predicted = rootPart7.Position + rootPart7.AssemblyLinearVelocity * 0.15
+				getgenv().AimPos = CFrame.new(predicted)
 			end
 		until not humanoid4
 			or not humanoid4.Parent
 			or (humanoid4:FindFirstChild("Health") and humanoid4.Health.Value <= 0)
 			or not Settings["Auto Upgrade Race V2-V3"]
+		_G.SHOULDSPAMSKILLS = false
+		TweenManager.CancelTweenOnly()
 	end
 end
 
@@ -5758,15 +5778,7 @@ function GetSeaBeastTrial()
 end
 
 function TeleportSeabeast2(seaBeast)
-	if not seaBeast:FindFirstChild("HumanoidRootPart") then return end
-	if
-		(Vector3.new(0, seaBeast.HumanoidRootPart.Position.Y, 0) - Vector3.new(0, -60, 0)).Magnitude
-		<= 175
-	then
-		ToTarget(seaBeast.HumanoidRootPart.CFrame * CFrame.new(0, 200, 50))
-	else
-		ToTarget(CFrame.new(seaBeast.HumanoidRootPart.Position.X, 140, seaBeast.HumanoidRootPart.Position.Z))
-	end
+	TeleportSeaEvents(seaBeast)
 end
 
 function DetectPlayerKillName()
@@ -6006,7 +6018,6 @@ end
 
 -- SKILL SPAM WORKER (port t\u1eeb piggyv4) - b\u1eadt/t\u1eaft qua _G.SHOULDSPAMSKILLS
 local _piggyValidTooltip = { Melee=true, ["Blox Fruit"]=true, Sword=true, Gun=true }
-local _piggyValidKey     = { Z=true, X=true, C=true, V=true, F=true }
 local _piggyFruits = {
 	["Buddha-Buddha"]=true,["T-Rex-T-Rex"]=true,["Dragon-Dragon"]=true,
 	["Yeti-Yeti"]=true,["Leopard-Leopard"]=true,["Venom-Venom"]=true,
@@ -6014,38 +6025,52 @@ local _piggyFruits = {
 	["Gas-Gas"]=true,["Portal-Portal"]=true,
 }
 local function _piggyGetWeapons()
-	local t = {}
-	for _, v in ipairs(localPlayer.Backpack:GetChildren()) do
-		if v:IsA("Tool") and _piggyValidTooltip[v.ToolTip] then table.insert(t, v) end
-	end
-	if localPlayer.Character then
-		for _, v in ipairs(localPlayer.Character:GetChildren()) do
-			if v:IsA("Tool") and _piggyValidTooltip[v.ToolTip] then table.insert(t, v) end
+	local found = {}
+	local function scan(container)
+		for _, tool in ipairs(container and container:GetChildren() or {}) do
+			if tool:IsA("Tool") and _piggyValidTooltip[tool.ToolTip]
+				and not found[tool.ToolTip]
+			then
+				found[tool.ToolTip] = tool
+			end
 		end
 	end
-	return t
+	-- Keep the equipped tool first when possible, then fill missing categories
+	-- from Backpack. Only one tool per category avoids cycling every stored item.
+	scan(localPlayer.Character)
+	scan(localPlayer.Backpack)
+	local weapons = {}
+	for _, toolType in ipairs({"Melee", "Sword", "Blox Fruit", "Gun"}) do
+		if found[toolType] then table.insert(weapons, found[toolType]) end
+	end
+	return weapons
 end
 _G.SHOULDSPAMSKILLS = false
-task.spawn(function()
-	while task.wait(0.05) do
+getgenv().FishmanSkillWorkerGeneration = (getgenv().FishmanSkillWorkerGeneration or 0) + 1
+task.spawn(function(workerGeneration)
+	while getgenv().FishmanSkillWorkerGeneration == workerGeneration and task.wait(0.05) do
 		if not _G.SHOULDSPAMSKILLS then continue end
 		local skillsUI = localPlayer.PlayerGui
 			and localPlayer.PlayerGui:FindFirstChild("Main")
 			and localPlayer.PlayerGui.Main:FindFirstChild("Skills")
 		if not skillsUI then continue end
-		local weapons = _piggyGetWeapons()
-		for _, v in ipairs(weapons) do
-			if not skillsUI:FindFirstChild(v.Name) then pcall(EquipTool, v.Name) end
-		end
-		for _, v in ipairs(weapons) do
+		for _, v in ipairs(_piggyGetWeapons()) do
 			if not _G.SHOULDSPAMSKILLS then break end
 			if localPlayer.Character and not localPlayer.Character:FindFirstChild(v.Name) then
 				pcall(EquipTool, v.Name)
+				-- Equipping and building the Skills frame are asynchronous. Without
+				-- this small confirmation window only the original Melee UI is seen.
+				for _ = 1, 4 do
+					if not _G.SHOULDSPAMSKILLS or skillsUI:FindFirstChild(v.Name) then break end
+					task.wait(0.05)
+				end
 			end
 			local ui = skillsUI:FindFirstChild(v.Name)
 			if not ui then continue end
-			for _, slot in ipairs(ui:GetChildren()) do
-				if not _piggyValidKey[slot.Name] then continue end
+			for _, key in ipairs({"Z", "X", "C", "V", "F"}) do
+				if not _G.SHOULDSPAMSKILLS then break end
+				local slot = ui:FindFirstChild(key)
+				if not slot then continue end
 				local cd    = slot:FindFirstChild("Cooldown")
 				local title = slot:FindFirstChild("Title")
 				if not cd or not title then continue end
@@ -6053,13 +6078,14 @@ task.spawn(function()
 				if cd.Size ~= UDim2.new(0,0,1,-1) then continue end
 				if slot.Name == "V" and _piggyFruits[ui.Name] then continue end
 				VirtualInputManager:SendKeyEvent(true,  slot.Name, false, game)
-				task.wait(0.05)
+				task.wait(0.04)
 				VirtualInputManager:SendKeyEvent(false, slot.Name, false, game)
-				task.wait(0.5)
+				task.wait(0.08)
 			end
+			task.wait(0.05)
 		end
 	end
-end)
+end, getgenv().FishmanSkillWorkerGeneration)
 
 local function RunFishmanTrial()
 	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
@@ -6084,8 +6110,12 @@ local function RunFishmanTrial()
 	repeat
 		task.wait()
 		if seaBeast and IsMobAlive(seaBeast) then
+			local seaRoot = seaBeast:FindFirstChild("HumanoidRootPart")
+			if seaRoot then
+				local predicted = seaRoot.Position + seaRoot.AssemblyLinearVelocity * 0.15
+				getgenv().AimPos = CFrame.new(predicted)
+			end
 			TeleportSeabeast2(seaBeast)
-			ClickM1(seaBeast)
 			_G.SHOULDSPAMSKILLS = true
 		else
 			_G.SHOULDSPAMSKILLS = false
@@ -6094,6 +6124,7 @@ local function RunFishmanTrial()
 	until not isTimerActive()
 
 	_G.SHOULDSPAMSKILLS = false
+	TweenManager.CancelTweenOnly()
 end
 
 local function ResolveMinkTrialGoal()
@@ -8763,9 +8794,9 @@ end)
             end
 
             -- Priority 3: ordinary records have no timer fields. The requested
-            -- 2-6 player restriction applies only to this fallback group.
+            -- 2-7 player restriction applies only to this fallback group.
             if endValue == nil and incomingValue == nil and moonName == "fullmoon"
-                and players >= 2 and players <= 6
+                and players >= 2 and players <= 7
             then
                 table.insert(ordinaryCandidates, {
                     jobId = tostring(jobId),
