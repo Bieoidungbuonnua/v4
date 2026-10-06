@@ -941,6 +941,7 @@ end
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "https://apiibf.kurinian-hub.xyz/api/bloxfruit/fullmoon"
+    local FM_API_URL_LEGACY = "http://163.61.183.126:3000/fullmoon"   -- fallback khi API kurinian khong co server
     local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
@@ -1243,9 +1244,9 @@ end
             end
 
             -- Priority 3: ordinary records have no timer fields. The requested
-            -- 2-6 player restriction applies only to this fallback group.
+            -- 2-8 player restriction applies only to this fallback group.
             if endValue == nil and incomingValue == nil and moonName == "fullmoon"
-                and players >= 2 and players <= 6
+                and players >= 2 and players <= 8
             then
                 table.insert(ordinaryCandidates, {
                     jobId = tostring(jobId),
@@ -1285,6 +1286,88 @@ end
             tostring(game.PlaceId), currentPlaceRows, #entries
         )
         return nil
+    end
+
+    -- FIND FM SERVER LEGACY (API cu 163.61.183.126, fallback khi API kurinian khong co server, 2-8 player)
+    local function findFMServerLegacy()
+        if not FM_API_URL_LEGACY or FM_API_URL_LEGACY == "" then return nil end
+
+        local function getField(tbl, ...)
+            if type(tbl) ~= "table" then return nil end
+            local low = {}
+            for k, v in pairs(tbl) do if type(k) == "string" then low[k:lower()] = v end end
+            for i = 1, select("#", ...) do
+                local n = select(i, ...)
+                if n then local val = low[n:lower()]; if val ~= nil then return val end end
+            end
+            return nil
+        end
+
+        local function parsePlayers(f)
+            if not f then return nil end
+            if type(f) == "number" then return f end
+            if type(f) == "string" then
+                local cur = f:match("(%d+)%s*/%s*%d+")
+                if cur then return tonumber(cur) end
+                return tonumber(f)
+            end
+            return nil
+        end
+
+        local function parseTimeToNight(entry)
+            for _, n in ipairs({"timetonight","timeToNight","time_to_night","timeToNightSeconds","time"}) do
+                local v = getField(entry, n); if v ~= nil then return tonumber(v) end
+            end
+            return nil
+        end
+
+        local resp = nil
+        local httpMethods = {
+            function(u) if type(syn) == "table" and type(syn.request) == "function" then return syn.request({Url=u,Method="GET"}) end end,
+            function(u) if type(http_request) == "function" then return http_request({Url=u,Method="GET"}) end end,
+            function(u) if type(request) == "function" then return request({Url=u,Method="GET"}) end end,
+            function(u) if type(http) == "table" and type(http.request) == "function" then return http.request({Url=u,Method="GET"}) end end,
+        }
+        for _, fn in ipairs(httpMethods) do
+            local ok, res = pcall(fn, FM_API_URL_LEGACY)
+            if ok and res and type(res) == "table" and (res.Body or res.body) then
+                local body = res.Body or res.body
+                local code = tonumber(res.StatusCode or res.status or res.Status or 200) or 200
+                resp = {Body = body, StatusCode = code}
+                break
+            end
+        end
+        if not resp or resp.StatusCode ~= 200 then return nil end
+
+        local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
+        if not ok2 or type(parsed) ~= "table" then return nil end
+
+        local entries
+        if type(parsed.data) == "table" and #parsed.data > 0 then
+            entries = parsed.data
+        elseif type(parsed) == "table" and #parsed > 0 then
+            entries = parsed
+        else return nil end
+
+        local candidates = {}
+        for _, v in ipairs(entries) do
+            if type(v) ~= "table" then continue end
+            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
+            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
+            local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
+            if not jobId or jobId == "" then continue end
+            if tostring(jobId) == tostring(game.JobId) then continue end
+            local cached = fmJoinedCache[tostring(jobId)]
+            if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
+            if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
+            if players and tonumber(players) >= 2 and tonumber(players) <= 8 then
+                table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
+            end
+        end
+        if #candidates == 0 then return nil end
+        -- Chon server it player nhat de tranh race condition
+        table.sort(candidates, function(a, b) return a.players < b.players end)
+        return candidates[1].jobId
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
@@ -1971,6 +2054,8 @@ end
             local lastHopT   = ""
             local lastHopAt_ = 0
             local isFetching = false
+            local kurinFailCount = 0   -- so lan lien tiep API kurinian khong co server hop le
+            local KURIN_MAX_TRY  = 5   -- sau 5 lan that bai moi dung API cu (163.61...)
             local takenJobIds        = {}
             local isHopping  = false   -- guard: khong retry khi dang teleport
             local lastConflictCheckAt = 0
@@ -1979,6 +2064,7 @@ end
                 local nowTick = tick()
 
                 if isNight() and isFullMoon() then
+                    kurinFailCount = 0
                     local myGroupIdx = AllHopFMSet[USERNAME] or 999
                     local conflictWith = nil
 
@@ -2061,6 +2147,20 @@ end
                     lastFmApiAt = nowTick; isFetching = true
                     task.spawn(function()
                         local found = findFMServer()
+                        if found then
+                            kurinFailCount = 0
+                        else
+                            kurinFailCount = kurinFailCount + 1
+                            -- Fallback: chi dung API cu (2-8 player) sau 5 lan kurinian that bai lien tiep
+                            if kurinFailCount >= KURIN_MAX_TRY then
+                                found = findFMServerLegacy()
+                                if found then
+                                    warn("[JoinV4][HopFM] Kurinian fail " .. kurinFailCount .. " lan -> dung API cu: " .. found:sub(1,8) .. "...")
+                                end
+                            else
+                                setStatus("Kurinian khong co server (" .. kurinFailCount .. "/" .. KURIN_MAX_TRY .. ")")
+                            end
+                        end
                         -- Fallback: neu FM API khong co server, thu Near Moon API
                         if not found and NEAR_MOON_ENABLED then
                             found = findNearMoonServer()
