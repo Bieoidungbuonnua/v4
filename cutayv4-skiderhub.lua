@@ -8175,7 +8175,7 @@ end)
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
     local API_BASE        = "http://mbasic7.pikamc.vn:25082"
-    local FM_API_INTERVAL  = 6      -- tránh poll/hop dồn dập khi API còn giữ JobId chết
+    local FM_API_INTERVAL  = 3      -- đúng nhịp bản JoinV4 gốc
     local SYNC_INTERVAL    = 1.5   -- giây giữa các lần sync trạng thái lên API
     local HOP_STARTUP_DELAY = 3    -- giây trước khi bắt đầu hop
 
@@ -8267,7 +8267,7 @@ end)
     local lastFmApiAt     = 0
     local lastFmApiResult = nil
     local fmJoinedCache   = {}
-    local FM_CACHE_EXPIRE = 600
+    local FM_CACHE_EXPIRE = 180
     local HOP_STARTUP     = tick()
     local fmHopPending    = false
     local fmPendingCheckAt = 0
@@ -8635,20 +8635,19 @@ end)
                 lastFmApiResult = nil
             end
             lastFmApiAt = 0
-            getgenv().JoinV4HopGate = nil
             getgenv().JoinV4LastHopAttempt = nil
         end
     end)
 
-    local function hopTo(jobId, targetPlaceId, requireLiveListing)
+    local function hopTo(jobId, targetPlaceId, allowWindowRetry)
         jobId = tostring(jobId or "")
         if jobId == "" or jobId == tostring(game.JobId) then return false end
         local failedAt = fmJoinedCache[jobId]
-        if failedAt and os.time() - failedAt < FM_CACHE_EXPIRE then
+        if not allowWindowRetry and failedAt and os.time() - failedAt < FM_CACHE_EXPIRE then
             return false, "cached"
         end
         local rejectedAt = getgenv().JoinV4RejectedHopJobs[jobId]
-        if rejectedAt and os.time() - rejectedAt < 1800 then
+        if not allowWindowRetry and rejectedAt and os.time() - rejectedAt < 1800 then
             return false, "rejected"
         end
 
@@ -8671,65 +8670,9 @@ end)
             or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
         if not sb then return false, "no_server_browser" end
 
-        -- Kurian may retain a closed JobId. Match the stable build: an API
-        -- candidate must also be visible in the game's live ServerBrowser list.
-        if requireLiveListing then
-            local sawServerList = false
-            local listedLive = false
-            for page = 1, 5 do
-                local listOK, serverPage = pcall(function()
-                    return sb:InvokeServer(page)
-                end)
-                if listOK and type(serverPage) == "table" then
-                    sawServerList = true
-                    for listedId, data in pairs(serverPage) do
-                        local idValue = type(data) == "table"
-                            and (data.JobId or data.jobId or data.jobid or data.JobID or data.id)
-                            or nil
-                        local listedJobId = tostring(idValue or listedId or "")
-                        if listedJobId == jobId then
-                            local listedPlaceId = type(data) == "table"
-                                and tonumber(data.PlaceId or data.placeId or data.placeid or data.PlaceID)
-                                or nil
-                            local players = type(data) == "table"
-                                and tonumber(data.Count or data.count or data.Players or data.players or data.playing)
-                                or nil
-                            local maxPlayers = type(data) == "table"
-                                and tonumber(data.MaxPlayers or data.maxPlayers or data.maxplayers)
-                                or 12
-                            listedLive = (listedPlaceId == nil or listedPlaceId == currentPlaceId)
-                                and (players == nil or players < maxPlayers)
-                            break
-                        end
-                    end
-                end
-                if listedLive then break end
-            end
-            if not listedLive then
-                if sawServerList then
-                    fmJoinedCache[jobId] = os.time()
-                    getgenv().JoinV4RejectedHopJobs[jobId] = os.time()
-                    warn("[JoinV4] Skip stale API JobId not present in __ServerBrowser: " .. jobId:sub(1, 8))
-                    return false, "not_listed"
-                end
-                -- Do not teleport blindly when ServerBrowser itself is unavailable.
-                fmJoinedCache[jobId] = os.time() - (FM_CACHE_EXPIRE - 15)
-                return false, "listing_unavailable"
-            end
-        end
-
-        -- Keep the reference __ServerBrowser hop, but single-flight the same
-        -- source server -> target JobId. Helper/Main loops may tick repeatedly
-        -- while Roblox is still processing the first teleport request.
+        -- Exact mechanism from the stable reference: callers control the retry
+        -- window; every call sends one __ServerBrowser teleport request.
         local now = tick()
-        local hopKey = tostring(game.JobId) .. "->" .. jobId
-        local gate = getgenv().JoinV4HopGate
-        if type(gate) == "table" and gate.Key == hopKey
-            and now - (tonumber(gate.At) or 0) < 8
-        then
-            return false
-        end
-        getgenv().JoinV4HopGate = { Key = hopKey, At = now }
         getgenv().JoinV4LastHopAttempt = {
             JobId = jobId,
             PlaceId = verifiedPlaceId,
@@ -8740,10 +8683,7 @@ end)
         local ok = pcall(function()
             sb:InvokeServer("teleport", jobId)
         end)
-        if not ok then
-            getgenv().JoinV4HopGate = nil
-        end
-        return ok
+        return ok, ok and "sent" or "invoke_failed"
     end
 
     -- NATIVE V4 STATUS CHECK
@@ -9542,16 +9482,8 @@ end)
                         setStatus("Hop FM: " .. hopT:sub(1,8) .. "...")
                         pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
                         task.spawn(function()
-                            local started, reason = hopTo(hopT, game.PlaceId, true)
-                            if not started then
-                                isHopping = false
-                                lastFmApiResult = nil
-                                lastFmApiAt = 0
-                                lastHopT = ""
-                                setStatus("Skip FM JobId: " .. tostring(reason or "invalid"))
-                                return
-                            end
-                            task.wait(12)   -- one attempt only; never spam InvokeServer
+                            hopTo(hopT, game.PlaceId)
+                            task.wait(12)   -- đúng cửa sổ chờ của bản gốc
                             isHopping = false
                         end)
                     else
@@ -9622,7 +9554,6 @@ end)
                     local hopFMFound = false   -- debug: co tim thay HopFM trong accounts khong
                     local hopFMFMState = "?"  -- debug: fullMoon cua HopFM la gi
                     local rejectedPlaceId = nil
-                    local rejectedReason = nil
                     local accCount = 0
 
                     for name, data in pairs(resp.accounts) do
@@ -9635,31 +9566,18 @@ end)
                             hopFMFMState = tostring(data.fullMoon or data.fullmoon or "nil")
                             if helperHasFM then
                                 local jid = tostring(data.jobid or data.jobId or "")
-                                local rejectedAt = getgenv().JoinV4RejectedHopJobs[jid]
-                                local cachedAt = fmJoinedCache[jid]
-                                local usableJob = not (rejectedAt and os.time() - rejectedAt < 1800)
-                                    and not (cachedAt and os.time() - cachedAt < FM_CACHE_EXPIRE)
-                                if jid ~= "" and usableJob and accountPlaceId == tonumber(game.PlaceId) then
+                                if jid ~= "" and accountPlaceId == tonumber(game.PlaceId) then
                                     fmJobId = jid; fmPlaceId = accountPlaceId; fmWho = name; break
-                                elseif jid ~= "" and not usableJob then
-                                    rejectedReason = "stale JobId " .. jid:sub(1, 8)
                                 elseif jid ~= "" then
                                     rejectedPlaceId = accountPlaceId or "missing"
                                 end
                             elseif helperNearFM then
                                 -- HopFM dang o near-moon server, follow vao de chuan bi
                                 local jid = tostring(data.jobid or data.jobId or "")
-                                local rejectedAt = getgenv().JoinV4RejectedHopJobs[jid]
-                                local cachedAt = fmJoinedCache[jid]
-                                local usableJob = not (rejectedAt and os.time() - rejectedAt < 1800)
-                                    and not (cachedAt and os.time() - cachedAt < FM_CACHE_EXPIRE)
                                 if jid ~= "" and jid ~= game.JobId
-                                    and usableJob
                                     and accountPlaceId == tonumber(game.PlaceId)
                                 then
                                     fmJobId = jid; fmPlaceId = accountPlaceId; fmWho = name .. "[NearFM]"; break
-                                elseif jid ~= "" and jid ~= game.JobId and not usableJob then
-                                    rejectedReason = "stale JobId " .. jid:sub(1, 8)
                                 elseif jid ~= "" and jid ~= game.JobId then
                                     rejectedPlaceId = accountPlaceId or "missing"
                                 end
@@ -9668,9 +9586,7 @@ end)
                     end
 
                     if not fmJobId then
-                        if rejectedReason then
-                            setStatus("Skip HopFM " .. rejectedReason .. "; waiting update")
-                        elseif rejectedPlaceId ~= nil then
+                        if rejectedPlaceId ~= nil then
                             setStatus("Skip HopFM PlaceId " .. tostring(rejectedPlaceId) .. " != " .. tostring(game.PlaceId))
                         elseif hopFMFound then
                             setStatus("Waiting HopFM FM: " .. hopFMFMState .. " | acc=" .. accCount)
@@ -9689,17 +9605,16 @@ end)
                     if fmJobId ~= lastHopTHelper then
                         lastHopAtHelper = nowTick; lastHopTHelper = fmJobId
                         setStatus("Join " .. (fmWho or "HopFM") .. " -> " .. fmJobId:sub(1,8) .. "...")
-                        hopTo(fmJobId, fmPlaceId); task.wait(0.5)
+                        hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                     else
                         local el = nowTick - lastHopAtHelper
                         if el >= 8 then
-                            warn("[JoinV4][Helper] hop timeout -> reject stale target=" .. tostring(lastHopTHelper):sub(1,8))
-                            fmJoinedCache[fmJobId] = os.time()
-                            getgenv().JoinV4RejectedHopJobs[fmJobId] = os.time()
-                            setStatus("Hop timeout - waiting fresh JobId")
+                            warn("[JoinV4][Helper] hopTo timeout (8s) -> reset | target=" .. tostring(lastHopTHelper):sub(1,8))
+                            setStatus("Hop timeout - retry")
                             lastHopTHelper = ""; lastHopAtHelper = 0
                         else
                             setStatus("Hopping -> " .. fmJobId:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
+                            hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                         end
                     end
                 end)
@@ -9842,14 +9757,8 @@ end)
                             local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true)
                             local jid = tostring(data.jobid or data.jobId or "")
                             local accountPlaceId = tonumber(data.placeid or data.placeId or data.PlaceId)
-                            local rejectedAt = getgenv().JoinV4RejectedHopJobs[jid]
-                            local cachedAt = fmJoinedCache[jid]
                             if not helperHasFM or jid == "" then
                                 table.insert(notReady, name .. "(no FM)")
-                            elseif (rejectedAt and os.time() - rejectedAt < 1800)
-                                or (cachedAt and os.time() - cachedAt < FM_CACHE_EXPIRE)
-                            then
-                                table.insert(notReady, name .. "(stale job)")
                             elseif accountPlaceId ~= tonumber(game.PlaceId) then
                                 table.insert(notReady, name .. "(wrong place " .. tostring(accountPlaceId or "missing") .. ")")
                             elseif fmJobId == nil then
@@ -9880,16 +9789,15 @@ end)
                     if fmJobId ~= lastHopTMain then
                         lastHopAtMain = nowTick; lastHopTMain = fmJobId
                         setStatus("Join FM (all helpers ready)...")
-                        hopTo(fmJobId, fmPlaceId); task.wait(0.5)
+                        hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                     else
                         local el = nowTick - lastHopAtMain
                         if el >= 8 then
-                            fmJoinedCache[fmJobId] = os.time()
-                            getgenv().JoinV4RejectedHopJobs[fmJobId] = os.time()
-                            setStatus("Join timeout - waiting fresh JobId")
+                            setStatus("Join timeout - retry")
                             lastHopTMain = ""; lastHopAtMain = 0
                         else
-                            setStatus("Waiting teleport: " .. fmJobId:sub(1,8) .. "...")
+                            setStatus("Retry join: " .. fmJobId:sub(1,8) .. "...")
+                            hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                         end
                     end
 
