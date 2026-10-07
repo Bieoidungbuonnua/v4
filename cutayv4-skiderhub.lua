@@ -1958,6 +1958,23 @@ function TeleportSeaEvents(mob)
     local mobRoot = mob and mob:FindFirstChild("HumanoidRootPart")
     local playerRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not mobRoot or not playerRoot then return end
+    -- Boat exit from bnn.lua's toTarget; finish jumping before starting a tween.
+    local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if humanoid and humanoid.Sit then
+        TweenManager.CancelCurrent()
+        task.wait(0.1)
+        getgenv().noclip = false
+        VirtualInputManager:SendKeyEvent(true, "Space", false, game)
+        task.wait()
+        VirtualInputManager:SendKeyEvent(false, "Space", false, game)
+        task.wait(0.1)
+        local effects = playerRoot:FindFirstChild("EffectsSY")
+        if effects then effects:Destroy() end
+        humanoid.Jump = true
+        task.wait(0.1)
+        playerRoot.CFrame = playerRoot.CFrame * CFrame.new(0, 10, 0)
+        return false
+    end
 
     -- Use a world-space vertical offset. Multiplying the Sea Beast CFrame made
     -- the destination rotate/tilt with the model and produced camera jerks.
@@ -3076,7 +3093,30 @@ function DetectSeabeast()
     return nearest
 end
 
+function EnsureSharkmanKarate()
+    if DetectItemPlr("Sharkman Karate") then return true end
+    StopSeaBeastCombat()
+    local teacher = DetectNpc("Sharkman Teacher")
+    SetRaceUpgradeStatus("Sea Beast prerequisite: buying Sharkman Karate")
+    if not teacher then
+        SetRaceUpgradeStatus("Waiting for Sharkman Teacher to load")
+        return false
+    end
+    local root = teacher.HumanoidRootPart
+    if localPlayer:DistanceFromCharacter(root.Position) >= 8 then
+        ToTarget(root.CFrame * CFrame.new(0, 4, 4), false, true)
+    elseif tick() - (getgenv().SharkmanBuyLastAt or 0) >= 2 then
+        getgenv().SharkmanBuyLastAt = tick()
+        local result = ReplicatedStorage.Remotes.CommF_:InvokeServer("BuySharkmanKarate")
+        if not DetectItemPlr("Sharkman Karate") then
+            SetRaceUpgradeStatus("Sharkman Karate purchase pending: " .. tostring(result), true)
+        end
+    end
+    return DetectItemPlr("Sharkman Karate")
+end
+
 function AutoFishV2()
+    if not EnsureSharkmanKarate() then return end
 	local humanoid4, value7 = DetectSeabeast(), CheckBoat()
 	if not humanoid4 then
         StopSeaBeastCombat()
@@ -6142,6 +6182,7 @@ task.spawn(function(workerGeneration)
 end, getgenv().FishmanSkillWorkerGeneration)
 
 local function RunFishmanTrial()
+    if not EnsureSharkmanKarate() then return end
 	local locations = Workspace:FindFirstChild("_WorldOrigin") and Workspace._WorldOrigin:FindFirstChild("Locations")
 	local trial = locations and locations:FindFirstChild("Trial of Water")
 	if not trial then return end
@@ -6272,6 +6313,11 @@ function AutoTrialV4()
 	if Settings["Auto Finish Train Quest"] and Settings["Stack Train With Trial Race"] and CheckGoTrain() then
 		return
 	end
+
+    local data = localPlayer:FindFirstChild("Data")
+    local race = data and data:FindFirstChild("Race")
+    if race and (race.Value == "Fishman" or race.Value == "Shark")
+        and not EnsureSharkmanKarate() then return end
 
 	local clockTime = Lighting.ClockTime
 	local moon = CheckMoon()
