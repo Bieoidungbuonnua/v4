@@ -3718,6 +3718,13 @@ getgenv().CuttayCyborgRuntime = getgenv().CuttayCyborgRuntime or {
 }
 getgenv().CuttayCyborgRuntime.SummonCooldown = 10
 
+function SetCyborgStatus(message)
+    SetRaceUpgradeStatus("Cyborg: " .. message)
+    if getgenv().Mode == "CuttayV4" and getgenv().CuttayCyborgStatusReporter then
+        getgenv().CuttayCyborgStatusReporter("Cyborg: " .. message)
+    end
+end
+
 function TryCyborgRaidSummon()
 	local runtime = getgenv().CuttayCyborgRuntime
 	if tick() - runtime.LastSummonAt < runtime.SummonCooldown then return false end
@@ -3727,10 +3734,20 @@ function TryCyborgRaidSummon()
 	local button = raidSummon and raidSummon:FindFirstChild("Button")
 	local main = button and button:FindFirstChild("Main")
 	local detector = main and main:FindFirstChildOfClass("ClickDetector")
-	if not detector then return false end
+    if not detector then
+        SetCyborgStatus("waiting for Law raid button to load")
+        return false
+    end
+    if main:IsA("BasePart") and localPlayer:DistanceFromCharacter(main.Position) > 8 then
+        SetCyborgStatus("tween to Law raid button")
+        ToTarget(main.CFrame * CFrame.new(0, 4, 4), false, true)
+        return false
+    end
 	runtime.LastSummonAt = tick()
-	pcall(function() fireclickdetector(detector) end)
-	return true
+    SetCyborgStatus("activating Law raid button")
+    local ok, err = pcall(function() fireclickdetector(detector) end)
+    if not ok then error("Cyborg raid button: " .. tostring(err)) end
+    return true
 end
 
 local function IsCyborgChestServerOldEnough()
@@ -3858,7 +3875,9 @@ local ToggleAutoGetFullyCyborg
 function GetCyborg()
 	HookCyborgNotifications()
 	local trainerState = ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Check")
-	if trainerState == 2 then
+    local trainerUnlocked = trainerState == true or trainerState == 2
+    if localPlayer.Data.Race.Value == "Cyborg" then
+		SetCyborgStatus("race acquired")
 		if Settings["Auto Get Fully Cyborg"] and not Settings["Auto Upgrade Race V2-V3"] then
 			UpgradeRaceV2AndV3()
 		end
@@ -3873,23 +3892,35 @@ function GetCyborg()
 	local fragmentMode = tostring(Settings["LockFragment"] or ""):lower()
 	local savedState = ReadCyborgState()
 	if fragmentMode == "farmkhithieu" and type(getgenv().RequestFragmentFarm) == "function" then
-		if trainerState and fragments < 2500 then
+        if trainerUnlocked and fragments < 2500 then
+            SetCyborgStatus("farm fragments for purchase: " .. fragments .. "/2500")
 			getgenv().RequestFragmentFarm(2500)
 			return
 		end
-		if not trainerState and savedState == "unlock" and fragments < 1000
+        if not trainerUnlocked and savedState == "unlock" and fragments < 1000
 			and not DetectItemPlr("Microchip") and not DetectItemPlr("Core Brain")
 			and not CheckNameBoss("Order")
 		then
+            SetCyborgStatus("farm fragments for Law chip: " .. fragments .. "/1000")
 			getgenv().RequestFragmentFarm(1000)
 			return
 		end
 	end
 	if not GoToSea(getgenv().CheckPlaceId2) then
+        SetCyborgStatus("traveling to Sea 2")
 		return
 	end
-	if trainerState then
-		ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Buy")
+    if trainerUnlocked then
+        if fragments < 2500 then
+            SetCyborgStatus("need 2500 fragments: " .. fragments .. "/2500")
+            return
+        end
+        SetCyborgStatus("buying unlocked race")
+        local result = ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Buy")
+        task.wait(1)
+        if localPlayer.Data.Race.Value ~= "Cyborg" then
+            SetCyborgStatus("purchase pending; server response: " .. tostring(result))
+        end
 		return
 	end
 
@@ -3907,7 +3938,8 @@ function GetCyborg()
 
 	if savedState == "NaN" and not enabled6 and not DetectItemPlr("Core Brain") then
 		local detectStarted = tick()
-		TryCyborgRaidSummon()
+        SetCyborgStatus("checking Fist / Core Brain progress")
+        if not TryCyborgRaidSummon() then return end
 		repeat
 			wait(0.25)
 		until DetectkeyCyborg("{color1_Green}Please supply a {item1} to continue.{color1_/}")
@@ -3931,6 +3963,7 @@ function GetCyborg()
 	if Settings["Auto Get Fully Cyborg"] and not CheckNameBoss("Order") and not enabled5 then
 		if not DetectItemPlr("Fist of Darkness") then
 			if ShouldCyborgHopChest() and not IsCyborgChestServerOldEnough() then
+                SetCyborgStatus("hop for chest server aged 4h+")
 				HopForCyborgChest()
 				return
 			end
@@ -3958,6 +3991,7 @@ function GetCyborg()
 				end
 				local chest = GetNearestChest()
 				if not chest then
+                    SetCyborgStatus("no available chest; checking next server")
 					TweenManager.CancelCurrent()
 					if ShouldCyborgHopChest() then HopForCyborgChest() end
 					return
@@ -3970,6 +4004,7 @@ function GetCyborg()
 				end
 
 				local delta = chest.Position - root.Position
+                SetCyborgStatus("collecting chest " .. tostring(count11 + 1) .. "/" .. tostring(CYBORG_MAX_CHESTS))
 				local direction = delta.Magnitude > 0.01 and delta.Unit or root.CFrame.LookVector
 				local passPosition = chest.Position + direction * 3.5
 				-- Preserve current rotation. Reorienting the whole character toward
@@ -4029,14 +4064,18 @@ function GetCyborg()
 				HopForCyborgChest()
 			end
 		else
+			SetCyborgStatus("inserting Fist of Darkness")
 			wait(1)
 			local fist = localPlayer.Backpack:FindFirstChild("Fist of Darkness")
 			local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
 			if fist and humanoid then humanoid:EquipTool(fist) end
+            local fistStarted = tick()
 			repeat
 				wait(0.25)
 				TryCyborgRaidSummon()
-			until not DetectItemPlr("Fist of Darkness")
+            until not DetectItemPlr("Fist of Darkness") or tick() - fistStarted >= 20
+                or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
+            if DetectItemPlr("Fist of Darkness") then return end
 			wait(0.5)
 			enabled5 = true
 			WriteCyborgState("unlock")
@@ -4045,6 +4084,7 @@ function GetCyborg()
 	end
 	if enabled5 then
 		if DetectItemPlr("Core Brain") then
+            SetCyborgStatus("inserting Core Brain")
 			local brain = localPlayer.Backpack:FindFirstChild("Core Brain")
 			local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
 			if brain and humanoid then humanoid:EquipTool(brain) end
@@ -4054,6 +4094,7 @@ function GetCyborg()
 		end
 		local character3 = CheckNameBoss("Order")
 		if character3 then
+            SetCyborgStatus("defeating Order for Core Brain")
 			repeat
 				task.wait()
 				SizePart(character3)
@@ -4067,6 +4108,7 @@ function GetCyborg()
 			until not IsMobAlive(character3)
 				or not (Settings["Auto Get Cyborg"] or Settings["Auto Get Fully Cyborg"])
 		elseif not DetectItemPlr("Microchip") and localPlayer.Data.Fragments.Value >= 1000 then
+            SetCyborgStatus("buying Law microchip")
 			BuyChipLaw()
 			wait(2)
 		elseif not DetectItemPlr("Microchip")
@@ -4075,6 +4117,7 @@ function GetCyborg()
 		then
 			getgenv().RequestFragmentFarm(1000)
 		elseif DetectItemPlr("Microchip") then
+            SetCyborgStatus("summoning Order with microchip")
 			TryCyborgRaidSummon()
 		end
 	end
@@ -7740,18 +7783,20 @@ local function CuttayAcquireRace(targetRace)
 
     CuttaySetStatus("GET_RACE", "Lock Race: " .. CuttayDisplayRace(targetRace))
     if targetRace == "Cyborg" then
-		local unlocked = ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Check")
-		if unlocked == true or unlocked == 2 then
-			ReplicatedStorage.Remotes.CommF_:InvokeServer("CyborgTrainer", "Buy")
-			task.wait(2)
-			return false
-		end
+        getgenv().CuttayCyborgStatusReporter = function(message)
+            CuttaySetStatus("GET_RACE", message)
+        end
+        local previousGet, previousFull = Settings["Auto Get Cyborg"], Settings["Auto Get Fully Cyborg"]
         Settings["Auto Get Cyborg"] = true
         Settings["Auto Get Fully Cyborg"] = true
-        pcall(GetCyborg)
-        Settings["Auto Get Cyborg"] = false
-        Settings["Auto Get Fully Cyborg"] = false
-        return false
+        local ok, err = pcall(GetCyborg)
+        Settings["Auto Get Cyborg"] = previousGet
+        Settings["Auto Get Fully Cyborg"] = previousFull
+        if not ok then
+            CuttaySetStatus("ERROR", "Get Cyborg: " .. tostring(err))
+            warn("[Get Cyborg] " .. tostring(err))
+        end
+        return localPlayer.Data.Race.Value == "Cyborg"
     elseif targetRace == "Ghoul" then
         if not GoToSea(getgenv().CheckPlaceId2) then return false end
         local unlocked = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true)
