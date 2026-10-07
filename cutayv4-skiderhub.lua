@@ -4266,10 +4266,11 @@ function GetRaceGhoul()
 			until not IsMobAlive(character3) or not Settings["Auto Get Ghoul"]
 			wait(5)
 		else
-			if Settings["Hop Server Get Ghoul"] then
+            if Settings["Hop Server Get Ghoul"] or getgenv().Mode == "CuttayV4" then
 				SpecialHop("Cursed Captain")
-			end
-			uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Wating Boss Spawn", ShowTime = 5 })
+            else
+                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Waiting Boss Spawn (Ghoul hop disabled)", ShowTime = 5 })
+            end
 			wait(5)
 		end
 	end
@@ -7855,9 +7856,14 @@ local function CuttayAcquireRace(targetRace)
         if unlocked == 2 then
             ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4, true)
         else
+            local previousGet = Settings["Auto Get Ghoul"]
             Settings["Auto Get Ghoul"] = true
-            pcall(GetRaceGhoul)
-            Settings["Auto Get Ghoul"] = false
+            local ok, err = pcall(GetRaceGhoul)
+            Settings["Auto Get Ghoul"] = previousGet
+            if not ok then
+                CuttaySetStatus("ERROR", "Get Ghoul: " .. tostring(err))
+                warn("[Get Ghoul] " .. tostring(err))
+            end
         end
         return false
     end
