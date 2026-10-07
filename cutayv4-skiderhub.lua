@@ -897,6 +897,7 @@ if Settings["Bring Mob Count"] == nil then Settings["Bring Mob Count"] = 2 end
 if Settings["Attack No Animation "] == nil then Settings["Attack No Animation "] = true end
 
 function equipWeapon(weapon_type)
+    if _G.SHOULDSPAMSKILLS and getgenv().SeaBeastCombatTarget then return end
     if not weapon_type then
         weapon_type = Settings["Select Weapon"] or "Melee"
     end
@@ -1919,14 +1920,55 @@ function SpecialHop(targetName)
     return HopServer()
 end
 
+function SeaBeastHealth(mob)
+    if not mob then return nil end
+    local health = mob:FindFirstChild("Health") or mob:FindFirstChildOfClass("Humanoid")
+    if health then
+        if health:IsA("Humanoid") then return health.Health, health.MaxHealth end
+        if health:IsA("NumberValue") or health:IsA("IntValue") then return health.Value end
+    end
+    local billboard = mob:FindFirstChild("HealthBBG", true)
+    for _, label in ipairs(billboard and billboard:GetDescendants() or {}) do
+        if label:IsA("TextLabel") then
+            local current, maximum = label.Text:gsub(",", ""):match("(%d+)%s*/%s*(%d+)")
+            if current then return tonumber(current), tonumber(maximum) end
+        end
+    end
+    return nil
+end
+
+function IsSeaBeastAlive(mob)
+    if not mob or not mob:IsDescendantOf(Workspace) then return false end
+    local root = mob:FindFirstChild("HumanoidRootPart")
+    if not root or not root:IsA("BasePart") then return false end
+    local health = SeaBeastHealth(mob)
+    return health == nil or health > 0
+end
+
+function StopSeaBeastCombat()
+    _G.SHOULDSPAMSKILLS = false
+    getgenv().SeaBeastCombatTarget = nil
+    getgenv().FishmanMoveTarget = nil
+    getgenv().AimPos = nil
+    TweenManager.CancelTweenOnly()
+end
+
 function TeleportSeaEvents(mob)
+    if not IsSeaBeastAlive(mob) then return false end
     local mobRoot = mob and mob:FindFirstChild("HumanoidRootPart")
     local playerRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not mobRoot or not playerRoot then return end
 
     -- Use a world-space vertical offset. Multiplying the Sea Beast CFrame made
     -- the destination rotate/tilt with the model and produced camera jerks.
-    local targetCFrame = CFrame.new(mobRoot.Position + Vector3.new(0, 50, 0))
+    local floorY = 60
+    local origin = Workspace:FindFirstChild("_WorldOrigin")
+    local locations = origin and origin:FindFirstChild("Locations")
+    local trial = locations and locations:FindFirstChild("Trial of Water")
+    if trial and (mobRoot.Position - trial.Position).Magnitude <= 1500 then
+        floorY = math.max(floorY, trial.Position.Y + 20)
+    end
+    local targetCFrame = CFrame.new(mobRoot.Position.X, math.max(floorY, mobRoot.Position.Y + 50), mobRoot.Position.Z)
     local distance = (playerRoot.Position - targetCFrame.Position).Magnitude
     local lastTarget = getgenv().FishmanMoveTarget
     local targetMoved = typeof(lastTarget) ~= "Vector3"
@@ -1941,6 +1983,7 @@ function TeleportSeaEvents(mob)
     elseif distance <= 18 and tweenPlaying then
         TweenManager.CancelTweenOnly()
     end
+    return true
 end
 
 function BorrowTempleOfTime()
@@ -2275,8 +2318,9 @@ function SizePart(mob)
     end
 end
 
-function EquipTool(name)
+function EquipTool(name, seaBeastWorker)
     if not name then return end
+    if _G.SHOULDSPAMSKILLS and getgenv().SeaBeastCombatTarget and not seaBeastWorker then return end
     local char = localPlayer.Character
     if not char or not char:FindFirstChild("Humanoid") then return end
     for _, tool in ipairs(localPlayer.Backpack:GetChildren()) do
@@ -2305,6 +2349,7 @@ function NameWeapon(weaponType)
 end
 
 function UsedualFlock()
+    if _G.SHOULDSPAMSKILLS and getgenv().SeaBeastCombatTarget then return end
     local weaponName = NameWeapon(Settings["Select Weapon"] or "Melee")
     local character = localPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -3016,25 +3061,25 @@ function AutoMinkV2()
 end
 
 function DetectSeabeast()
-	if not Workspace:FindFirstChild("SeaBeasts") then return false end
-	local iterator2, state2, initialKey2 = next, Workspace.SeaBeasts:GetChildren()
-	for unusedIndex, value7 in iterator2, state2, initialKey2 do
-		if value7.Name == "SeaBeast1" and value7:FindFirstChild("HealthBBG") then
-			local health, health2 =
-				value7.HealthBBG.Frame.TextLabel.Text:gsub("/%d+,%d+", ""), value7.HealthBBG.Frame.TextLabel.Text
-			local formattedHealth = string.find(health, ",") and (health2:gsub("%d+,%d+/", "")) or (health2:gsub("%d+/", ""))
-			if tonumber((formattedHealth:gsub(",", ""))) >= 90000 then
-				return value7
-			end
-		end
-	end
-	return false
+    local folder = Workspace:FindFirstChild("SeaBeasts")
+    local nearest, distance = nil, math.huge
+    for _, beast in ipairs(folder and folder:GetChildren() or {}) do
+        if beast.Name:lower():find("seabeast", 1, true) and IsSeaBeastAlive(beast) then
+            local _, maximum = SeaBeastHealth(beast)
+            -- Preserve BNN's summoned-beast exclusion when max HP is available.
+            if not maximum or maximum >= 90000 then
+                local d = localPlayer:DistanceFromCharacter(beast.HumanoidRootPart.Position)
+                if d < distance then nearest, distance = beast, d end
+            end
+        end
+    end
+    return nearest
 end
 
 function AutoFishV2()
 	local humanoid4, value7 = DetectSeabeast(), CheckBoat()
 	if not humanoid4 then
-		_G.SHOULDSPAMSKILLS = false
+        StopSeaBeastCombat()
 		if not value7 then
 			local targetCFrame2 = CFrame.new(-11.94833755493164, 10.293913841247559, 2957.010498046875)
 			if localPlayer:DistanceFromCharacter(targetCFrame2.Position) > 8 then
@@ -3051,6 +3096,7 @@ function AutoFishV2()
 			end
 		end
 	else
+		getgenv().SeaBeastCombatTarget = humanoid4
 		_G.SHOULDSPAMSKILLS = true
 		repeat
 			task.wait()
@@ -3060,12 +3106,9 @@ function AutoFishV2()
 				local predicted = rootPart7.Position + rootPart7.AssemblyLinearVelocity * 0.15
 				getgenv().AimPos = CFrame.new(predicted)
 			end
-		until not humanoid4
-			or not humanoid4.Parent
-			or (humanoid4:FindFirstChild("Health") and humanoid4.Health.Value <= 0)
+		until not IsSeaBeastAlive(humanoid4)
 			or not Settings["Auto Upgrade Race V2-V3"]
-		_G.SHOULDSPAMSKILLS = false
-		TweenManager.CancelTweenOnly()
+        StopSeaBeastCombat()
 	end
 end
 
@@ -5024,7 +5067,7 @@ local function isHelperAccount()
     return isAlly == true or HelpWhitelist[myName] == true or HelpWhitelist[myDisplay] == true
 end
 
-do
+;(function()
     -- Giữ nguyên bộ điều phối từ backup, chỉ lấy số giây từ config OneClick/Main.
     local V3_COUNTDOWN      = math.max(1, tonumber(Settings["V3 Countdown"]) or 4)
     local V3_FILE_POLL      = 0.05
@@ -5714,7 +5757,7 @@ do
         tostring(FILE_SYNC_AVAILABLE)
     ))
     end)()
-end
+end)()
 
 function TrialHuman()
 	if Workspace._WorldOrigin.Locations:FindFirstChild("Trial of Strength") then
@@ -5769,7 +5812,7 @@ function GetSeaBeastTrial()
 			and value7:FindFirstChild("HumanoidRootPart")
 			and (value7.HumanoidRootPart.Position - part2.Position).Magnitude <= 1500
 		then
-			if value7:FindFirstChild("Health") and value7.Health.Value > 0 then
+			if IsSeaBeastAlive(value7) then
 				return value7
 			end
 		end
@@ -6050,6 +6093,10 @@ getgenv().FishmanSkillWorkerGeneration = (getgenv().FishmanSkillWorkerGeneration
 task.spawn(function(workerGeneration)
 	while getgenv().FishmanSkillWorkerGeneration == workerGeneration and task.wait(0.05) do
 		if not _G.SHOULDSPAMSKILLS then continue end
+        if not IsSeaBeastAlive(getgenv().SeaBeastCombatTarget) then
+            StopSeaBeastCombat()
+            continue
+        end
 		local skillsUI = localPlayer.PlayerGui
 			and localPlayer.PlayerGui:FindFirstChild("Main")
 			and localPlayer.PlayerGui.Main:FindFirstChild("Skills")
@@ -6057,29 +6104,36 @@ task.spawn(function(workerGeneration)
 		for _, v in ipairs(_piggyGetWeapons()) do
 			if not _G.SHOULDSPAMSKILLS then break end
 			if localPlayer.Character and not localPlayer.Character:FindFirstChild(v.Name) then
-				pcall(EquipTool, v.Name)
+                pcall(EquipTool, v.Name, true)
 				-- Equipping and building the Skills frame are asynchronous. Without
 				-- this small confirmation window only the original Melee UI is seen.
-				for _ = 1, 4 do
-					if not _G.SHOULDSPAMSKILLS or skillsUI:FindFirstChild(v.Name) then break end
+                for _ = 1, 12 do
+                    if not _G.SHOULDSPAMSKILLS then break end
+                    if v.Parent == localPlayer.Character and skillsUI:FindFirstChild(v.Name) then break end
 					task.wait(0.05)
 				end
 			end
 			local ui = skillsUI:FindFirstChild(v.Name)
-			if not ui then continue end
+            if not ui or v.Parent ~= localPlayer.Character then continue end
 			for _, key in ipairs({"Z", "X", "C", "V", "F"}) do
 				if not _G.SHOULDSPAMSKILLS then break end
+                if v.Parent ~= localPlayer.Character or not IsSeaBeastAlive(getgenv().SeaBeastCombatTarget) then break end
 				local slot = ui:FindFirstChild(key)
 				if not slot then continue end
 				local cd    = slot:FindFirstChild("Cooldown")
 				local title = slot:FindFirstChild("Title")
 				if not cd or not title then continue end
 				if title.TextColor3 ~= Color3.new(1,1,1) then continue end
-				if cd.Size ~= UDim2.new(0,0,1,-1) then continue end
+                if math.abs(cd.Size.X.Scale) > 0.001 or math.abs(cd.Size.X.Offset) > 1 then continue end
 				if slot.Name == "V" and _piggyFruits[ui.Name] then continue end
-				VirtualInputManager:SendKeyEvent(true,  slot.Name, false, game)
-				task.wait(0.04)
-				VirtualInputManager:SendKeyEvent(false, slot.Name, false, game)
+                local keyCode = Enum.KeyCode[slot.Name]
+                local pressed = pcall(function()
+                    VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+                end)
+                if pressed then task.wait(0.12) end
+                pcall(function()
+                    VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+                end)
 				task.wait(0.08)
 			end
 			task.wait(0.05)
@@ -6109,7 +6163,8 @@ local function RunFishmanTrial()
 	local seaBeast = GetSeaBeastTrial()
 	repeat
 		task.wait()
-		if seaBeast and IsMobAlive(seaBeast) then
+		if IsSeaBeastAlive(seaBeast) then
+			getgenv().SeaBeastCombatTarget = seaBeast
 			local seaRoot = seaBeast:FindFirstChild("HumanoidRootPart")
 			if seaRoot then
 				local predicted = seaRoot.Position + seaRoot.AssemblyLinearVelocity * 0.15
@@ -6118,13 +6173,12 @@ local function RunFishmanTrial()
 			TeleportSeabeast2(seaBeast)
 			_G.SHOULDSPAMSKILLS = true
 		else
-			_G.SHOULDSPAMSKILLS = false
+            StopSeaBeastCombat()
 			seaBeast = GetSeaBeastTrial()
 		end
 	until not isTimerActive()
 
-	_G.SHOULDSPAMSKILLS = false
-	TweenManager.CancelTweenOnly()
+    StopSeaBeastCombat()
 end
 
 local function ResolveMinkTrialGoal()
