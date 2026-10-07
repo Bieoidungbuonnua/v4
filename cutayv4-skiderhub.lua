@@ -1798,6 +1798,58 @@ function SetCuttayPullLeverStatusRuntime(text)
 end
 
 function SpecialHop(targetName)
+    if tostring(targetName):lower():gsub("%s+", "") == "cursedcaptain" then
+        if getgenv().CursedCaptainHopBusy or tick() < (getgenv().CursedCaptainHopNextAt or 0) then
+            return false
+        end
+        getgenv().CursedCaptainHopBusy = true
+        local ok, sent = pcall(function()
+            local body = game:HttpGet("https://apiibf.kurinian-hub.xyz/api/bloxfruit/cursedcaptain")
+            local data = HttpService:JSONDecode(body)
+            if type(data) ~= "table" or type(data.servers) ~= "table" then
+                error("expected servers[] from Cursed Captain API")
+            end
+            local candidates = {}
+            for _, row in ipairs(data.servers) do
+                if type(row) == "table" then
+                    local id = tostring(row.jobid or "")
+                    local placeId, players = tonumber(row.placeid), tonumber(row.players)
+                    local name = tostring(row.name or ""):lower():gsub("%s+", "")
+                    if placeId == tonumber(game.PlaceId) and tonumber(row.sea) == 2
+                        and players and players >= 0 and players <= 11
+                        and name == "cursedcaptain" and #id >= 10
+                        and id ~= tostring(game.JobId) and not _hopTried[id]
+                    then
+                        table.insert(candidates, { id = id, placeId = placeId, players = players })
+                    end
+                end
+            end
+            table.sort(candidates, function(a, b) return a.players < b.players end)
+            local chosen = candidates[1]
+            if not chosen then
+                SetRaceUpgradeStatus("Ghoul: no Cursed Captain API server for current PlaceId with 0-11 players")
+                return false
+            end
+            _hopTried[chosen.id] = true
+            TweenManager.CancelCurrent()
+            local message = string.format("Ghoul: join Cursed Captain %s | PlaceId %s | %d players",
+                chosen.id:sub(1, 8), tostring(chosen.placeId), chosen.players)
+            SetRaceUpgradeStatus(message)
+            if getgenv().Mode == "CuttayV4" then
+                getgenv().CuttayV4Status = message
+            end
+            -- Same single ServerBrowser request and 12s settling window as HopFM.
+            getgenv().JoinV4LastHopAttempt = {
+                JobId = chosen.id, PlaceId = chosen.placeId,
+                SourceJobId = tostring(game.JobId), At = tick(),
+            }
+            return teleportViaServerBrowser(chosen.id, chosen.placeId)
+        end)
+        getgenv().CursedCaptainHopNextAt = tick() + (ok and sent and 12 or 5)
+        getgenv().CursedCaptainHopBusy = false
+        if not ok then warn("[Cursed Captain API] " .. tostring(sent)) end
+        return ok and sent == true
+    end
     if tostring(targetName):lower():find("mirage", 1, true) then
         if getgenv().MirageApiHopBusy then return false end
         getgenv().MirageApiHopBusy = true
