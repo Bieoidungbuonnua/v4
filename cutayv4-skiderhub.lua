@@ -1815,16 +1815,27 @@ function SpecialHop(targetName)
                     local id = tostring(row.jobid or "")
                     local placeId, players = tonumber(row.placeid), tonumber(row.players)
                     local name = tostring(row.name or ""):lower():gsub("%s+", "")
+                    local h, m, s = tostring(row.age or ""):match("^%s*(%d+):(%d+):(%d+)%s*$")
+                    local age = h and tonumber(m) < 60 and tonumber(s) < 60
+                        and (tonumber(h) * 3600 + tonumber(m) * 60 + tonumber(s)) or nil
                     if placeId == tonumber(game.PlaceId) and tonumber(row.sea) == 2
                         and players and players >= 2 and players <= 8
+                        and age ~= nil
                         and name == "cursedcaptain" and #id >= 10
                         and id ~= tostring(game.JobId) and not _hopTried[id]
                     then
-                        table.insert(candidates, { id = id, placeId = placeId, players = players })
+                        table.insert(candidates, {
+                            id = id, placeId = placeId, players = players,
+                            age = age, ageText = tostring(row.age),
+                        })
                     end
                 end
             end
-            table.sort(candidates, function(a, b) return a.players < b.players end)
+            table.sort(candidates, function(a, b)
+                if a.age ~= b.age then return a.age < b.age end
+                if a.players ~= b.players then return a.players < b.players end
+                return a.id < b.id
+            end)
             local chosen = candidates[1]
             if not chosen then
                 SetRaceUpgradeStatus("Ghoul: no Cursed Captain API server for current PlaceId with 2-8 players")
@@ -1832,8 +1843,8 @@ function SpecialHop(targetName)
             end
             _hopTried[chosen.id] = true
             TweenManager.CancelCurrent()
-            local message = string.format("Ghoul: join Cursed Captain %s | PlaceId %s | %d players",
-                chosen.id:sub(1, 8), tostring(chosen.placeId), chosen.players)
+            local message = string.format("Ghoul: join Cursed Captain %s | PlaceId %s | %d players | age %s",
+                chosen.id:sub(1, 8), tostring(chosen.placeId), chosen.players, chosen.ageText)
             SetRaceUpgradeStatus(message)
             if getgenv().Mode == "CuttayV4" then
                 getgenv().CuttayV4Status = message
