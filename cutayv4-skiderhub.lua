@@ -1,6 +1,6 @@
 --[[
     Skider Hub V4 - Rebuilt with Fluent UI
-    Combat performance revision: PERF-20261008-4 (stable character lock + target follow)
+    Combat performance revision: PERF-20261008-5 (backup physics + Ghoul V3 skill-only)
     Original: kaiv4.lua
     Integrated modules: 3tn.lua (Tween speed = 150, BringMob, FastAttack)
     Bug fixes & Missing definitions: ngu.md
@@ -735,10 +735,10 @@ function TweenManager.LockCharacter(character, root)
         TweenManager.ReleaseCharacterLock()
         TweenManager.lockHumanoid = humanoid
         TweenManager.lockAutoRotate = humanoid.AutoRotate
+        local oldForce = root:FindFirstChild("FloatForce")
+        if oldForce then oldForce:Destroy() end
     end
     humanoid.AutoRotate = false
-    local oldForce = root:FindFirstChild("FloatForce")
-    if oldForce then oldForce:Destroy() end
     local holder = character:FindFirstChild("Head") or root
     local lift = holder:FindFirstChild("eltrul")
     if not lift then
@@ -750,12 +750,19 @@ function TweenManager.LockCharacter(character, root)
         lift.Parent = holder
     end
     TweenManager.lockLift = lift
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
     return true
 end
 
 function TweenManager.ApplyNoclip(character)
+    if TweenManager.collisionCharacter ~= character then
+        if TweenManager.noclipAdded then TweenManager.noclipAdded:Disconnect() end
+        TweenManager.noclipAdded = character.DescendantAdded:Connect(function(part)
+            if getgenv().CuttayTweenNoclipActive and part:IsA("BasePart") then
+                part.CanCollide = false
+                table.insert(TweenManager.collisionParts, part)
+            end
+        end)
+    end
     if TweenManager.collisionCharacter ~= character
         or tick() - (TweenManager.collisionScanAt or 0) >= 0.25 then
         TweenManager.collisionCharacter = character
@@ -857,6 +864,8 @@ function TweenManager.CancelCurrent()
     TweenManager.CancelChestTweenOnly()
     getgenv().CuttayTweenNoclipActive = false
     TweenManager.ReleaseCharacterLock()
+    if TweenManager.noclipAdded then TweenManager.noclipAdded:Disconnect(); TweenManager.noclipAdded = nil end
+    TweenManager.collisionCharacter = nil
     local character = localPlayer.Character
     if not character then return end
     for _, object in ipairs(character:GetDescendants()) do
@@ -926,6 +935,8 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision, follow
     if skipTween or (dist <= (followUpdate and 2.5 or 15) and not forceTween) then
         TweenManager.CancelTweenOnly()
         hrp.CFrame = targetCF
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
         return
     end
 
@@ -942,6 +953,9 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision, follow
     -- Retarget only the tween. Keep the character lock alive so switching
     -- directly from one chest to the next does not produce a camera jerk.
     TweenManager.CancelTweenOnly()
+    -- Match backup/BNN: clear momentum only at a route change, never every physics frame.
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    hrp.AssemblyAngularVelocity = Vector3.zero
     local tweenDuration = dist / TWEEN_SPEED
     local tweenInfo = TweenInfo.new(tweenDuration, Enum.EasingStyle.Linear)
     CurrentTween = TweenService:Create(hrp, tweenInfo, { CFrame = targetCF })
@@ -1424,7 +1438,7 @@ function FastAttackClass:UseFruitM1(Character, Equipped, Combo)
 end
 
 function FastAttackClass:Attack()
-    if self.AttackBusy or getgenv().SkiderFastAttackInstance ~= self
+    if getgenv().GhoulV3NoAutoClick or self.AttackBusy or getgenv().SkiderFastAttackInstance ~= self
         or not _AtkConfig.AutoClickEnabled
         or tick() < (getgenv().Flower3ClusterUntil or 0)
         or (tick() - self.Debounce) < _AtkConfig.AttackCooldown then return end
@@ -1467,10 +1481,10 @@ if getgenv().SkiderFastAttackInstance then
 end
 getgenv().SkiderFastAttackInstance = _FastAttackInst
 getgenv().SkiderBnnCombatToken = nil
-getgenv().SkiderCombatRevision = "PERF-20261008-4"
-print("[Skider Combat] PERF-20261008-4 | Original engine | Stable character lock + follow")
+getgenv().SkiderCombatRevision = "PERF-20261008-5"
+print("[Skider Combat] PERF-20261008-5 | Backup physics cadence | Ghoul V3 skill-only")
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
-    if Settings["Auto Click"]
+    if Settings["Auto Click"] and not getgenv().GhoulV3NoAutoClick
         and tick() >= (getgenv().Flower3ClusterUntil or 0)
     then
         _FastAttackInst:Attack()
@@ -1605,7 +1619,7 @@ getgenv().ClickM1Volcano = function(target, wideRange)
 end
 
 getgenv().UseFruitM1 = function(target, secondaryDirection)
-    if _FastAttackInst.AttackBusy or tick() < (getgenv().Flower3ClusterUntil or 0)
+    if getgenv().GhoulV3NoAutoClick or _FastAttackInst.AttackBusy or tick() < (getgenv().Flower3ClusterUntil or 0)
         or (tick() - _FastAttackInst.Debounce) < _AtkConfig.AttackCooldown then return false end
     local Character = localPlayer.Character
     if not Character then return false end
@@ -3641,6 +3655,11 @@ end
 -- partial port above while keeping its shared helpers and combat modules.
 function RunRaceV3PlayerKill(target, label, blacklist)
     if not target or target == localPlayer then return false end
+    local ghoulFight = label == "Ghoul V3"
+    local previousSuppression = getgenv().GhoulV3NoAutoClick
+    if ghoulFight then getgenv().GhoulV3NoAutoClick = true end
+    local ok, result = pcall(function()
+    TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started = tick()
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
     repeat
@@ -3662,11 +3681,14 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
         if localPlayer:DistanceFromCharacter(root.Position) < 50 then
             local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if myRoot then myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 3) end
+            if myRoot then
+                TweenManager.CancelTweenOnly()
+                myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 3)
+            end
             -- Preserve the existing BNN Ghoul/Angel flow; only shorten the
             -- key hold from 0.05s to 0.03s for this player-kill branch.
             AutoAllSkill(true, 0.03)
-            pcall(getgenv().AttackFunctionnhungSuperTrial)
+            if not ghoulFight then pcall(getgenv().AttackFunctionnhungSuperTrial) end
         else
             ToTarget(root.CFrame * CFrame.new(0, 0, 3))
         end
@@ -3684,6 +3706,10 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         table.insert(blacklist, target.Name)
     end
     return humanoid == nil or humanoid.Health <= 0
+    end)
+    if ghoulFight then getgenv().GhoulV3NoAutoClick = previousSuppression end
+    if not ok then warn("[Race V2-V3] " .. label .. ": " .. tostring(result)); return false end
+    return result
 end
 
 local humanV3WaitBoss
@@ -4361,6 +4387,7 @@ function EnterCursedShipForGhoul()
         or CFrame.new(-6496.898, 89.035, -116.509, 0.8192, 0, -0.5736, 0, -1, 0, -0.5736, 0, -0.8192)
     if (root.Position - Vector3.new(920.478, 154.901, 32838.965)).Magnitude <= 3000 then
         if getgenv().GhoulGateTween then
+            if getgenv().GhoulGateTween == CurrentTween then TweenManager.CancelCurrent() end
             pcall(function() getgenv().GhoulGateTween:Cancel() end)
             getgenv().GhoulGateTween = nil
         end
@@ -4375,7 +4402,9 @@ function EnterCursedShipForGhoul()
             tags:AddTag(localPlayer, "Teleporting")
             task.delay(1.5, function() tags:RemoveTag(localPlayer, "Teleporting") end)
         end
-        getgenv().GhoulGateTween = ToTarget(gateCF, false, true)
+        -- Only the portal's position is needed; its upside-down part rotation is not a character pose.
+        local uprightGate = CFrame.new(gateCF.Position) * (root.CFrame - root.Position)
+        getgenv().GhoulGateTween = ToTarget(uprightGate, false, true)
     end
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
