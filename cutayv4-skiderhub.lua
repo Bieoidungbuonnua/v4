@@ -1,6 +1,6 @@
 --[[
     Skider Hub V4 - Rebuilt with Fluent UI
-    Combat performance revision: PERF-20261008-6 (Ghoul V3 BNN targeting + skill aim)
+    Combat performance revision: PERF-20261008-7 (Ghoul V3 hop + weapon skill rotation)
     Original: kaiv4.lua
     Integrated modules: 3tn.lua (Tween speed = 150, BringMob, FastAttack)
     Bug fixes & Missing definitions: ngu.md
@@ -1020,6 +1020,7 @@ if Settings["Bring Mob Count"] == nil then Settings["Bring Mob Count"] = 2 end
 if Settings["Attack No Animation "] == nil then Settings["Attack No Animation "] = true end
 
 function equipWeapon(weapon_type)
+    if getgenv().GhoulV3NoAutoClick then return end
     if _G.SHOULDSPAMSKILLS and getgenv().SeaBeastCombatTarget then return end
     if not weapon_type then
         weapon_type = Settings["Select Weapon"] or "Melee"
@@ -1481,8 +1482,8 @@ if getgenv().SkiderFastAttackInstance then
 end
 getgenv().SkiderFastAttackInstance = _FastAttackInst
 getgenv().SkiderBnnCombatToken = nil
-getgenv().SkiderCombatRevision = "PERF-20261008-6"
-print("[Skider Combat] PERF-20261008-6 | Ghoul V3 BNN targeting + skill aim")
+getgenv().SkiderCombatRevision = "PERF-20261008-7"
+print("[Skider Combat] PERF-20261008-7 | Ghoul V3 hop + weapon skill rotation")
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
     if Settings["Auto Click"] and not getgenv().GhoulV3NoAutoClick
         and tick() >= (getgenv().Flower3ClusterUntil or 0)
@@ -2570,9 +2571,10 @@ function SizePart(mob)
 end
 end
 
-function EquipTool(name, seaBeastWorker)
+function EquipTool(name, seaBeastWorker, ghoulSkillWorker)
     if not name then return end
-    if _G.SHOULDSPAMSKILLS and getgenv().SeaBeastCombatTarget and not seaBeastWorker then return end
+    if getgenv().GhoulV3NoAutoClick and not ghoulSkillWorker then return end
+    if _G.SHOULDSPAMSKILLS and getgenv().SeaBeastCombatTarget and not seaBeastWorker and not ghoulSkillWorker then return end
     local char = localPlayer.Character
     if not char or not char:FindFirstChild("Humanoid") then return end
     for _, tool in ipairs(localPlayer.Backpack:GetChildren()) do
@@ -2601,6 +2603,7 @@ function NameWeapon(weaponType)
 end
 
 function UsedualFlock()
+    if getgenv().GhoulV3NoAutoClick then return end
     if _G.SHOULDSPAMSKILLS and getgenv().SeaBeastCombatTarget then return end
     local weaponName = NameWeapon(Settings["Select Weapon"] or "Melee")
     local character = localPlayer.Character
@@ -3658,6 +3661,7 @@ end
 do
 local skillMouse
 pcall(function() skillMouse = require(ReplicatedStorage.Mouse) end)
+local ghoulWeapons, ghoulWeaponIndex = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0
 function UpdateGhoulV3Aim(root)
     if not root or not root.Parent then return end
     local lead = root.AssemblyLinearVelocity * 0.12
@@ -3672,19 +3676,28 @@ function GhoulV3UseSkill(root)
     local character = localPlayer.Character
     local main = localPlayer.PlayerGui:FindFirstChild("Main")
     local skills = main and main:FindFirstChild("Skills")
-    if not character or not skills then return end
-    for _, category in ipairs({"Melee", "Sword", "Gun", "Blox Fruit"}) do
+    if not character or not skills or not root or not root.Parent then return end
+    for _ = 1, #ghoulWeapons do
+        ghoulWeaponIndex = ghoulWeaponIndex % #ghoulWeapons + 1
+        local category = ghoulWeapons[ghoulWeaponIndex]
         local name = NameWeapon(category)
-        if name then
-            if not skills:FindFirstChild(name) then EquipTool(name); return end
-            local skill = CheckCDSkill(name, true)
+        local tool = name and (character:FindFirstChild(name) or localPlayer.Backpack:FindFirstChild(name))
+        if tool and tool:IsA("Tool") then
+            if not skills:FindFirstChild(name) then EquipTool(name, false, true); return end
+            local skill = CheckCDSkill(name, true, Settings["Select Skills " .. category])
             if skill then
-                EquipTool(name)
-                if not character:FindFirstChild(name) then return end
+                if not character:FindFirstChild(name) then
+                    EquipTool(name, false, true)
+                    task.wait(0.05)
+                end
+                if localPlayer.Character ~= character or not character:FindFirstChild(name) or not root.Parent then return end
                 UpdateGhoulV3Aim(root)
-                VirtualInputManager:SendKeyEvent(true, skill.Name, false, game)
-                task.wait(0.03)
+                local ok, err = pcall(function()
+                    VirtualInputManager:SendKeyEvent(true, skill.Name, false, game)
+                    task.wait(0.05)
+                end)
                 VirtualInputManager:SendKeyEvent(false, skill.Name, false, game)
+                if not ok then error(err) end
                 return
             end
         end
@@ -3756,11 +3769,12 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             getgenv().GhoulV3AimRoot = root
             UpdateGhoulV3Aim(root)
             local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if not myRoot then break end
+            local myHumanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if not myRoot or not myHumanoid or myHumanoid.Health <= 0 then break end
             local goal = root.CFrame * CFrame.new(0, 0, 3)
             goal = CFrame.new(goal.Position, root.Position)
             ToTarget(goal, false, true) -- Real tween to the player; no 50-stud CFrame snap.
-            if (myRoot.Position - root.Position).Magnitude < 12 then GhoulV3UseSkill(root) end
+            if (myRoot.Position - root.Position).Magnitude < 50 then GhoulV3UseSkill(root) end
         elseif localPlayer:DistanceFromCharacter(root.Position) < 50 then
             getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
             local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -3768,8 +3782,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
                 TweenManager.CancelTweenOnly()
                 myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 3)
             end
-            -- Preserve the existing BNN Ghoul/Angel flow; only shorten the
-            -- key hold from 0.05s to 0.03s for this player-kill branch.
+            -- Preserve the existing Angel flow.
             AutoAllSkill(true, 0.03)
             if not ghoulFight then pcall(getgenv().AttackFunctionnhungSuperTrial) end
         else
@@ -4030,7 +4043,10 @@ function UpgradeRaceV2AndV3()
         if target then
             RunRaceV3PlayerKill(target, "Ghoul V3", items17)
         else
-            SetRaceUpgradeStatus("Ghoul V3: waiting for an eligible player")
+            SetRaceUpgradeStatus("Ghoul V3: no eligible players left; hopping server")
+            TweenManager.CancelCurrent()
+            HopServer()
+            task.wait(5) -- BNN's retry delay; HopServer also guards overlapping requests.
         end
     else
         SetRaceUpgradeStatus("Unsupported race from server: " .. race, true)
@@ -6275,7 +6291,7 @@ function NameAttackTrial()
 	end
 end
 
-function CheckCDSkill(skillName, combatOnly)
+function CheckCDSkill(skillName, combatOnly, selectedSkills)
 	if not localPlayer.PlayerGui:FindFirstChild("Main") or not localPlayer.PlayerGui.Main:FindFirstChild("Skills") or not localPlayer.PlayerGui.Main.Skills:FindFirstChild(skillName) then
 		EquipTool(skillName)
 		return
@@ -6289,6 +6305,7 @@ function CheckCDSkill(skillName, combatOnly)
 					and value7:FindFirstChild("Title")
 					and value7.Title.TextColor3 == Color3.new(1, 1, 1)
 					and (not combatOnly or not string.find(value7.Title.Text, "Transformation"))
+					and (not selectedSkills or selectedSkills[value7.Name])
 					and value7:FindFirstChild("Cooldown")
 					and (value7.Cooldown.Size == UDim2.new(0, 0, 1, -1)
 					or value7.Cooldown.Size == UDim2.new(1, 0, 1, -1))
