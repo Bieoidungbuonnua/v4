@@ -4175,6 +4175,50 @@ function GetCyborg()
 	end
 end
 
+function EnterCursedShipForGhoul()
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health <= 0 then return false end
+    local map = Workspace:FindFirstChild("Map")
+    local ship = map and map:FindFirstChild("GhostShip")
+    local interior = map and map:FindFirstChild("GhostShipInterior")
+    local gate = ship and ship:FindFirstChild("Teleport")
+    local insideGate = interior and interior:FindFirstChild("Teleport")
+    local outsideCF = gate and gate:IsA("BasePart") and gate.CFrame
+        or CFrame.new(-6496.898, 89.035, -116.509, 0.8192, 0, -0.5736, 0, -1, 0, -0.5736, 0, -0.8192)
+    local insideCF = insideGate and insideGate:IsA("BasePart") and insideGate.CFrame
+        or CFrame.new(920.478, 154.901, 32838.965)
+    local function isInside()
+        local insideDistance = (root.Position - insideCF.Position).Magnitude
+        return insideDistance <= 3000 and insideDistance < (root.Position - outsideCF.Position).Magnitude
+    end
+    if isInside() then return true end
+    SetRaceUpgradeStatus("Ghoul: tween to outside Cursed Ship gate")
+    if humanoid.Sit then humanoid.Jump = true; return false end
+    -- Only the entry route from the supplied script; reuse the existing tween.
+    local tags = game:GetService("CollectionService")
+    local addedTag = not tags:HasTag(localPlayer, "Teleporting")
+    if addedTag then
+        tags:AddTag(localPlayer, "Teleporting")
+        task.delay(1.5, function() tags:RemoveTag(localPlayer, "Teleporting") end)
+    end
+    local deadline = tick() + (root.Position - outsideCF.Position).Magnitude / TWEEN_SPEED + 4
+    local tween = ToTarget(outsideCF, false, true)
+    repeat
+        task.wait()
+        if localPlayer.Character ~= character or not root.Parent or humanoid.Health <= 0 then break end
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+    until isInside() or (root.Position - outsideCF.Position).Magnitude <= 2.5
+        or tick() >= deadline or not Settings["Auto Get Ghoul"]
+        or not tween or tween.PlaybackState ~= Enum.PlaybackState.Playing
+    TweenManager.CancelTweenOnly()
+    if localPlayer.Character ~= character or not root.Parent or humanoid.Health <= 0 then return false end
+    if not isInside() then task.wait(2) end
+    return localPlayer.Character == character and root.Parent ~= nil and isInside()
+end
+
 function GetRaceGhoul()
 	if not GoToSea(getgenv().CheckPlaceId2) then
 		return
@@ -4188,12 +4232,14 @@ function GetRaceGhoul()
 		wait(5)
 		return
 	end
+    if not EnterCursedShipForGhoul() then return end
 	if not CheckCountItem("Ectoplasm", 100) then
 		local items18 = { "Ship Deckhand", "Ship Steward", "Ship Officer", "Ship Engineer" }
 		local character3 = DetectMob(items18)
 		if character3 then
 			repeat
 				task.wait()
+                if not EnterCursedShipForGhoul() then return end
 				SizePart(character3)
 				BringMob(character3)
 				UsedualFlock()
@@ -4204,7 +4250,7 @@ function GetRaceGhoul()
 					ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
 				end
 			until not IsMobAlive(character3) or not Settings["Auto Get Ghoul"]
-		elseif typeof(items18) == "table" then
+		else
 			if #items3 >= #items18 then
 				items3 = {}
 				return
@@ -4214,25 +4260,12 @@ function GetRaceGhoul()
 				table.insert(items3, DetectNameTablePart(items18))
 				repeat
 					wait()
+                    if not EnterCursedShipForGhoul() then return end
 					ToTarget(part2.CFrame * CFrame.new(0, 60, 0))
 				until localPlayer:DistanceFromCharacter(part2.Position) <= 100
 					or (DetectMob(items18))
 					or not Settings["Auto Get Ghoul"]
 				wait(1)
-			end
-		else
-			local part2 = DetectPartSpawnMob(items18, true)
-			if part2 then
-				Instance.new("IntValue", part2).Name = "Ignored"
-				repeat
-					wait()
-					ToTarget(part2.CFrame * CFrame.new(0, 60, 0))
-				until localPlayer:DistanceFromCharacter(part2.Position) <= 100
-					or (DetectMob(items18))
-					or not Settings["Auto Get Ghoul"]
-				wait(1)
-			else
-				DeleteIgnoredMobSpawn()
 			end
 		end
 		return
@@ -4255,6 +4288,7 @@ function GetRaceGhoul()
 		if character3 then
 			repeat
 				task.wait()
+                if not EnterCursedShipForGhoul() then return end
 				SizePart(character3)
 				UsedualFlock()
 				ClickM1(character3)
