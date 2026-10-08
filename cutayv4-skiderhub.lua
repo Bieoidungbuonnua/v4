@@ -1871,8 +1871,8 @@ local function getOpenServers(maxPlayers, maxPages, minPlayers)
     if #serverList == 0 then
         pcall(function()
             local url = string.format(
-                "https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true",
-                tostring(game.PlaceId)
+                "https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=%s&limit=100&excludeFullGames=true",
+                tostring(game.PlaceId), minPlayers >= 8 and "Desc" or "Asc"
             )
             local req = game:HttpGet(url)
             if req and req ~= "" then
@@ -1899,7 +1899,7 @@ local function getOpenServers(maxPlayers, maxPages, minPlayers)
     return serverList
 end
 
-function HopServer()
+function HopServer(minPlayers)
     if getgenv().SkiderHopServerBusy then return false end
     getgenv().SkiderHopServerBusy = true
     task.delay(8, function()
@@ -1912,10 +1912,11 @@ function HopServer()
             end
         end)
 
-        local pool = getOpenServers(11)
+        local pool = getOpenServers(11, 3, minPlayers)
 
         if #pool > 0 then
-            local chosen = pool[math.random(1, #pool)]
+            if minPlayers then table.sort(pool, function(a, b) return a.count > b.count end) end
+            local chosen = pool[minPlayers and 1 or math.random(1, #pool)]
             _hopTried[chosen.id] = true
             pcall(function()
                 if uiLibrary and uiLibrary.CreateNoti then
@@ -1932,9 +1933,10 @@ function HopServer()
             -- Nếu đã thử hết server trong danh sách thì xóa tried để tìm lại
             table.clear(_hopTried)
             _hopTried[tostring(game.JobId)] = true
-            local pool2 = getOpenServers(11)
+            local pool2 = getOpenServers(11, 3, minPlayers)
             if #pool2 > 0 then
-                local chosen = pool2[math.random(1, #pool2)]
+                if minPlayers then table.sort(pool2, function(a, b) return a.count > b.count end) end
+                local chosen = pool2[minPlayers and 1 or math.random(1, #pool2)]
                 _hopTried[chosen.id] = true
                 pcall(function()
                     if uiLibrary and uiLibrary.CreateNoti then
@@ -3739,10 +3741,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     if ghoulFight then getgenv().GhoulV3NoAutoClick = true end
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
-    local started = tick()
-    if ghoulFight and blacklist and not table.find(blacklist, target.Name) then
-        table.insert(blacklist, target.Name) -- BNN skips players already attempted, not only confirmed kills.
-    end
+    local started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
     repeat
         task.wait(0.1)
@@ -3750,8 +3749,13 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not character or not humanoid or not root or humanoid.Health <= 0 then break end
-        if ghoulFight and (CheckSafezone(character) or (tick() - started >= 3 and localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
-            or character:FindFirstChildOfClass("ForceField")) then
+        if ghoulFight then
+            if lastHealth and humanoid.Health < lastHealth then lastDamage = tick() end
+            lastHealth = humanoid.Health
+            local blocked = character:FindFirstChildOfClass("ForceField") or (localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
+            blockedSince = blocked and tick() - (lastDamage or started) >= 10 and (blockedSince or tick()) or nil
+        end
+        if ghoulFight and blockedSince and tick() - blockedSince >= 5 then
             SetRaceUpgradeStatus(label .. ": skip protected/unattackable " .. target.Name)
             break
         end
@@ -3774,7 +3778,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             local goal = root.CFrame * CFrame.new(0, 0, 3)
             goal = CFrame.new(goal.Position, root.Position)
             ToTarget(goal, false, true) -- Real tween to the player; no 50-stud CFrame snap.
-            if (myRoot.Position - root.Position).Magnitude < 50 then GhoulV3UseSkill(root) end
+            if (myRoot.Position - root.Position).Magnitude < 50 then lastDamage = lastDamage or tick(); GhoulV3UseSkill(root) end
         elseif localPlayer:DistanceFromCharacter(root.Position) < 50 then
             getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
             local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -3788,20 +3792,20 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         else
             ToTarget(root.CFrame * CFrame.new(0, 0, 3))
         end
-    until tick() - started >= 70
+    until tick() - (ghoulFight and lastDamage or started) >= (ghoulFight and 90 or 70)
         or not Settings["Auto Upgrade Race V2-V3"]
         or not target.Parent
         or not target.Character
-        or CheckSafezone(target.Character)
+        or (not ghoulFight and CheckSafezone(target.Character))
         or (not ghoulFight and CheckPlayercantAttack(target.Character))
 
     local character = target.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if (not humanoid or humanoid.Health <= 0 or not character)
+    if ((humanoid and humanoid.Health <= 0) or (ghoulFight and humanoid and (tick() - (lastDamage or started) >= 90 or (blockedSince and tick() - blockedSince >= 5))))
         and blacklist and not table.find(blacklist, target.Name) then
         table.insert(blacklist, target.Name)
     end
-    return humanoid == nil or humanoid.Health <= 0
+    return humanoid ~= nil and humanoid.Health <= 0
     end)
     if ghoulFight then
         getgenv().GhoulV3NoAutoClick = previousSuppression
@@ -4045,7 +4049,7 @@ function UpgradeRaceV2AndV3()
         else
             SetRaceUpgradeStatus("Ghoul V3: no eligible players left; hopping server")
             TweenManager.CancelCurrent()
-            HopServer()
+            HopServer(8)
             task.wait(5) -- BNN's retry delay; HopServer also guards overlapping requests.
         end
     else
