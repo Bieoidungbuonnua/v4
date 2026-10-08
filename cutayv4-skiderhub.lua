@@ -1,5 +1,6 @@
 --[[
     Skider Hub V4 - Rebuilt with Fluent UI
+    Combat performance revision: PERF-20261008-2 (original FastAttack engine)
     Original: kaiv4.lua
     Integrated modules: 3tn.lua (Tween speed = 150, BringMob, FastAttack)
     Bug fixes & Missing definitions: ngu.md
@@ -1334,7 +1335,8 @@ function FastAttackClass:UseFruitM1(Character, Equipped, Combo)
 end
 
 function FastAttackClass:Attack()
-    if not _AtkConfig.AutoClickEnabled
+    if self.AttackBusy or getgenv().SkiderFastAttackInstance ~= self
+        or not _AtkConfig.AutoClickEnabled
         or tick() < (getgenv().Flower3ClusterUntil or 0)
         or (tick() - self.Debounce) < _AtkConfig.AttackCooldown then return end
     local Character = localPlayer.Character
@@ -1349,13 +1351,21 @@ function FastAttackClass:Attack()
     local Combo = self:GetCombo()
     Cooldown = Cooldown + (Combo >= _AtkConfig.MaxCombo and 0.05 or 0)
     self.Debounce = Combo >= _AtkConfig.MaxCombo and ToolTip ~= "Gun" and (tick() + 0.05) or tick()
-    if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
-        self:UseFruitM1(Character, Equipped, Combo)
-    elseif ToolTip == "Gun" then
-        local Target = self:GetClosestEnemy(Character, 120)
-        if Target then self:ShootInTarget(Target.Position) end
-    else
-        self:UseNormalClick(Character, Humanoid, Cooldown)
+    self.AttackBusy = true
+    local ok, err = pcall(function()
+        if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
+            self:UseFruitM1(Character, Equipped, Combo)
+        elseif ToolTip == "Gun" then
+            local Target = self:GetClosestEnemy(Character, 120)
+            if Target then self:ShootInTarget(Target.Position) end
+        else
+            self:UseNormalClick(Character, Humanoid, Cooldown)
+        end
+    end)
+    self.AttackBusy = false
+    if not ok and tick() - (self.LastErrorAt or 0) >= 5 then
+        self.LastErrorAt = tick()
+        warn("[Skider Combat] " .. tostring(err))
     end
 end
 
@@ -1367,6 +1377,9 @@ if getgenv().SkiderFastAttackInstance then
     end
 end
 getgenv().SkiderFastAttackInstance = _FastAttackInst
+getgenv().SkiderBnnCombatToken = nil
+getgenv().SkiderCombatRevision = "PERF-20261008-2"
+print("[Skider Combat] PERF-20261008-2 | Original engine | One Auto Click worker")
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
     if Settings["Auto Click"]
         and tick() >= (getgenv().Flower3ClusterUntil or 0)
@@ -1503,7 +1516,7 @@ getgenv().ClickM1Volcano = function(target, wideRange)
 end
 
 getgenv().UseFruitM1 = function(target, secondaryDirection)
-    if tick() < (getgenv().Flower3ClusterUntil or 0)
+    if _FastAttackInst.AttackBusy or tick() < (getgenv().Flower3ClusterUntil or 0)
         or (tick() - _FastAttackInst.Debounce) < _AtkConfig.AttackCooldown then return false end
     local Character = localPlayer.Character
     if not Character then return false end
@@ -8059,24 +8072,8 @@ if getgenv().Mode == "CuttayV4" then
 end
 end)()
 
--- Worker: Auto Click (Continuous Fast Attack for Melee / Sword)
-task.spawn(function()
-    while task.wait(0.1) do
-        if getgenv().SkiderFastAttackInstance ~= _FastAttackInst then break end
-        if Settings["Auto Click"]
-            and tick() >= (getgenv().Flower3ClusterUntil or 0)
-            and (tick() - _FastAttackInst.Debounce) >= _AtkConfig.AttackCooldown then
-            pcall(function()
-                local fruitName = NameWeapon("Blox Fruit")
-                if fruitName and localPlayer.Character and localPlayer.Character:FindFirstChild(fruitName) then
-                    getgenv().UseFruitM1()
-                else
-                    getgenv().AttackFunctionnhungSuperTrial()
-                end
-            end)
-        end
-    end
-end)
+-- Auto Click is handled by the original FastAttack Heartbeat above.
+-- Farm wrappers still call the same engine and share its existing cooldown.
 
 -- Worker: Auto Turn On Buso (same condition and timing as bnn.lua)
 task.spawn(function()
