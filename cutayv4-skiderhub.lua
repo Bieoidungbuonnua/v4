@@ -1816,7 +1816,7 @@ function SpecialHop(targetName)
                     local placeId, players = tonumber(row.placeid), tonumber(row.players)
                     local name = tostring(row.name or ""):lower():gsub("%s+", "")
                     if placeId == tonumber(game.PlaceId) and tonumber(row.sea) == 2
-                        and players and players >= 0 and players <= 11
+                        and players and players >= 4 and players <= 8
                         and name == "cursedcaptain" and #id >= 10
                         and id ~= tostring(game.JobId) and not _hopTried[id]
                     then
@@ -1827,7 +1827,7 @@ function SpecialHop(targetName)
             table.sort(candidates, function(a, b) return a.players < b.players end)
             local chosen = candidates[1]
             if not chosen then
-                SetRaceUpgradeStatus("Ghoul: no Cursed Captain API server for current PlaceId with 0-11 players")
+                SetRaceUpgradeStatus("Ghoul: no Cursed Captain API server for current PlaceId with 2-8 players")
                 return false
             end
             _hopTried[chosen.id] = true
