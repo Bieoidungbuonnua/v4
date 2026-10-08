@@ -1110,10 +1110,13 @@ function BringMob(target)
     end
 end
 
--- [[ ATTACK ENGINE - Replaced with FastAttack class (pastefy X6xLHpIv) ]]
+-- [[ ATTACK ENGINE - FastAttack class from pastefy X6xLHpIv ]]
 -- loadstring FastMax helper
 pcall(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/AnhDzaiScript/Setting/refs/heads/main/FastMax.lua"))()
+    if not getgenv().SkiderFastMaxLoaded then
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/AnhDzaiScript/Setting/refs/heads/main/FastMax.lua"))()
+        getgenv().SkiderFastMaxLoaded = true
+    end
 end)
 
 local _AtkModules = ReplicatedStorage:WaitForChild("Modules")
@@ -1145,6 +1148,7 @@ function FastAttackClass.new()
         M1Combo         = 0,
         EnemyRootPart   = nil,
         Connections     = {},
+        TargetCache     = {},
         Overheat        = { Dragonstorm = { MaxOverheat = 3, Cooldown = 0, TotalOverheat = 0, Distance = 350, Shooting = false } },
         ShootsPerTarget = { ["Dual Flintlock"] = 2 },
         SpecialShoots   = { ["Skull Guitar"] = "TAP", ["Bazooka"] = "Position", ["Cannon"] = "Position", ["Dragonstorm"] = "Overheat" },
@@ -1181,11 +1185,18 @@ end
 function FastAttackClass:GetBladeHits(Character, Distance)
     local Position = Character:GetPivot().Position
     local BladeHits = {}
+    self.EnemyRootPart = nil
     Distance = Distance or _AtkConfig.AttackDistance
 
     local function ProcessTargets(Folder)
-        for _, Enemy in ipairs(Folder:GetChildren()) do
-            if Enemy ~= Character and self:IsEntityAlive(Enemy) then
+        if not Folder then return end
+        local cached = self.TargetCache[Folder]
+        if not cached or tick() - cached.Time >= 0.2 then
+            cached = {Time = tick(), Models = Folder:GetChildren()}
+            self.TargetCache[Folder] = cached
+        end
+        for _, Enemy in ipairs(cached.Models) do
+            if Enemy.Parent == Folder and Enemy ~= Character and self:IsEntityAlive(Enemy) then
                 local BasePart = Enemy:FindFirstChild(_AtkConfig.HitboxLimbs[math.random(#_AtkConfig.HitboxLimbs)])
                     or Enemy:FindFirstChild("HumanoidRootPart")
                 if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
@@ -1199,17 +1210,19 @@ function FastAttackClass:GetBladeHits(Character, Distance)
         end
     end
 
-    if _AtkConfig.AttackMobs   then ProcessTargets(Workspace.Enemies) end
-    if _AtkConfig.AttackPlayers then ProcessTargets(Workspace.Characters) end
+    if _AtkConfig.AttackMobs   then ProcessTargets(Workspace:FindFirstChild("Enemies")) end
+    if _AtkConfig.AttackPlayers then ProcessTargets(Workspace:FindFirstChild("Characters")) end
 
     return BladeHits
 end
 
 function FastAttackClass:GetClosestEnemy(Character, Distance)
     local BladeHits = self:GetBladeHits(Character, Distance)
-    local Closest, MinDistance = nil, math.huge
+    local Position = Character:GetPivot().Position
+    local Closest = self.EnemyRootPart
+    local MinDistance = Closest and (Position - Closest.Position).Magnitude or math.huge
     for _, Hit in ipairs(BladeHits) do
-        local Magnitude = (Character:GetPivot().Position - Hit[2].Position).Magnitude
+        local Magnitude = (Position - Hit[2].Position).Magnitude
         if Magnitude < MinDistance then
             MinDistance = Magnitude
             Closest = Hit[2]
@@ -1289,21 +1302,25 @@ function FastAttackClass:UseNormalClick(Character, Humanoid, Cooldown)
 end
 
 function FastAttackClass:UseFruitM1(Character, Equipped, Combo)
-    local Targets = self:GetBladeHits(Character)
-    if not Targets[1] then return end
-    local Direction = (Targets[1][2].Position - Character:GetPivot().Position).Unit
+    self:GetBladeHits(Character)
+    if not self.EnemyRootPart then return end
+    local Offset = self.EnemyRootPart.Position - Character:GetPivot().Position
+    if Offset.Magnitude < 0.01 then return end
+    local Direction = Offset.Unit
     Equipped.LeftClickRemote:FireServer(Direction, Combo)
 end
 
 function FastAttackClass:Attack()
-    if not _AtkConfig.AutoClickEnabled or (tick() - self.Debounce) < _AtkConfig.AttackCooldown then return end
+    if not _AtkConfig.AutoClickEnabled
+        or tick() < (getgenv().Flower3ClusterUntil or 0)
+        or (tick() - self.Debounce) < _AtkConfig.AttackCooldown then return end
     local Character = localPlayer.Character
     if not Character or not self:IsEntityAlive(Character) then return end
     local Humanoid = Character.Humanoid
     local Equipped  = Character:FindFirstChildOfClass("Tool")
     if not Equipped then return end
     local ToolTip = Equipped.ToolTip
-    if not table.find({"Melee", "Blox Fruit", "Sword", "Gun"}, ToolTip) then return end
+    if ToolTip ~= "Melee" and ToolTip ~= "Blox Fruit" and ToolTip ~= "Sword" and ToolTip ~= "Gun" then return end
     local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or _AtkConfig.AttackCooldown
     if not self:CheckStun(Character, Humanoid, ToolTip) then return end
     local Combo = self:GetCombo()
@@ -1321,6 +1338,12 @@ end
 
 -- Tạo instance và kết nối Heartbeat
 local _FastAttackInst = FastAttackClass.new()
+if getgenv().SkiderFastAttackInstance then
+    for _, connection in ipairs(getgenv().SkiderFastAttackInstance.Connections) do
+        connection:Disconnect()
+    end
+end
+getgenv().SkiderFastAttackInstance = _FastAttackInst
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
     if Settings["Auto Click"]
         and tick() >= (getgenv().Flower3ClusterUntil or 0)
@@ -1457,11 +1480,17 @@ getgenv().ClickM1Volcano = function(target, wideRange)
 end
 
 getgenv().UseFruitM1 = function(target, secondaryDirection)
+    if tick() < (getgenv().Flower3ClusterUntil or 0)
+        or (tick() - _FastAttackInst.Debounce) < _AtkConfig.AttackCooldown then return false end
     local Character = localPlayer.Character
     if not Character then return false end
     local Equipped = Character:FindFirstChildOfClass("Tool")
     if not Equipped or Equipped.ToolTip ~= "Blox Fruit" then return false end
     if not Equipped:FindFirstChild("LeftClickRemote") then return false end
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    if not Humanoid or Humanoid.Health <= 0
+        or not _FastAttackInst:CheckStun(Character, Humanoid, Equipped.ToolTip) then return false end
+    _FastAttackInst.Debounce = tick()
     _FastAttackInst:UseFruitM1(Character, Equipped, _FastAttackInst:GetCombo())
     return true
 end
@@ -8004,15 +8033,15 @@ end)()
 
 -- Worker: Auto Click (Continuous Fast Attack for Melee / Sword)
 task.spawn(function()
-    while task.wait() do
-        if Settings["Auto Click"] then
+    while task.wait(0.1) do
+        if getgenv().SkiderFastAttackInstance ~= _FastAttackInst then break end
+        if Settings["Auto Click"]
+            and tick() >= (getgenv().Flower3ClusterUntil or 0)
+            and (tick() - _FastAttackInst.Debounce) >= _AtkConfig.AttackCooldown then
             pcall(function()
                 local fruitName = NameWeapon("Blox Fruit")
                 if fruitName and localPlayer.Character and localPlayer.Character:FindFirstChild(fruitName) then
-                    local hits = AttackAOE(80, true)
-                    if hits then
-                        getgenv().UseFruitM1(hits[1][1])
-                    end
+                    getgenv().UseFruitM1()
                 else
                     getgenv().AttackFunctionnhungSuperTrial()
                 end
