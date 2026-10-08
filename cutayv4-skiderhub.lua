@@ -1816,7 +1816,7 @@ function SpecialHop(targetName)
                     local placeId, players = tonumber(row.placeid), tonumber(row.players)
                     local name = tostring(row.name or ""):lower():gsub("%s+", "")
                     if placeId == tonumber(game.PlaceId) and tonumber(row.sea) == 2
-                        and players and players >= 4 and players <= 8
+                        and players and players >= 2 and players <= 8
                         and name == "cursedcaptain" and #id >= 10
                         and id ~= tostring(game.JobId) and not _hopTried[id]
                     then
