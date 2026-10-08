@@ -3430,7 +3430,7 @@ function DetectPlayerGhoul()
 			and player.Character.Humanoid.Health > 0
 			and player.Character:FindFirstChild("HumanoidRootPart")
 			and not player.Character:FindFirstChildOfClass("ForceField")
-			and not CheckSafezone(player.Character, true)
+			and not CheckSafezone(player.Character)
 		then
 			return player
 		end
@@ -3456,7 +3456,7 @@ function CheckPlayercantAttack(player)
 	if not localPlayer.PlayerGui:FindFirstChild("Notifications") then return false end
 	for key, player2 in pairs(localPlayer.PlayerGui.Notifications:GetDescendants()) do
 		if player2:IsA("TextLabel") then
-			if string.find(player2.Text, "attack") and not player2:FindFirstChild(player.Name) then
+			if (string.find(string.lower(player2.Text), "can't attack", 1, true) or string.find(string.lower(player2.Text), "cannot attack", 1, true)) and not player2:FindFirstChild(player.Name) then
 				key = Instance.new("TextBox")
 				key.Parent = player2.Parent
 				key.Name = player.Name
@@ -3750,7 +3750,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not character or not humanoid or not root or humanoid.Health <= 0 then break end
-        if ghoulFight and (CheckSafezone(character, true) or CheckPlayercantAttack(character)
+        if ghoulFight and (CheckSafezone(character) or (tick() - started >= 3 and localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
             or character:FindFirstChildOfClass("ForceField")) then
             SetRaceUpgradeStatus(label .. ": skip protected/unattackable " .. target.Name)
             break
@@ -3793,7 +3793,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         or not target.Parent
         or not target.Character
         or CheckSafezone(target.Character)
-        or CheckPlayercantAttack(target.Character)
+        or (not ghoulFight and CheckPlayercantAttack(target.Character))
 
     local character = target.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
