@@ -1,6 +1,6 @@
 --[[
     Skider Hub V4 - Rebuilt with Fluent UI
-    Combat performance revision: PERF-20261008-2 (original FastAttack engine)
+    Combat performance revision: PERF-20261008-3 (original engine + target follow)
     Original: kaiv4.lua
     Integrated modules: 3tn.lua (Tween speed = 150, BringMob, FastAttack)
     Bug fixes & Missing definitions: ngu.md
@@ -770,6 +770,7 @@ end
 -- CFrame branch in ToTarget: even a chest under 15 studs is crossed by a real
 -- TweenService tween, preventing the old autocy-style bypass teleport.
 function TweenManager.TweenChest(targetCFrame)
+    TweenManager.followTarget = nil
     local character = localPlayer.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
     if not root then return nil end
@@ -816,6 +817,7 @@ function TweenManager.TweenChest(targetCFrame)
 end
 
 function TweenManager.CancelCurrent()
+    TweenManager.followTarget = nil
     TweenManager.CancelTweenOnly()
     TweenManager.CancelChestTweenOnly()
     getgenv().CuttayTweenNoclipActive = false
@@ -830,7 +832,25 @@ function TweenManager.CancelCurrent()
     if humanoid then humanoid.PlatformStand = false end
 end
 
-function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
+function TweenManager.FollowMob(target, offset, worldSpace)
+    local root = target and target:FindFirstChild("HumanoidRootPart")
+    local humanoid = target and target:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health <= 0 then return end
+    offset = offset or CFrame.new(7, 20, 0)
+    local goal = worldSpace and CFrame.new(root.Position + offset.Position) or root.CFrame * offset
+    if target.Parent ~= Workspace:FindFirstChild("Enemies") then
+        return ToTarget(goal)
+    end
+    TweenManager.followTarget = target
+    TweenManager.followOffset = offset
+    TweenManager.followWorldSpace = worldSpace
+    TweenManager.followCharacter = localPlayer.Character
+    TweenManager.followTouched = tick()
+    return ToTarget(goal, false, false, false, true)
+end
+
+function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision, followUpdate)
+    if not followUpdate then TweenManager.followTarget = nil end
     local char = localPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -870,7 +890,7 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     local targetCF = typeof(targetCFrame) == "CFrame" and targetCFrame or CFrame.new(targetPos)
     local dist = (hrp.Position - targetPos).Magnitude
 
-    if skipTween or (dist <= 15 and not forceTween) then
+    if skipTween or (dist <= (followUpdate and 2.5 or 15) and not forceTween) then
         TweenManager.CancelTweenOnly()
         hrp.CFrame = targetCF
         return
@@ -880,7 +900,8 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
     if CurrentTween and CurrentTween.PlaybackState == Enum.PlaybackState.Playing
         and TweenManager.currentPart == hrp and TweenManager.currentGoal then
         local shift = (TweenManager.currentGoal.Position - targetPos).Magnitude
-        if shift <= 6 or (shift < 35 and tick() - (TweenManager.lastRetarget or 0) < 0.1) then
+        if shift <= (followUpdate and 1 or 6)
+            or (shift < 35 and tick() - (TweenManager.lastRetarget or 0) < 0.1) then
             return CurrentTween
         end
     end
@@ -899,6 +920,37 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision)
 end
 
 -- Continuous internal noclip, matching the worker used by bnn.lua. Keep one
+-- Follow uses live target CFrames while a farm call briefly waits on a remote.
+do
+local generation = (getgenv().SkiderTargetFollowGeneration or 0) + 1
+getgenv().SkiderTargetFollowGeneration = generation
+task.spawn(function()
+    while task.wait(0.1) do
+        if getgenv().SkiderTargetFollowGeneration ~= generation then break end
+        local target = TweenManager.followTarget
+        if target then
+            local character = localPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            local targetHumanoid = target:FindFirstChildOfClass("Humanoid")
+            local root = target:FindFirstChild("HumanoidRootPart")
+            if character ~= TweenManager.followCharacter or not humanoid or humanoid.Health <= 0
+                or not root or not targetHumanoid or targetHumanoid.Health <= 0
+                or target.Parent ~= Workspace:FindFirstChild("Enemies")
+                or tick() - TweenManager.followTouched > 2 then
+                TweenManager.followTarget = nil
+                TweenManager.CancelTweenOnly()
+            elseif not TweenManager.IsChestTweenPlaying() then
+                local goal = TweenManager.followWorldSpace
+                    and CFrame.new(root.Position + TweenManager.followOffset.Position)
+                    or root.CFrame * TweenManager.followOffset
+                local ok = pcall(ToTarget, goal, false, false, false, true)
+                if not ok then TweenManager.followTarget = nil end
+            end
+        end
+    end
+end)
+end
+
 -- connection across re-executes and enable it only while TweenManager travels.
 if getgenv().CuttayTweenNoclipConnection then
     pcall(function() getgenv().CuttayTweenNoclipConnection:Disconnect() end)
@@ -1378,8 +1430,8 @@ if getgenv().SkiderFastAttackInstance then
 end
 getgenv().SkiderFastAttackInstance = _FastAttackInst
 getgenv().SkiderBnnCombatToken = nil
-getgenv().SkiderCombatRevision = "PERF-20261008-2"
-print("[Skider Combat] PERF-20261008-2 | Original engine | One Auto Click worker")
+getgenv().SkiderCombatRevision = "PERF-20261008-3"
+print("[Skider Combat] PERF-20261008-3 | Original engine | Live target follow")
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
     if Settings["Auto Click"]
         and tick() >= (getgenv().Flower3ClusterUntil or 0)
@@ -1562,9 +1614,8 @@ function KillMonster(_v, fallbackCFrame)
                         hrp = v.PrimaryPart or v:FindFirstChild("HumanoidRootPart")
                         if not hrp then break end
 
-                        local targetPos = hrp.Position + Vector3.new(0, 25, 7)
                         local dist = (char.HumanoidRootPart.Position - hrp.Position).Magnitude
-                        ToTarget(CFrame.new(targetPos))
+                        TweenManager.FollowMob(v, CFrame.new(0, 25, 7), true)
 
                         if dist <= 50 then
                             BringMob(v)
@@ -2998,7 +3049,7 @@ function AutoQuestBarito()
             ClickM1(mob)
             local offset = Settings["Select Weapon"] == "Blox Fruit"
                 and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-            ToTarget(mob.HumanoidRootPart.CFrame * offset)
+            TweenManager.FollowMob(mob, offset)
         else
             local spawnPart = DetectPartSpawnMob("Swan Pirate", true)
             if spawnPart then
@@ -3020,7 +3071,7 @@ function AutoQuestBarito()
             ClickM1(boss)
             local offset = Settings["Select Weapon"] == "Blox Fruit"
                 and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-            ToTarget(boss.HumanoidRootPart.CFrame * offset)
+            TweenManager.FollowMob(boss, offset)
         else
             ToTarget(CFrame.new(2316.0397949219, 448.95474243164, 767.72882080078))
         end
@@ -3397,7 +3448,7 @@ function UpgradeRaceV2AndV3Legacy()
 						AttackFlower3Cluster(swan)
 						local offset = Settings["Select Weapon"] == "Blox Fruit"
 							and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-						ToTarget(swan.HumanoidRootPart.CFrame * offset)
+						TweenManager.FollowMob(swan, offset)
 					until not IsMobAlive(swan)
 						or DetectItemPlr("Flower 3")
 						or not Settings["Auto Upgrade Race V2-V3"]
@@ -3447,7 +3498,7 @@ function UpgradeRaceV2AndV3Legacy()
 					ClickM1(boss)
 					local offset = Settings["Select Weapon"] == "Blox Fruit"
 						and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-					ToTarget(boss.HumanoidRootPart.CFrame * offset)
+					TweenManager.FollowMob(boss, offset)
 				until not IsMobAlive(boss) or not Settings["Auto Upgrade Race V2-V3"]
 				if not table.find(BlBossHuman, bossName) then table.insert(BlBossHuman, bossName) end
 			else
@@ -3692,9 +3743,9 @@ function UpgradeRaceV2AndV3()
                         UsedualFlock()
                         AttackFlower3Cluster(swan)
                         if Settings["Select Weapon"] == "Blox Fruit" then
-                            ToTarget(swan.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
+                            TweenManager.FollowMob(swan, CFrame.new(-7, 20, 0))
                         else
-                            ToTarget(swan.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
+                            TweenManager.FollowMob(swan, CFrame.new(7, 20, 0))
                         end
                     until not IsMobAlive(swan) or not Settings["Auto Upgrade Race V2-V3"]
                 end
@@ -3759,7 +3810,7 @@ function UpgradeRaceV2AndV3()
                 ClickM1(boss)
                 local offset = Settings["Select Weapon"] == "Blox Fruit"
                     and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-                ToTarget(boss.HumanoidRootPart.CFrame * offset)
+                TweenManager.FollowMob(boss, offset)
             until not IsMobAlive(boss) or not Settings["Auto Upgrade Race V2-V3"]
             if not table.find(BlBossHuman, bossName) then table.insert(BlBossHuman, bossName) end
         else
@@ -4356,7 +4407,7 @@ function GetRaceGhoul()
         ClickM1(target)
         local offset = Settings["Select Weapon"] == "Blox Fruit"
             and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-        ToTarget(target.HumanoidRootPart.CFrame * offset)
+        TweenManager.FollowMob(target, offset)
     end
     return false
 end
@@ -4515,7 +4566,7 @@ local function TyrantAttackMob(mob, isBoss)
 	end)
 	local offset = Settings["Select Weapon"] == "Blox Fruit"
 		and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-	ToTarget(mob.HumanoidRootPart.CFrame * offset)
+	TweenManager.FollowMob(mob, offset)
 	-- Exact bnn.lua Tyrant combat path: selected weapon + real Fast Attack M1.
 	-- Skills are intentionally never fired while attacking Tyrant or its mobs.
 	UsedualFlock()
@@ -6206,7 +6257,7 @@ local function AttackTrialMob(mob, trialLocation)
 		EquipTool(NameWeapon(Settings["Select Weapon"] or "Melee"))
 		SizePart(mob)
 		local offset = Settings["Select Weapon"] == "Blox Fruit" and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
-		ToTarget(mob.HumanoidRootPart.CFrame * offset)
+		TweenManager.FollowMob(mob, offset)
 		ClickM1(mob)
 		UsedualFlock()
 	end
@@ -6250,7 +6301,7 @@ local function RunGhoulTrial()
 				local offset = Settings["Select Weapon"] == "Blox Fruit"
 					and CFrame.new(-7, 20, 0)
 					or  CFrame.new(7, 20, 0)
-				ToTarget(mob.HumanoidRootPart.CFrame * offset)
+				TweenManager.FollowMob(mob, offset)
 				UsedualFlock()
 				ClickM1(mob)
 			until not IsMobAlive(mob)
@@ -7909,7 +7960,7 @@ local function CuttayFarmBeliStep(requiredBeli)
         UsedualFlock()
         ClickM1(mob)
         getgenv().AimPos = mob.HumanoidRootPart.CFrame
-        ToTarget(mob.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
+        TweenManager.FollowMob(mob, CFrame.new(7, 20, 0))
     else
         CuttayMoveToBoneSpawn()
     end
@@ -8332,9 +8383,8 @@ local function runRaceTrainingWorkLegacy()
                 local mobHrp = mob.PrimaryPart or mob:FindFirstChild("HumanoidRootPart")
                 if not mobHrp or not char:FindFirstChild("HumanoidRootPart") then break end
 
-                local targetPos = mobHrp.Position + Vector3.new(0, 25, 7)
                 local dist = (char.HumanoidRootPart.Position - mobHrp.Position).Magnitude
-                ToTarget(CFrame.new(targetPos))
+                TweenManager.FollowMob(mob, CFrame.new(0, 25, 7), true)
 
                 if dist <= 50 then
                     BringMob(mob)
@@ -8414,9 +8464,9 @@ local function runRaceTrainingWork()
             local root = mob:FindFirstChild("HumanoidRootPart")
             if root then
                 if Settings["Select Weapon"] == "Blox Fruit" then
-                    ToTarget(root.CFrame * CFrame.new(-7, 20, 0))
+                    TweenManager.FollowMob(mob, CFrame.new(-7, 20, 0))
                 else
-                    ToTarget(root.CFrame * CFrame.new(7, 20, 0))
+                    TweenManager.FollowMob(mob, CFrame.new(7, 20, 0))
                 end
             end
             currentTrainingStatus = "Haunted Castle: farming " .. tostring(mob.Name)
