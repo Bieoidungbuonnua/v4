@@ -1,6 +1,6 @@
 --[[
     Skider Hub V4 - Rebuilt with Fluent UI
-    Combat performance revision: PERF-20261008-5 (backup physics + Ghoul V3 skill-only)
+    Combat performance revision: PERF-20261008-6 (Ghoul V3 BNN targeting + skill aim)
     Original: kaiv4.lua
     Integrated modules: 3tn.lua (Tween speed = 150, BringMob, FastAttack)
     Bug fixes & Missing definitions: ngu.md
@@ -1481,8 +1481,8 @@ if getgenv().SkiderFastAttackInstance then
 end
 getgenv().SkiderFastAttackInstance = _FastAttackInst
 getgenv().SkiderBnnCombatToken = nil
-getgenv().SkiderCombatRevision = "PERF-20261008-5"
-print("[Skider Combat] PERF-20261008-5 | Backup physics cadence | Ghoul V3 skill-only")
+getgenv().SkiderCombatRevision = "PERF-20261008-6"
+print("[Skider Combat] PERF-20261008-6 | Ghoul V3 BNN targeting + skill aim")
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
     if Settings["Auto Click"] and not getgenv().GhoulV3NoAutoClick
         and tick() >= (getgenv().Flower3ClusterUntil or 0)
@@ -3426,19 +3426,21 @@ function DetectPlayerGhoul()
 			and player.Character and player.Character:FindFirstChild("Humanoid")
 			and player.Character.Humanoid.Health > 0
 			and player.Character:FindFirstChild("HumanoidRootPart")
+			and not player.Character:FindFirstChildOfClass("ForceField")
+			and not CheckSafezone(player.Character, true)
 		then
 			return player
 		end
 	end
 end
 
-function CheckSafezone(player)
+function CheckSafezone(player, regardlessOfHealth)
 	if not Workspace:FindFirstChild("_WorldOrigin") or not Workspace._WorldOrigin:FindFirstChild("SafeZones") then return false end
 	for unusedIndex, child in pairs(Workspace._WorldOrigin.SafeZones:GetChildren()) do
 		if child:IsA("Part") and player and player:FindFirstChild("HumanoidRootPart") and player:FindFirstChild("Humanoid") then
 			if
 				(child.Position - player.HumanoidRootPart.Position).magnitude <= 400
-				and player.Humanoid.Health / player.Humanoid.MaxHealth >= 0.9
+					and (regardlessOfHealth or player.Humanoid.Health / player.Humanoid.MaxHealth >= 0.9)
 			then
 				return true
 			end
@@ -3653,6 +3655,70 @@ end
 
 -- Complete BNN V2-V3 engine. This definition intentionally replaces the older
 -- partial port above while keeping its shared helpers and combat modules.
+do
+local skillMouse
+pcall(function() skillMouse = require(ReplicatedStorage.Mouse) end)
+function UpdateGhoulV3Aim(root)
+    if not root or not root.Parent then return end
+    local lead = root.AssemblyLinearVelocity * 0.12
+    if lead.Magnitude > 12 then lead = lead.Unit * 12 end
+    local aim = CFrame.new(root.Position + lead)
+    getgenv().AimPos = aim
+    getgenv().GhoulV3SkillAim = aim
+    if skillMouse then skillMouse.Hit = aim; skillMouse.Target = root end
+    return aim
+end
+function GhoulV3UseSkill(root)
+    local character = localPlayer.Character
+    local main = localPlayer.PlayerGui:FindFirstChild("Main")
+    local skills = main and main:FindFirstChild("Skills")
+    if not character or not skills then return end
+    for _, category in ipairs({"Melee", "Sword", "Gun", "Blox Fruit"}) do
+        local name = NameWeapon(category)
+        if name then
+            if not skills:FindFirstChild(name) then EquipTool(name); return end
+            local skill = CheckCDSkill(name, true)
+            if skill then
+                EquipTool(name)
+                if not character:FindFirstChild(name) then return end
+                UpdateGhoulV3Aim(root)
+                VirtualInputManager:SendKeyEvent(true, skill.Name, false, game)
+                task.wait(0.03)
+                VirtualInputManager:SendKeyEvent(false, skill.Name, false, game)
+                return
+            end
+        end
+    end
+end
+-- BNN's RemoteEvent aim, restricted to Ghoul V3 skill combat only.
+if not getgenv().SkiderGhoulSkillAimHook then
+    local ok, err = pcall(function()
+        local old
+        local callback = newcclosure(function(self, ...)
+            local args = {...}
+            if getgenv().GhoulV3NoAutoClick and getnamecallmethod() == "FireServer"
+                and self.Name == "RemoteEvent" and #args == 1 then
+                local root = getgenv().GhoulV3AimRoot
+                local aim = UpdateGhoulV3Aim(root)
+                if aim then
+                    if typeof(args[1]) == "Vector3" then args[1] = aim.Position
+                    elseif typeof(args[1]) == "CFrame" then args[1] = aim end
+                end
+            end
+            return old(self, unpack(args))
+        end)
+        if hookmetamethod then old = hookmetamethod(game, "__namecall", callback)
+        else
+            local mt = getrawmetatable(game)
+            old = mt.__namecall
+            setreadonly(mt, false); mt.__namecall = callback; setreadonly(mt, true)
+        end
+    end)
+    if ok then getgenv().SkiderGhoulSkillAimHook = true
+    else warn("[Ghoul V3] Skill aim hook unavailable: " .. tostring(err)) end
+end
+end
+
 function RunRaceV3PlayerKill(target, label, blacklist)
     if not target or target == localPlayer then return false end
     local ghoulFight = label == "Ghoul V3"
@@ -3661,6 +3727,9 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started = tick()
+    if ghoulFight and blacklist and not table.find(blacklist, target.Name) then
+        table.insert(blacklist, target.Name) -- BNN skips players already attempted, not only confirmed kills.
+    end
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
     repeat
         task.wait(0.1)
@@ -3668,6 +3737,11 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not character or not humanoid or not root or humanoid.Health <= 0 then break end
+        if ghoulFight and (CheckSafezone(character, true) or CheckPlayercantAttack(character)
+            or character:FindFirstChildOfClass("ForceField")) then
+            SetRaceUpgradeStatus(label .. ": skip protected/unattackable " .. target.Name)
+            break
+        end
 
         pcall(function()
             local main = localPlayer.PlayerGui:FindFirstChild("Main")
@@ -3678,8 +3752,17 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             end
         end)
 
-        getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
-        if localPlayer:DistanceFromCharacter(root.Position) < 50 then
+        if ghoulFight then
+            getgenv().GhoulV3AimRoot = root
+            UpdateGhoulV3Aim(root)
+            local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if not myRoot then break end
+            local goal = root.CFrame * CFrame.new(0, 0, 3)
+            goal = CFrame.new(goal.Position, root.Position)
+            ToTarget(goal, false, true) -- Real tween to the player; no 50-stud CFrame snap.
+            if (myRoot.Position - root.Position).Magnitude < 12 then GhoulV3UseSkill(root) end
+        elseif localPlayer:DistanceFromCharacter(root.Position) < 50 then
+            getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
             local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
             if myRoot then
                 TweenManager.CancelTweenOnly()
@@ -3707,7 +3790,13 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     end
     return humanoid == nil or humanoid.Health <= 0
     end)
-    if ghoulFight then getgenv().GhoulV3NoAutoClick = previousSuppression end
+    if ghoulFight then
+        getgenv().GhoulV3NoAutoClick = previousSuppression
+        getgenv().GhoulV3AimRoot = nil
+        getgenv().GhoulV3SkillAim = nil
+        getgenv().AimPos = nil
+        TweenManager.CancelCurrent()
+    end
     if not ok then warn("[Race V2-V3] " .. label .. ": " .. tostring(result)); return false end
     return result
 end
@@ -6186,7 +6275,7 @@ function NameAttackTrial()
 	end
 end
 
-function CheckCDSkill(skillName)
+function CheckCDSkill(skillName, combatOnly)
 	if not localPlayer.PlayerGui:FindFirstChild("Main") or not localPlayer.PlayerGui.Main:FindFirstChild("Skills") or not localPlayer.PlayerGui.Main.Skills:FindFirstChild(skillName) then
 		EquipTool(skillName)
 		return
@@ -6199,6 +6288,7 @@ function CheckCDSkill(skillName)
 				value7.Name ~= "Template"
 					and value7:FindFirstChild("Title")
 					and value7.Title.TextColor3 == Color3.new(1, 1, 1)
+					and (not combatOnly or not string.find(value7.Title.Text, "Transformation"))
 					and value7:FindFirstChild("Cooldown")
 					and (value7.Cooldown.Size == UDim2.new(0, 0, 1, -1)
 					or value7.Cooldown.Size == UDim2.new(1, 0, 1, -1))
