@@ -1838,14 +1838,14 @@ function SpecialHop(targetName)
             if getgenv().Mode == "CuttayV4" then
                 getgenv().CuttayV4Status = message
             end
-            -- Same single ServerBrowser request and 12s settling window as HopFM.
+            -- One join request per second; keep exact current-PlaceId validation.
             getgenv().JoinV4LastHopAttempt = {
                 JobId = chosen.id, PlaceId = chosen.placeId,
                 SourceJobId = tostring(game.JobId), At = tick(),
             }
             return teleportViaServerBrowser(chosen.id, chosen.placeId)
         end)
-        getgenv().CursedCaptainHopNextAt = tick() + (ok and sent and 12 or 5)
+        getgenv().CursedCaptainHopNextAt = tick() + 1
         getgenv().CursedCaptainHopBusy = false
         if not ok then warn("[Cursed Captain API] " .. tostring(sent)) end
         return ok and sent == true
@@ -4175,6 +4175,11 @@ function GetCyborg()
 	end
 end
 
+function SetGhoulStatus(message)
+    SetRaceUpgradeStatus("Ghoul: " .. message)
+    if getgenv().Mode == "CuttayV4" then getgenv().CuttayV4Status = "Ghoul: " .. message end
+end
+
 function EnterCursedShipForGhoul()
     local character = localPlayer.Character
     local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -4182,132 +4187,97 @@ function EnterCursedShipForGhoul()
     if not root or not humanoid or humanoid.Health <= 0 then return false end
     local map = Workspace:FindFirstChild("Map")
     local ship = map and map:FindFirstChild("GhostShip")
-    local interior = map and map:FindFirstChild("GhostShipInterior")
     local gate = ship and ship:FindFirstChild("Teleport")
-    local insideGate = interior and interior:FindFirstChild("Teleport")
-    local outsideCF = gate and gate:IsA("BasePart") and gate.CFrame
+    local gateCF = gate and gate:IsA("BasePart") and gate.CFrame
         or CFrame.new(-6496.898, 89.035, -116.509, 0.8192, 0, -0.5736, 0, -1, 0, -0.5736, 0, -0.8192)
-    local insideCF = insideGate and insideGate:IsA("BasePart") and insideGate.CFrame
-        or CFrame.new(920.478, 154.901, 32838.965)
-    local function isInside()
-        local insideDistance = (root.Position - insideCF.Position).Magnitude
-        return insideDistance <= 3000 and insideDistance < (root.Position - outsideCF.Position).Magnitude
+    if (root.Position - Vector3.new(920.478, 154.901, 32838.965)).Magnitude <= 3000 then
+        if getgenv().GhoulGateTween then
+            pcall(function() getgenv().GhoulGateTween:Cancel() end)
+            getgenv().GhoulGateTween = nil
+        end
+        return true
     end
-    if isInside() then return true end
-    SetRaceUpgradeStatus("Ghoul: tween to outside Cursed Ship gate")
+    SetGhoulStatus("tween to outside Cursed Ship gate")
     if humanoid.Sit then humanoid.Jump = true; return false end
-    -- Only the entry route from the supplied script; reuse the existing tween.
-    local tags = game:GetService("CollectionService")
-    local addedTag = not tags:HasTag(localPlayer, "Teleporting")
-    if addedTag then
-        tags:AddTag(localPlayer, "Teleporting")
-        task.delay(1.5, function() tags:RemoveTag(localPlayer, "Teleporting") end)
+    local tween = getgenv().GhoulGateTween
+    if not tween or tween.PlaybackState ~= Enum.PlaybackState.Playing then
+        local tags = game:GetService("CollectionService")
+        if not tags:HasTag(localPlayer, "Teleporting") then
+            tags:AddTag(localPlayer, "Teleporting")
+            task.delay(1.5, function() tags:RemoveTag(localPlayer, "Teleporting") end)
+        end
+        getgenv().GhoulGateTween = ToTarget(gateCF, false, true)
     end
-    local deadline = tick() + (root.Position - outsideCF.Position).Magnitude / TWEEN_SPEED + 4
-    local tween = ToTarget(outsideCF, false, true)
-    repeat
-        task.wait()
-        if localPlayer.Character ~= character or not root.Parent or humanoid.Health <= 0 then break end
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-    until isInside() or (root.Position - outsideCF.Position).Magnitude <= 2.5
-        or tick() >= deadline or not Settings["Auto Get Ghoul"]
-        or not tween or tween.PlaybackState ~= Enum.PlaybackState.Playing
-    TweenManager.CancelTweenOnly()
-    if localPlayer.Character ~= character or not root.Parent or humanoid.Health <= 0 then return false end
-    if not isInside() then task.wait(2) end
-    return localPlayer.Character == character and root.Parent ~= nil and isInside()
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    return false
 end
 
 function GetRaceGhoul()
-	if not GoToSea(getgenv().CheckPlaceId2) then
-		return
-	end
-	if
-		localPlayer.Data.Race.Value == "Ghoul"
-		or ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true) == 2
-		or ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4, true) == 1
-	then
-		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Plz Turn Off", ShowTime = 5 })
-		wait(5)
-		return
-	end
-    if not EnterCursedShipForGhoul() then return end
-	if not CheckCountItem("Ectoplasm", 100) then
-		local items18 = { "Ship Deckhand", "Ship Steward", "Ship Officer", "Ship Engineer" }
-		local character3 = DetectMob(items18)
-		if character3 then
-			repeat
-				task.wait()
-                if not EnterCursedShipForGhoul() then return end
-				SizePart(character3)
-				BringMob(character3)
-				UsedualFlock()
-				ClickM1(character3)
-				if Settings["Select Weapon"] == "Blox Fruit" then
-					ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-				else
-					ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-				end
-			until not IsMobAlive(character3) or not Settings["Auto Get Ghoul"]
-		else
-			if #items3 >= #items18 then
-				items3 = {}
-				return
-			end
-			local part2 = DetectPartSpawnMob(DetectNameTablePart(items18))
-			if part2 then
-				table.insert(items3, DetectNameTablePart(items18))
-				repeat
-					wait()
-                    if not EnterCursedShipForGhoul() then return end
-					ToTarget(part2.CFrame * CFrame.new(0, 60, 0))
-				until localPlayer:DistanceFromCharacter(part2.Position) <= 100
-					or (DetectMob(items18))
-					or not Settings["Auto Get Ghoul"]
-				wait(1)
-			end
-		end
-		return
-	end
-	if DetectItemPlr("Hellfire Torch") then
-		local targetPos = CFrame.new(
-			918.615234, 122.202454, 33454.3789,
-			-0.999998808, 0, 0.00172644004,
-			0, 1, 0,
-			-0.00172644004, 0, -0.999998808
-		)
-		if (targetPos.Position - localPlayer.Character.HumanoidRootPart.Position).Magnitude <= 8 then
-			ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4)
-			ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Buy", 4)
-		else
-			ToTarget(targetPos)
-		end
-	else
-		local character3 = CheckNameBoss("Cursed Captain")
-		if character3 then
-			repeat
-				task.wait()
-                if not EnterCursedShipForGhoul() then return end
-				SizePart(character3)
-				UsedualFlock()
-				ClickM1(character3)
-				if Settings["Select Weapon"] == "Blox Fruit" then
-					ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(-7, 20, 0))
-				else
-					ToTarget(character3.HumanoidRootPart.CFrame * CFrame.new(7, 20, 0))
-				end
-			until not IsMobAlive(character3) or not Settings["Auto Get Ghoul"]
-			wait(5)
-		else
-            if Settings["Hop Server Get Ghoul"] then
-				SpecialHop("Cursed Captain")
+    if localPlayer.Data.Race.Value == "Ghoul" then return true end
+    if not GoToSea(getgenv().CheckPlaceId2) then
+        SetGhoulStatus("traveling to Sea 2")
+        return false
+    end
+    local unlocked = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true)
+    if unlocked == 2 then
+        SetGhoulStatus("changing to unlocked race")
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4)
+        local result = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4)
+        if localPlayer.Data.Race.Value ~= "Ghoul" then
+            SetGhoulStatus("change pending; response: " .. tostring(result))
+        end
+        return localPlayer.Data.Race.Value == "Ghoul"
+    end
+    if not EnterCursedShipForGhoul() then return false end
+    local target
+    if not CheckCountItem("Ectoplasm", 100) then
+        local names = { "Ship Deckhand", "Ship Steward", "Ship Officer", "Ship Engineer" }
+        SetGhoulStatus("farming 100 Ectoplasm")
+        target = DetectMob(names)
+        if not target then
+            if #items3 >= #names then table.clear(items3) end
+            local name = DetectNameTablePart(names)
+            local spawn = DetectPartSpawnMob(name)
+            if spawn then
+                ToTarget(spawn.CFrame * CFrame.new(0, 60, 0))
+                if localPlayer:DistanceFromCharacter(spawn.Position) <= 100 then table.insert(items3, name) end
             else
-                uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Waiting Boss Spawn (Ghoul hop disabled)", ShowTime = 5 })
+                SetGhoulStatus("loading ship enemy spawns")
+                ToTarget(CFrame.new(923.213, 126.976, 32852.832), false, true)
             end
-			wait(5)
-		end
-	end
+            return false
+        end
+        BringMob(target)
+    elseif DetectItemPlr("Hellfire Torch") then
+        local npc = CFrame.new(918.615234, 122.202454, 33454.3789)
+        SetGhoulStatus("returning Torch to Experimic")
+        if localPlayer:DistanceFromCharacter(npc.Position) > 8 then
+            ToTarget(npc)
+        else
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4)
+            local result = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Buy", 4)
+            SetGhoulStatus("purchase response: " .. tostring(result))
+        end
+        return localPlayer.Data.Race.Value == "Ghoul"
+    else
+        target = CheckNameBoss("Cursed Captain")
+        if not target then
+            SetGhoulStatus("finding Cursed Captain / waiting for API join")
+            if Settings["Hop Server Get Ghoul"] then SpecialHop("Cursed Captain") end
+            return false
+        end
+        SetGhoulStatus("defeating Cursed Captain for Torch")
+    end
+    if IsMobAlive(target) then
+        SizePart(target)
+        UsedualFlock()
+        ClickM1(target)
+        local offset = Settings["Select Weapon"] == "Blox Fruit"
+            and CFrame.new(-7, 20, 0) or CFrame.new(7, 20, 0)
+        ToTarget(target.HumanoidRootPart.CFrame * offset)
+    end
+    return false
 end
 
 --------------------------------------------------------------------------------
@@ -7885,11 +7855,6 @@ local function CuttayAcquireRace(targetRace)
         end
         return localPlayer.Data.Race.Value == "Cyborg"
     elseif targetRace == "Ghoul" then
-        if not GoToSea(getgenv().CheckPlaceId2) then return false end
-        local unlocked = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true)
-        if unlocked == 2 then
-            ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4, true)
-        else
             local previousGet, previousHop = Settings["Auto Get Ghoul"], Settings["Hop Server Get Ghoul"]
             Settings["Auto Get Ghoul"] = true
             Settings["Hop Server Get Ghoul"] = true
@@ -7900,8 +7865,7 @@ local function CuttayAcquireRace(targetRace)
                 CuttaySetStatus("ERROR", "Get Ghoul: " .. tostring(err))
                 warn("[Get Ghoul] " .. tostring(err))
             end
-        end
-        return false
+        return localPlayer.Data.Race.Value == "Ghoul"
     end
 
     local fragments = CuttayCurrentFragments()
