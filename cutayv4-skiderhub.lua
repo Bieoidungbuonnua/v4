@@ -1,6 +1,6 @@
 --[[
     Skider Hub V4 - Rebuilt with Fluent UI
-    Combat performance revision: PERF-20261008-3 (original engine + target follow)
+    Combat performance revision: PERF-20261008-4 (stable character lock + target follow)
     Original: kaiv4.lua
     Integrated modules: 3tn.lua (Tween speed = 150, BringMob, FastAttack)
     Bug fixes & Missing definitions: ngu.md
@@ -709,11 +709,51 @@ local items18 = { "Last Resort", "Agility", "Water Body", "Heavenly Blood", "Ene
 -- [TWEEN MODULE] Speed locked at 150 according to requirements
 local TweenManager = {}
 local CurrentTween = nil
+if getgenv().SkiderTweenManager then
+    pcall(function() getgenv().SkiderTweenManager.CancelCurrent() end)
+end
+getgenv().SkiderTweenManager = TweenManager
 if getgenv().CuttayCurrentChestTween then
     pcall(function() getgenv().CuttayCurrentChestTween:Cancel() end)
 end
 getgenv().CuttayCurrentChestTween = nil
 local TWEEN_SPEED = 150 -- TOÀN BỘ TWEEN ĐỀU Ở 150
+
+function TweenManager.ReleaseCharacterLock()
+    local humanoid = TweenManager.lockHumanoid
+    if humanoid and humanoid.Parent then humanoid.AutoRotate = TweenManager.lockAutoRotate end
+    local lift = TweenManager.lockLift
+    if lift and lift.Parent then lift:Destroy() end
+    TweenManager.lockHumanoid = nil
+    TweenManager.lockLift = nil
+end
+
+function TweenManager.LockCharacter(character, root)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 or root.Anchored then return false end
+    if TweenManager.lockHumanoid ~= humanoid then
+        TweenManager.ReleaseCharacterLock()
+        TweenManager.lockHumanoid = humanoid
+        TweenManager.lockAutoRotate = humanoid.AutoRotate
+    end
+    humanoid.AutoRotate = false
+    local oldForce = root:FindFirstChild("FloatForce")
+    if oldForce then oldForce:Destroy() end
+    local holder = character:FindFirstChild("Head") or root
+    local lift = holder:FindFirstChild("eltrul")
+    if not lift then
+        lift = Instance.new("BodyVelocity")
+        lift.Name = "eltrul"
+        lift.MaxForce = Vector3.new(0, math.huge, 0)
+        lift.Velocity = Vector3.zero
+        lift.P = 10000
+        lift.Parent = holder
+    end
+    TweenManager.lockLift = lift
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+    return true
+end
 
 function TweenManager.ApplyNoclip(character)
     if TweenManager.collisionCharacter ~= character
@@ -793,14 +833,9 @@ function TweenManager.TweenChest(targetCFrame)
     end
 
     getgenv().CuttayTweenNoclipActive = true
-    local head = character:FindFirstChild("Head") or root
-    if not head:FindFirstChild("eltrul") then
-        local velocityLock = Instance.new("BodyVelocity")
-        velocityLock.Name = "eltrul"
-        velocityLock.MaxForce = Vector3.new(0, math.huge, 0)
-        velocityLock.Velocity = Vector3.zero
-        velocityLock.P = 10000
-        velocityLock.Parent = head
+    if not TweenManager.LockCharacter(character, root) then
+        TweenManager.CancelCurrent()
+        return nil
     end
     TweenManager.ApplyNoclip(character)
 
@@ -821,6 +856,7 @@ function TweenManager.CancelCurrent()
     TweenManager.CancelTweenOnly()
     TweenManager.CancelChestTweenOnly()
     getgenv().CuttayTweenNoclipActive = false
+    TweenManager.ReleaseCharacterLock()
     local character = localPlayer.Character
     if not character then return end
     for _, object in ipairs(character:GetDescendants()) do
@@ -865,6 +901,7 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision, follow
     local head = char:FindFirstChild("Head") or hrp
     if preserveCollision then
         getgenv().CuttayTweenNoclipActive = false
+        TweenManager.ReleaseCharacterLock()
         -- Chest collection must not leave the character in the noclip/hover
         -- state used by combat travel; that state causes visible rubber-banding.
         local lift = head:FindFirstChild("eltrul")
@@ -874,13 +911,9 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision, follow
         -- CanCollide once is not enough because Roblox can restore collision
         -- while the root is crossing a wall, which causes rubber-banding.
         getgenv().CuttayTweenNoclipActive = true
-        if not head:FindFirstChild("eltrul") then
-            local bv = Instance.new("BodyVelocity")
-            bv.Name = "eltrul"
-            bv.MaxForce = Vector3.new(0, math.huge, 0)
-            bv.Velocity = Vector3.zero
-            bv.P = 10000
-            bv.Parent = head
+        if not TweenManager.LockCharacter(char, hrp) then
+            TweenManager.CancelCurrent()
+            return nil
         end
 
         TweenManager.ApplyNoclip(char)
@@ -900,7 +933,7 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision, follow
     if CurrentTween and CurrentTween.PlaybackState == Enum.PlaybackState.Playing
         and TweenManager.currentPart == hrp and TweenManager.currentGoal then
         local shift = (TweenManager.currentGoal.Position - targetPos).Magnitude
-        if shift <= (followUpdate and 1 or 6)
+        if shift <= 6
             or (shift < 35 and tick() - (TweenManager.lastRetarget or 0) < 0.1) then
             return CurrentTween
         end
@@ -938,7 +971,7 @@ task.spawn(function()
                 or target.Parent ~= Workspace:FindFirstChild("Enemies")
                 or tick() - TweenManager.followTouched > 2 then
                 TweenManager.followTarget = nil
-                TweenManager.CancelTweenOnly()
+                TweenManager.CancelCurrent()
             elseif not TweenManager.IsChestTweenPlaying() then
                 local goal = TweenManager.followWorldSpace
                     and CFrame.new(root.Position + TweenManager.followOffset.Position)
@@ -959,7 +992,11 @@ getgenv().CuttayTweenNoclipActive = false
 getgenv().CuttayTweenNoclipConnection = RunService.Stepped:Connect(function()
     if not getgenv().CuttayTweenNoclipActive then return end
     local character = localPlayer.Character
-    if not character then return end
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root or not TweenManager.LockCharacter(character, root) then
+        TweenManager.CancelCurrent()
+        return
+    end
     TweenManager.ApplyNoclip(character)
 end)
 
@@ -1430,8 +1467,8 @@ if getgenv().SkiderFastAttackInstance then
 end
 getgenv().SkiderFastAttackInstance = _FastAttackInst
 getgenv().SkiderBnnCombatToken = nil
-getgenv().SkiderCombatRevision = "PERF-20261008-3"
-print("[Skider Combat] PERF-20261008-3 | Original engine | Live target follow")
+getgenv().SkiderCombatRevision = "PERF-20261008-4"
+print("[Skider Combat] PERF-20261008-4 | Original engine | Stable character lock + follow")
 table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
     if Settings["Auto Click"]
         and tick() >= (getgenv().Flower3ClusterUntil or 0)
