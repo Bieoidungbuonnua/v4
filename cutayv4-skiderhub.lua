@@ -126,7 +126,7 @@ local function autoJoinTeam()
         end
     end)
     if getgenv().Mode == "OneClickV4" or getgenv().Mode == "CuttayV4" then
-        targetTeam = "Marines"
+        targetTeam = getgenv().ChooseTeam == "Pirates" and "Pirates" or "Marines"
     end
     if targetTeam == "Marine" then targetTeam = "Marines" end
     if targetTeam == "Pirate" then targetTeam = "Pirates" end
@@ -449,7 +449,7 @@ local ONECLICK_V4_SETTINGS = {
     ["Auto Finish Train Quest"] = true,
     ["Stack Train With Trial Race"] = true,
     ["Multi Trial"] = true,
-    ["Select Team"] = "Marines",
+    ["Select Team"] = getgenv().ChooseTeam == "Pirates" and "Pirates" or "Marines",
 }
 
 local function ApplyOneClickV4Settings()
@@ -4937,7 +4937,7 @@ task.spawn(function()
 				local minimal = playerGui and playerGui:FindFirstChild("Main (minimal)")
 				local chooseTeam = minimal and minimal:FindFirstChild("ChooseTeam")
 				if chooseTeam and chooseTeam.Visible then
-					local button = chooseTeam.Container["Pirates"].Frame.TextButton
+					local button = chooseTeam.Container[Settings["Select Team"] or "Pirates"].Frame.TextButton
 					for _, connection in pairs(getconnections(button.Activated)) do
 						for _, tap in pairs(getconnections(game:GetService("UserInputService").TouchTapInWorld)) do tap:Fire() end
 						connection.Function()
@@ -7658,6 +7658,7 @@ local function ExportOneClickV4ConfigString()
         'repeat task.wait() until game:IsLoaded() and game:GetService("Players").LocalPlayer',
         "",
         'getgenv().Mode = "' .. exportMode .. '"',
+        'getgenv().ChooseTeam = ' .. string.format("%q", Settings["Select Team"] or "Marines"),
         "",
         "getgenv().JoinV4Config = {",
     }
