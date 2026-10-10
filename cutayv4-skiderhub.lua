@@ -4390,7 +4390,10 @@ function GetRaceGhoul()
         return false
     end
     local unlocked = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true)
-    if unlocked == 2 then
+    local changeState = tonumber(unlocked) ~= 2
+        and ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4, true)
+    if localPlayer.Data.Race.Value == "Ghoul" then return true end
+    if tonumber(unlocked) == 2 or tonumber(changeState) == 1 then
         SetGhoulStatus("changing to unlocked race")
         ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4)
         local result = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4)
@@ -4400,6 +4403,7 @@ function GetRaceGhoul()
         return localPlayer.Data.Race.Value == "Ghoul"
     end
     if not EnterCursedShipForGhoul() then return false end
+    if localPlayer.Data.Race.Value == "Ghoul" then return true end
     local target
     if not CheckCountItem("Ectoplasm", 100) then
         local names = { "Ship Deckhand", "Ship Steward", "Ship Officer", "Ship Engineer" }
@@ -4427,6 +4431,9 @@ function GetRaceGhoul()
         else
             ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4)
             local result = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Buy", 4)
+            if tonumber(result) == 2 and localPlayer.Data.Race.Value ~= "Ghoul" then
+                ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4)
+            end
             SetGhoulStatus("purchase response: " .. tostring(result))
         end
         return localPlayer.Data.Race.Value == "Ghoul"
@@ -5116,7 +5123,12 @@ function MirageMapLoadWaitRemaining()
 end
 
 function PullLeverV4()
-	if getgenv().CuttayLeverPulledVerified == true then return true end
+    local leverState = CuttayIsLeverPulled()
+    if leverState == true then return true end
+    if leverState == nil then
+        SetCuttayPullLeverStatusRuntime("waiting for lever verification; not restarting quest")
+        return
+    end
 	if not CheckItemInventory("Valkyrie Helm") or not CheckItemInventory("Mirror Fractal") then
 		SetCuttayPullLeverStatusRuntime("missing Valkyrie Helm or Mirror Fractal")
 		uiLibrary.CreateNoti({ Title = "Skider Hub V4", Desc = "Not Valkyrie Helm or not Mirror Fractal", ShowTime = 5 })
@@ -7881,7 +7893,7 @@ local function CuttayIsRaceFullGear()
     return clockOk and type(clock) == "table" and tonumber(clock.RaceLevel) and tonumber(clock.RaceLevel) >= 6
 end
 
-local function CuttayIsLeverPulled()
+function CuttayIsLeverPulled()
     local cacheName = "cuttay_v4_lever_" .. tostring(localPlayer.UserId) .. ".txt"
 
 	local function markVerified(source)
@@ -7910,7 +7922,8 @@ local function CuttayIsLeverPulled()
 	local clockOk, clockState = pcall(function()
 		return ReplicatedStorage.Remotes.CommF_:InvokeServer("TempleClock", "Check")
 	end)
-	if clockOk and type(clockState) == "table" then
+	if clockOk and type(clockState) == "table"
+        and (tonumber(clockState.RaceLevel) or 0) >= 1 then
 		return markVerified("TempleClock")
 	end
 
@@ -7925,17 +7938,25 @@ local function CuttayIsLeverPulled()
 		return markVerified("UpgradeRace:" .. tostring(upgradeCode))
 	end
 
-	-- RaceV4Progress is the Ancient One quest and is intentionally not used as
-	-- lever proof. Its late values can also occur before the physical pull.
-	if not IsInTempleOfTime() then return false end
+	-- Read the replicated lever even outside Temple; do not travel just to check it.
 	local map = Workspace:FindFirstChild("Map")
-	local temple = map and map:FindFirstChild("Temple of Time")
+	local stash = ReplicatedStorage:FindFirstChild("MapStash")
+	local temple = (map and map:FindFirstChild("Temple of Time")) or (stash and stash:FindFirstChild("Temple of Time"))
 	local leverModel = temple and temple:FindFirstChild("Lever")
 	local leverPart = leverModel and (leverModel:FindFirstChild("Lever") or leverModel:FindFirstChild("Part"))
-	if leverPart and math.abs(leverPart.CFrame.Z - leverTargetCFrame.Z) <= count12 then
-		return markVerified("physical lever")
-	end
-	return false
+    if leverPart then
+        if math.abs(leverPart.CFrame.Z - leverTargetCFrame.Z) <= count12 then
+            return markVerified("physical lever")
+        end
+        return false
+    end
+    local doorOk, door = pcall(function()
+        return ReplicatedStorage.Remotes.CommF_:InvokeServer("CheckTempleDoor")
+    end)
+    if doorOk and door == false then return false end
+    -- An unlocked door alone does not prove that the lever still needs pulling.
+    getgenv().CuttayLeverPulledSource = "unconfirmed: clock=" .. tostring(clockState) .. "; upgrade=" .. tostring(upgradeCode) .. "; door=" .. tostring(door)
+    return nil
 end
 
 local function CuttaySetV4ProgressStatus()
@@ -8119,7 +8140,11 @@ local function CuttayRunStep()
 		return
 	end
 
-    if not CuttayIsLeverPulled() then
+    local leverState = CuttayIsLeverPulled()
+    if leverState == nil then
+        CuttaySetStatus("CHECK_LEVER", "Checking lever state; waiting for server data")
+        return
+    elseif leverState == false then
 		if getgenv().CuttayV4Phase ~= "PULL_LEVER" then
 			SetCuttayPullLeverStatusRuntime("V3 complete: checking Temple lever before Ancient One")
 		else
