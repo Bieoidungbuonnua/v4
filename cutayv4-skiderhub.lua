@@ -3602,7 +3602,6 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
-    if not ghoulFight and blacklist and not table.find(blacklist, target.Name) then table.insert(blacklist, target.Name) end
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
     repeat
         task.wait(0.1)
@@ -3610,13 +3609,14 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not character or not humanoid or not root or humanoid.Health <= 0 then break end
-        if ghoulFight then
-            if lastHealth and humanoid.Health < lastHealth then lastDamage = tick() end
-            lastHealth = humanoid.Health
-            local blocked = character:FindFirstChildOfClass("ForceField") or (localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
-            blockedSince = blocked and tick() - (lastDamage or started) >= 10 and (blockedSince or tick()) or nil
+        if lastHealth and humanoid.Health < lastHealth then lastDamage = tick() end
+        lastHealth = humanoid.Health
+        local blocked = character:FindFirstChildOfClass("ForceField") or (localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
+        blockedSince = blocked and tick() - (lastDamage or started) >= 10 and (blockedSince or tick()) or nil
+        if tick() - getgenv().RaceUpgradeLogState.At >= 8 then
+            SetRaceUpgradeStatus(label .. ": " .. (localPlayer:DistanceFromCharacter(root.Position) < 50 and "attacking " or "chasing ") .. target.Name .. " | HP " .. math.ceil(humanoid.Health))
         end
-        if ghoulFight and blockedSince and tick() - blockedSince >= 5 then
+        if blockedSince and tick() - blockedSince >= 5 then
             SetRaceUpgradeStatus(label .. ": skip protected/unattackable " .. target.Name)
             break
         end
@@ -3641,6 +3641,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             ToTarget(goal, false, true) -- Real tween to the player; no 50-stud CFrame snap.
             if (myRoot.Position - root.Position).Magnitude < 50 then lastDamage = lastDamage or tick(); GhoulV3UseSkill(root) end
         elseif localPlayer:DistanceFromCharacter(root.Position) < 50 then
+            lastDamage = lastDamage or tick()
             getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
             local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
             if myRoot then
@@ -3653,16 +3654,14 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         else
             ToTarget(root.CFrame * CFrame.new(0, 0, 3))
         end
-    until tick() - (ghoulFight and lastDamage or started) >= (ghoulFight and 90 or 70)
+    until tick() - (lastDamage or started) >= 90
         or not Settings["Auto Upgrade Race V2-V3"]
         or not target.Parent
         or not target.Character
-        or (not ghoulFight and CheckSafezone(target.Character))
-        or (not ghoulFight and CheckPlayercantAttack(target.Character))
 
     local character = target.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if ((humanoid and humanoid.Health <= 0) or (ghoulFight and humanoid and (tick() - (lastDamage or started) >= 90 or (blockedSince and tick() - blockedSince >= 5))))
+    if ((humanoid and humanoid.Health <= 0) or (humanoid and (tick() - (lastDamage or started) >= 90 or (blockedSince and tick() - blockedSince >= 5))))
         and blacklist and not table.find(blacklist, target.Name) then
         table.insert(blacklist, target.Name)
     end
@@ -9646,12 +9645,6 @@ end)
     local function paintStatus(value)
         statusColor = colorForStatus(value)
         if StatusDot then StatusDot.BackgroundColor3 = statusColor end
-        if IslandStroke then
-            TweenService:Create(IslandStroke, TweenInfo.new(0.25), {
-                Color = statusColor,
-                Transparency = 0.18,
-            }):Play()
-        end
         if CompactStatus then
             CompactStatus.Text = tostring(value or "")
             CompactStatus.TextColor3 = statusColor
@@ -9659,6 +9652,14 @@ end)
         if StatusLabel then
             StatusLabel.Text = (_CUTTAY_MODE and "Status Farming : " or "") .. tostring(value or "")
             StatusLabel.TextColor3 = statusColor
+        end
+        if IslandStroke then
+            pcall(function()
+                TweenService:Create(IslandStroke, TweenInfo.new(0.25), {
+                    Color = statusColor,
+                    Transparency = 0.18,
+                }):Play()
+            end)
         end
     end
 
@@ -9964,6 +9965,8 @@ end)
 		if _CUTTAY_MODE and not isHopFM and getgenv().CuttayV4Status then
 			currentStatus = tostring(getgenv().CuttayV4Status)
 		end
+        getgenv().JoinV4RuntimeStatus = currentStatus
+        paintStatus(currentStatus)
 
         local roleText, roleColor
         if _CUTTAY_MODE then
@@ -10015,7 +10018,6 @@ end)
             MoonLabel.TextColor3 = C_MUTED
         end
 
-        paintStatus(currentStatus)
     end
 
     -- BOOT
