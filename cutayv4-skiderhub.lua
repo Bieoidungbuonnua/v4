@@ -3656,7 +3656,8 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
-    local dodgeSide, dodgeAt, dash = 1, tick(), { At = -math.huge, Slow = false }
+    local orbitIndex, orbitAt, dash = 1, tick(), { At = -math.huge, Slow = false }
+    local orbitOffsets = { Vector3.new(6, 3, 0), Vector3.new(0, 3, -6), Vector3.new(-6, 3, 0), Vector3.new(0, 3, 6) }
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
     repeat
         task.wait(0.1)
@@ -3708,21 +3709,27 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             end
         end)
 
-        if tick() - dodgeAt >= 0.6 then dodgeSide, dodgeAt = -dodgeSide, tick() end
+        if tick() - orbitAt >= 0.35 then orbitIndex, orbitAt = orbitIndex % 4 + 1, tick() end
         getgenv().GhoulV3AimRoot = root
         UpdateGhoulV3Aim(root)
         local distance = (myRoot.Position - root.Position).Magnitude
-        if distance <= 35 then
+        skillRuntime.Paused = not not blocked
+        if distance <= 45 and not blocked then
             if getgenv().CuttayTweenNoclipActive then TweenManager.CancelCurrent() end
-            myHumanoid:Move(root.CFrame.RightVector * dodgeSide, false)
+            myHumanoid:Move(Vector3.zero, false)
+            local position = root.Position + orbitOffsets[orbitIndex]
+            myRoot.CFrame = CFrame.new(position, root.Position)
+            myRoot.AssemblyLinearVelocity = Vector3.zero
+            myRoot.AssemblyAngularVelocity = Vector3.zero
+            distance = (position - root.Position).Magnitude
         else
             myHumanoid:Move(Vector3.zero, false)
-            local goal = root.CFrame * CFrame.new(0, 0, 12)
+            local goal = root.CFrame * CFrame.new(0, 0, 7)
             ToTarget(CFrame.new(goal.Position, root.Position), false, true)
         end
         if distance < 50 and not blocked then
             lastDamage = lastDamage or tick()
-            RaceV3Dash(localPlayer.Character, dodgeSide, dash)
+            RaceV3Dash(localPlayer.Character, orbitIndex <= 2 and 1 or -1, dash)
             if not skillRuntime.Busy then
                 skillRuntime.Busy = true
                 task.spawn(function()
