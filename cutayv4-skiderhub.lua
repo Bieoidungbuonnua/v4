@@ -9713,12 +9713,11 @@ end)
 
     local function createUI()
         local function resolveGuiParent()
-            if gethui then
-                local ok, result = pcall(gethui)
-                if ok and result then return result end
-            end
-            local playerGui = Player:FindFirstChildOfClass("PlayerGui") or Player:FindFirstChild("PlayerGui")
-            return playerGui or CoreGui
+            -- Keep the status UI accessible to ordinary worker threads.
+            -- gethui/CoreGui descendants can require Plugin capability here.
+            local playerGui = Player:FindFirstChildOfClass("PlayerGui") or Player:WaitForChild("PlayerGui", 5)
+            assert(playerGui, "PlayerGui is not ready for Dynamic Island")
+            return playerGui
         end
 
         -- A re-execute can change the preferred GUI parent (gethui, PlayerGui,
@@ -10036,11 +10035,13 @@ end)
             Player:WaitForChild("DataLoaded", 5)
         end
     end)
-    setStatus("Loaded & Running")
+    local statusOk, statusErr = pcall(setStatus, "Loaded & Running")
+    if not statusOk then warn("[JoinV4] Initial status failed: " .. tostring(statusErr)) end
     task.wait(0.5)
 
     task.spawn(function()
         while joinV4RuntimeAlive() and task.wait(0.4) do
+            if not joinV4RuntimeAlive() then break end
             local ok, err = pcall(updateUI)
             if not ok and tick() - (getgenv().JoinV4UIErrorAt or 0) >= 5 then
                 getgenv().JoinV4UIErrorAt = tick()
