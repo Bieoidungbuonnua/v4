@@ -9545,11 +9545,6 @@ end)
 		end
 	end
 
-    -- STATUS TEXT
-    local function setStatus(txt)
-        currentStatus = tostring(txt or "")
-    end
-
     -- ══════════════════════════════════════════════════════════════════
     -- JOINV4 DYNAMIC ISLAND UI (adapted from dynamic.lua)
     -- Keeps the Dynamic Island expand/collapse, rubber-band and live animations.
@@ -9588,7 +9583,7 @@ end)
     local COMPACT_SIZE  = UDim2.new(0, 286, 0, 40)
     local EXPANDED_SIZE = UDim2.new(0, 390, 0, 210)
 
-    local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel
+    local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel, TitleLabel, MoonCaption
     local CompactRole, CompactStatus, StatusDot, IslandStroke, IslandCorner
     local CompactContent, ExpandedContent
     local isExpanded, isAnimating = false, false
@@ -9666,8 +9661,13 @@ end)
     local function setStatus(txt)
 		-- Helper slot 1 keeps the original JoinV4 HopFM status instead of
 		-- having it hidden by the Cuttay farming status.
-		currentStatus = (_CUTTAY_MODE and not isHopFM)
-			and tostring(getgenv().CuttayV4Status or txt or "") or tostring(txt or "")
+        if _CUTTAY_MODE and not isHopFM then
+            currentStatus = tostring(getgenv().CuttayV4Status or txt or "")
+        elseif not isHopFM and Settings["Auto Upgrade Race V2-V3"] and getgenv().RaceUpgradeStatus then
+            currentStatus = tostring(getgenv().RaceUpgradeStatus)
+        else
+            currentStatus = tostring(txt or "")
+        end
         getgenv().JoinV4RuntimeStatus = currentStatus
         paintStatus(currentStatus)
     end
@@ -9801,12 +9801,12 @@ end)
         round(dot)
         StatusDot = dot
 
-        CompactRole = newLabel(compact, "Role", "JOIN V4", FONT_SF_BOLD, 12)
+        CompactRole = newLabel(compact, "Role", isMain and "MAIN" or "HELPER", FONT_SF_BOLD, 12)
         CompactRole.Size = UDim2.new(0, 105, 1, 0)
         CompactRole.Position = UDim2.new(0, 34, 0, 0)
         CompactRole.ZIndex = 52
 
-        CompactStatus = newLabel(compact, "Status", "Starting...", FONT_SF_SEMI, 12)
+        CompactStatus = newLabel(compact, "Status", currentStatus, FONT_SF_SEMI, 12)
         CompactStatus.Size = UDim2.new(1, -142, 1, 0)
         CompactStatus.Position = UDim2.new(0, 132, 0, 0)
         CompactStatus.TextXAlignment = Enum.TextXAlignment.Right
@@ -9823,6 +9823,7 @@ end)
         ExpandedContent = expanded
 
         local title = newLabel(expanded, "Title", _CUTTAY_MODE and "CUTTAY V4" or "JOIN V4", FONT_SF_BOLD, 18)
+        TitleLabel = title
         title.Size = UDim2.new(0, 130, 0, 26)
         title.Position = UDim2.new(0, 22, 0, 15)
         title.ZIndex = 52
@@ -9853,12 +9854,12 @@ end)
             val.Position = UDim2.new(0, 96, 0, y)
             val.TextXAlignment = Enum.TextXAlignment.Right
             val.ZIndex = 52
-            return val
+            return val, cap
         end
 
         RolePill = makeInfoRow(55, "Role")
         GroupPill = makeInfoRow(84, "Group")
-        MoonLabel = makeInfoRow(113, _CUTTAY_MODE and "Race" or "Moon")
+        MoonLabel, MoonCaption = makeInfoRow(113, _CUTTAY_MODE and "Race" or "Moon")
 
         local statusBox = Instance.new("Frame")
         statusBox.Name = "JoinStatus"
@@ -9962,11 +9963,11 @@ end)
             return
         end
 
-		if _CUTTAY_MODE and not isHopFM and getgenv().CuttayV4Status then
-			currentStatus = tostring(getgenv().CuttayV4Status)
-		end
-        getgenv().JoinV4RuntimeStatus = currentStatus
-        paintStatus(currentStatus)
+        setStatus(currentStatus)
+        if TitleLabel then
+            TitleLabel.Text = _CUTTAY_MODE and "CUTTAY V4"
+                or (not isHopFM and Settings["Auto Upgrade Race V2-V3"] and "RACE V2-V3" or "JOIN V4")
+        end
 
         local roleText, roleColor
         if _CUTTAY_MODE then
@@ -10000,15 +10001,18 @@ end)
         end
 
         local hasFM = isNight() and isFullMoon()
-		if _CUTTAY_MODE and not isHopFM then
+		if not isHopFM and (_CUTTAY_MODE or Settings["Auto Upgrade Race V2-V3"]) then
 			local currentRace = CuttayDisplayRace(Player.Data.Race.Value)
-			local targetRace = tostring(getgenv().CuttayV4TargetRace or currentRace)
+			local targetRace = tostring((_CUTTAY_MODE and getgenv().CuttayV4TargetRace) or currentRace)
+			MoonCaption.Text = "Race"
 			MoonLabel.Text = currentRace == targetRace and currentRace or (currentRace .. " → " .. targetRace)
 			MoonLabel.TextColor3 = C_BLUE
         elseif hasFM then
+            MoonCaption.Text = "Moon"
             MoonLabel.Text = "FULL MOON · ACTIVE"
             MoonLabel.TextColor3 = C_GREEN
         else
+            MoonCaption.Text = "Moon"
             local moonText = ""
             pcall(function()
                 if type(CheckMoon) == "function" then moonText = tostring(CheckMoon()) end
@@ -10033,7 +10037,6 @@ end)
         end
     end)
     setStatus("Loaded & Running")
-    getgenv().JoinV4RuntimeStatus = "Loaded & Running"
     task.wait(0.5)
 
     task.spawn(function()
