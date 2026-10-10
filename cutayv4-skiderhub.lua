@@ -3583,6 +3583,7 @@ function GhoulV3UseSkill(root, runtime)
                 ghoulSkillAt = tick()
                 local ok, err = pcall(function()
                     VirtualInputManager:SendKeyEvent(true, key, false, game)
+                    if runtime then runtime.FirstCastAt = runtime.FirstCastAt or tick() end
                     local hold = Settings["Use skill fast dont hold"] and 0.05
                         or math.clamp(tonumber(Settings["Skill " .. skill.Name .. " " .. category]) or 0.5, 0.05, 2)
                     local untilAt = tick() + hold
@@ -3656,6 +3657,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
+    local combatCharacter, deniedUntil, skipReason, targetDied = target.Character, 0, nil, false
     local orbitIndex, orbitAt, dash = 1, tick(), { At = -math.huge, Slow = false }
     local orbitOffsets = { Vector3.new(6, 3, 0), Vector3.new(0, 3, -6), Vector3.new(-6, 3, 0), Vector3.new(0, 3, 6) }
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
@@ -3664,7 +3666,10 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         local character = target.Character
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
-        if not character or not humanoid or not root or humanoid.Health <= 0 then break end
+        if humanoid and humanoid.Health <= 0 then targetDied, skipReason = true, "dead"; break end
+        if character ~= combatCharacter or not character or not humanoid or not root then
+            skipReason = "respawned/unavailable"; break
+        end
         local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
         local myHumanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
         if not myRoot or not myHumanoid or myHumanoid.Health <= 0 then break end
@@ -3676,6 +3681,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             if not arrived then
                 SetRaceUpgradeStatus(label .. ": " .. (targetInShip and "entering " or "exiting ") .. "Cursed Ship to follow " .. target.Name)
                 started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
+                deniedUntil, skillRuntime.FirstCastAt = 0, nil
                 continue -- Use the portal first; never tween directly across ship interiors.
             end
         end
@@ -3685,20 +3691,26 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             SetRaceUpgradeStatus(label .. ": recovering above " .. target.Name .. " | HP " .. math.floor(myHumanoid.Health / myHumanoid.MaxHealth * 100) .. "%")
             ToTarget(recoveryGoal, false, true)
             started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
+            deniedUntil, skillRuntime.FirstCastAt = 0, nil
             continue
         end
         skillRuntime.Paused = false
-        if lastHealth and humanoid.Health < lastHealth then lastDamage = tick() end
+        local damaged = lastHealth and humanoid.Health < lastHealth
+        if damaged then lastDamage, blockedSince, deniedUntil = tick(), nil, 0 end
         lastHealth = humanoid.Health
-        local blocked = character:FindFirstChildOfClass("ForceField") or (localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
-        blockedSince = blocked and tick() - (lastDamage or started) >= 10 and (blockedSince or tick()) or nil
+        local near = localPlayer:DistanceFromCharacter(root.Position) < 50
+        -- Notifications are consumed once: retain the denial briefly instead of resetting every frame.
+        if near and skillRuntime.FirstCastAt and CheckPlayercantAttack(character) and not damaged then deniedUntil = tick() + 3 end
+        local blocked = character:FindFirstChildOfClass("ForceField") or tick() < deniedUntil
+        blockedSince = blocked and (blockedSince or tick()) or nil
+        if near and skillRuntime.FirstCastAt and not damaged
+            and tick() - (lastDamage or skillRuntime.FirstCastAt) >= 6 and CheckSafezone(character, true) then
+            skipReason = "safe zone (no damage)"; break
+        end
         if tick() - getgenv().RaceUpgradeLogState.At >= 8 then
             SetRaceUpgradeStatus(label .. ": " .. (localPlayer:DistanceFromCharacter(root.Position) < 50 and "attacking " or "chasing ") .. target.Name .. " | HP " .. math.ceil(humanoid.Health))
         end
-        if blockedSince and tick() - blockedSince >= 5 then
-            SetRaceUpgradeStatus(label .. ": skip protected/unattackable " .. target.Name)
-            break
-        end
+        if blockedSince and tick() - blockedSince >= 1.5 then skipReason = "protected/PvP unavailable"; break end
 
         pcall(function()
             local main = localPlayer.PlayerGui:FindFirstChild("Main")
@@ -3746,11 +3758,14 @@ function RunRaceV3PlayerKill(target, label, blacklist)
 
     local character = target.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    if ((humanoid and humanoid.Health <= 0) or (humanoid and (tick() - (lastDamage or started) >= 90 or (blockedSince and tick() - blockedSince >= 5))))
-        and blacklist and not table.find(blacklist, target.Name) then
+    targetDied = targetDied or (humanoid ~= nil and humanoid.Health <= 0)
+    skipReason = skipReason or (targetDied and "dead") or (not character and "unavailable")
+        or (tick() - (lastDamage or started) >= 90 and "no damage timeout")
+    if skipReason then SetRaceUpgradeStatus(label .. ": skip " .. target.Name .. " | " .. skipReason) end
+    if skipReason and blacklist and not table.find(blacklist, target.Name) then
         table.insert(blacklist, target.Name)
     end
-    return humanoid ~= nil and humanoid.Health <= 0
+    return targetDied
     end)
     skillRuntime.Active = false
     pcall(function() localPlayer.Character:FindFirstChildOfClass("Humanoid"):Move(Vector3.zero, false) end)
