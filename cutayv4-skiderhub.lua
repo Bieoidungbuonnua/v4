@@ -3546,23 +3546,31 @@ function GhoulV3UseSkill(root)
         local name = NameWeapon(category)
         local tool = name and (character:FindFirstChild(name) or localPlayer.Backpack:FindFirstChild(name))
         if tool and tool:IsA("Tool") then
-            if not skills:FindFirstChild(name) then ghoulSkillAt = tick(); EquipTool(name, false, true); return end
-            local skill = CheckCDSkill(name, true, Settings["Select Skills " .. category])
-            if skill then
-                ghoulSkillAt = tick()
+            if not skills:FindFirstChild(name) or CheckCDSkill(name, true, Settings["Select Skills " .. category]) then
                 if not character:FindFirstChild(name) then
                     EquipTool(name, false, true)
-                    task.wait(0.15)
+                    task.wait(0.15) -- Let the equipped tool activate before sending input.
+                end
+                for _ = 1, 12 do
+                    if localPlayer.Character ~= character or not root.Parent then return end
+                    if character:FindFirstChild(name) and skills:FindFirstChild(name) then break end
+                    task.wait(0.05)
                 end
                 if localPlayer.Character ~= character or not character:FindFirstChild(name) or not root.Parent then return end
+                local skill = CheckCDSkill(name, true, Settings["Select Skills " .. category])
+                if not skill then continue end
+                local key = Enum.KeyCode[skill.Name]
+                if not key then continue end
                 UpdateGhoulV3Aim(root)
                 ghoulSkillAt = tick()
                 local ok, err = pcall(function()
-                    VirtualInputManager:SendKeyEvent(true, skill.Name, false, game)
-                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(true, key, false, game)
+                    task.wait(0.2)
                 end)
-                VirtualInputManager:SendKeyEvent(false, skill.Name, false, game)
-                if not ok then error(err) end
+                local released, releaseErr = pcall(function()
+                    VirtualInputManager:SendKeyEvent(false, key, false, game)
+                end)
+                if not ok or not released then warn("[Race V3 Skill] " .. name .. ": " .. tostring(not ok and err or releaseErr)) end
                 return
             end
         end
@@ -6220,8 +6228,9 @@ function CheckCDSkill(skillName, combatOnly, selectedSkills)
 					and (not combatOnly or not string.find(value7.Title.Text, "Transformation"))
 					and (not selectedSkills or selectedSkills[value7.Name])
 					and value7:FindFirstChild("Cooldown")
-					and (value7.Cooldown.Size == UDim2.new(0, 0, 1, -1)
-					or value7.Cooldown.Size == UDim2.new(1, 0, 1, -1))
+					and ((combatOnly and math.abs(value7.Cooldown.Size.X.Scale) <= 0.001 and math.abs(value7.Cooldown.Size.X.Offset) <= 1)
+                    or (not combatOnly and (value7.Cooldown.Size == UDim2.new(0, 0, 1, -1)
+                        or value7.Cooldown.Size == UDim2.new(1, 0, 1, -1))))
 			then
 				return value7
 			end
