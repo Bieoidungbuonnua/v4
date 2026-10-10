@@ -886,7 +886,7 @@ function TweenManager.LowHealthGoal(goal)
     if humanoid and humanoid.MaxHealth > 0 then
         local health = humanoid.Health / humanoid.MaxHealth
         if health < 0.3 then TweenManager.lowHealthRetreat = true
-        elseif health > 0.8 then TweenManager.lowHealthRetreat = false end
+        elseif health >= 0.65 then TweenManager.lowHealthRetreat = false end
     end
     if TweenManager.lowHealthRetreat then return goal + Vector3.new(0, 500, 0), true end
     return goal, false
@@ -3542,7 +3542,7 @@ end
 do
 local skillMouse
 pcall(function() skillMouse = require(ReplicatedStorage.Mouse) end)
-local ghoulWeapons, ghoulWeaponIndex = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0
+local ghoulWeapons, ghoulWeaponIndex, ghoulSkillAt = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0, -math.huge
 function UpdateGhoulV3Aim(root)
     if not root or not root.Parent then return end
     local lead = root.AssemblyLinearVelocity * 0.12
@@ -3554,6 +3554,7 @@ function UpdateGhoulV3Aim(root)
     return aim
 end
 function GhoulV3UseSkill(root)
+    if tick() - ghoulSkillAt < 0.5 then return end
     local character = localPlayer.Character
     local main = localPlayer.PlayerGui:FindFirstChild("Main")
     local skills = main and main:FindFirstChild("Skills")
@@ -3580,6 +3581,7 @@ function GhoulV3UseSkill(root)
                 local key = Enum.KeyCode[skill.Name]
                 if not key then continue end
                 UpdateGhoulV3Aim(root)
+                ghoulSkillAt = tick()
                 local ok, err = pcall(function()
                     VirtualInputManager:SendKeyEvent(true, key, false, game)
                     task.wait(0.05)
@@ -3622,14 +3624,35 @@ if not getgenv().SkiderGhoulSkillAimHook then
 end
 end
 
+function RaceV3Dash(character, side, state)
+    local energy = character:FindFirstChild("Energy")
+    local maximum = energy and energy:FindFirstChild("MaxValue")
+    local maxValue = energy and tonumber(maximum and maximum.Value or energy:GetAttribute("MaxValue"))
+    local value = energy and tonumber(energy.Value)
+    if not value or not maxValue or maxValue <= 0 then return end
+    local ratio = value / maxValue
+    if ratio < 0.5 then state.Slow = true
+    elseif ratio >= 0.7 then state.Slow = false end
+    if value <= 0 or tick() - state.At < (state.Slow and 3 or 0.25) then return end
+    state.At = tick()
+    local direction = side > 0 and Enum.KeyCode.D or Enum.KeyCode.A
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, direction, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game)
+        task.wait(0.03)
+    end)
+    pcall(function() VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game) end)
+    pcall(function() VirtualInputManager:SendKeyEvent(false, direction, false, game) end)
+end
+
 function RunRaceV3PlayerKill(target, label, blacklist)
     if not target or target == localPlayer then return false end
-    local ghoulFight = label == "Ghoul V3"
     local previousSuppression = getgenv().GhoulV3NoAutoClick
     getgenv().GhoulV3NoAutoClick = true -- Skill-only player combat for both Ghoul and Skypiea V3.
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
+    local dodgeSide, dodgeAt, dash = 1, tick(), { At = -math.huge, Slow = false }
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
     repeat
         task.wait(0.1)
@@ -3678,28 +3701,15 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             end
         end)
 
-        if ghoulFight then
-            getgenv().GhoulV3AimRoot = root
-            UpdateGhoulV3Aim(root)
-            local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-            local myHumanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if not myRoot or not myHumanoid or myHumanoid.Health <= 0 then break end
-            local goal = root.CFrame * CFrame.new(0, 0, 3)
-            goal = CFrame.new(goal.Position, root.Position)
-            ToTarget(goal, false, true) -- Real tween to the player; no 50-stud CFrame snap.
-            if (myRoot.Position - root.Position).Magnitude < 50 then lastDamage = lastDamage or tick(); GhoulV3UseSkill(root) end
-        elseif localPlayer:DistanceFromCharacter(root.Position) < 50 then
+        if tick() - dodgeAt >= 0.6 then dodgeSide, dodgeAt = -dodgeSide, tick() end
+        getgenv().GhoulV3AimRoot = root
+        UpdateGhoulV3Aim(root)
+        local goal = root.CFrame * CFrame.new(dodgeSide * 10, 3, 12)
+        ToTarget(CFrame.new(goal.Position, root.Position), false, true)
+        if (myRoot.Position - root.Position).Magnitude < 50 and not blocked then
             lastDamage = lastDamage or tick()
-            getgenv().AimPos = CFrame.new(root.Position, root.Position + root.AssemblyLinearVelocity / 1.2)
-            local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if myRoot then
-                TweenManager.CancelTweenOnly()
-                myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 3)
-            end
-            -- BNN's ready-skill/equip flow; reuse the existing weapon worker.
+            RaceV3Dash(localPlayer.Character, dodgeSide, dash)
             GhoulV3UseSkill(root)
-        else
-            ToTarget(root.CFrame * CFrame.new(0, 0, 3))
         end
     until tick() - (lastDamage or started) >= 90
         or not Settings["Auto Upgrade Race V2-V3"]
