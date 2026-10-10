@@ -4,9 +4,11 @@ end
 
 Settings = {}
 HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 FolderName = "Banana Cat Hub"
 SaveFileNameGame = "-BloxFruitBNNC.json"
-SaveFileName = game.Players.LocalPlayer.Name .. SaveFileNameGame
+SaveFileName = LocalPlayer.Name .. SaveFileNameGame
 function SaveSettings(b, t, A)
 	if A ~= nil then
 		Settings[b] = Settings[b] or {}
@@ -3777,169 +3779,297 @@ function NameWeapon(g, G)
 	end
 	return m(t.Backpack) or (m(t.Character))
 end
-local g, G, m, E =
-	require(game:GetService("ReplicatedStorage").Mouse),
-	require(game:GetService("ReplicatedStorage").Modules.CombatUtil),
-	require(game:GetService("ReplicatedStorage").Modules.Net),
-	game:GetService("ReplicatedStorage").Modules.Net:WaitForChild("RE/RegisterAttack")
-local l = m:RemoteEvent("RegisterHit", true)
-local function m(Q, d, I)
-	local _ = {}
-	for o, o in pairs(Q:GetChildren()) do
-		if o:IsA("BasePart") and (o.Position - d).Magnitude <= I then
-			table.insert(_, o)
-		end
-	end
-	return _
+-- [3TN] Fast Attack transplanted/adapted for BNN's existing AttackFunction API.
+-- Keeps the rest of BNN farm logic unchanged: existing callers still use AttackFunction(distance).
+local g = require(game:GetService("ReplicatedStorage").Mouse)
+local _FA_Players = game:GetService("Players")
+local _FA_RunService = game:GetService("RunService")
+local _FA_ReplicatedStorage = game:GetService("ReplicatedStorage")
+local _FA_Workspace = game:GetService("Workspace")
+local _FA_VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- Skull Guitar M1 fix: send a real client mouse click first so the game's
+-- normal gun input path can register the shot. Remote TAP is only a fallback.
+local function _FA_ClickM1()
+	_FA_VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+	task.wait(0.035)
+	_FA_VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
 end
-local function Q(d)
-	local I = {}
-	for _, _ in pairs(game:GetService("Workspace"):WaitForChild("Enemies"):GetChildren()) do
-		table.insert(I, _)
-	end
-	if d then
-		for d, d in pairs(game:GetService("Workspace"):WaitForChild("Characters"):GetChildren()) do
-			table.insert(I, d)
+local _FA_Player = _FA_Players.LocalPlayer
+local _FA_Modules = _FA_ReplicatedStorage:WaitForChild("Modules")
+local _FA_Net = _FA_Modules:WaitForChild("Net")
+local _FA_RegisterAttack = _FA_Net:WaitForChild("RE/RegisterAttack")
+local _FA_RegisterHit = _FA_Net:WaitForChild("RE/RegisterHit")
+local _FA_ShootGunEvent = _FA_Net:WaitForChild("RE/ShootGunEvent")
+local _FA_GunValidator = _FA_ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Validator2")
+
+local _FA_AttackConfig = {
+	AttackDistance = 65,
+	AttackMobs = true,
+	AttackPlayers = false,
+	AttackCooldown = 0.05,
+	ComboResetTime = 0.05,
+	MaxCombo = 2,
+	HitboxLimbs = { "RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm", "RightHand", "LeftHand" },
+	AutoClickEnabled = true,
+}
+
+local _FA_FastAttack = {}
+_FA_FastAttack.__index = _FA_FastAttack
+
+function _FA_FastAttack.new()
+	local self = setmetatable({
+		Debounce = 0,
+		ComboDebounce = 0,
+		ShootDebounce = 0,
+		M1Combo = 0,
+		EnemyRootPart = nil,
+		Connections = {},
+		Overheat = { Dragonstorm = { MaxOverheat = 3, Cooldown = 0, TotalOverheat = 0, Distance = 350, Shooting = false } },
+		ShootsPerTarget = { ["Dual Flintlock"] = 2 },
+		SpecialShoots = { ["Skull Guitar"] = "TAP", Bazooka = "Position", Cannon = "Position", Dragonstorm = "Overheat" },
+		ActiveUntil = 0,
+	}, _FA_FastAttack)
+	pcall(function()
+		self.CombatFlags = require(_FA_Modules.Flags).COMBAT_REMOTE_THREAD
+		self.ShootFunction = debug.getupvalues(require(_FA_ReplicatedStorage.Controllers.CombatController).Attack)[9]
+		local LocalScript = _FA_Player:WaitForChild("PlayerScripts"):FindFirstChildOfClass("LocalScript")
+		if LocalScript and getsenv then
+			self.HitFunction = getsenv(LocalScript)._G.SendHitsToServer
 		end
-	end
-	return I
+	end)
+	return self
 end
-getgenv().getBladeHits = function(d, I, _, o)
-	local V = {}
-	for N, y in pairs(Q(o)) do
-		if y:IsDescendantOf(Workspace) and y ~= d and (y:FindFirstChild("HumanoidRootPart")) then
-			local Q, d = y.HumanoidRootPart, S:GetPlayerFromCharacter(y) and _ / 1.5 or _
-			N = { Q.Position }
-			if Q.Size.Y > 5 then
-				table.insert(N, (Q.CFrame * CFrame.new(0, -Q.Size.Y * 1.5 + 3, 0)).Position)
-			end
-			for _, _ in pairs(N) do
-				if (_ - I[1].Position).Magnitude < 10 + d + Q.Size.X / 2 then
-					for _, _ in pairs(m(y, I[1].Position, d + Q.Size.X / 2)) do
-						table.insert(V, _)
+
+function _FA_FastAttack:IsEntityAlive(entity)
+	local humanoid = entity and entity:FindFirstChild("Humanoid")
+	return humanoid and humanoid.Health > 0
+end
+
+function _FA_FastAttack:CheckStun(Character, Humanoid, ToolTip)
+	local Stun = Character:FindFirstChild("Stun")
+	local Busy = Character:FindFirstChild("Busy")
+	if Humanoid.Sit and (ToolTip == "Sword" or ToolTip == "Melee" or ToolTip == "Blox Fruit") then
+		return false
+	elseif (Stun and Stun.Value > 0) or (Busy and Busy.Value) then
+		return false
+	end
+	return true
+end
+
+function _FA_FastAttack:GetBladeHits(Character, Distance, IncludePlayers)
+	local Position = Character:GetPivot().Position
+	local BladeHits = {}
+	Distance = Distance or _FA_AttackConfig.AttackDistance
+	self.EnemyRootPart = nil
+
+	local function ProcessTargets(Folder)
+		for _, Enemy in ipairs(Folder:GetChildren()) do
+			pcall(function()
+				if Enemy ~= Character and self:IsEntityAlive(Enemy) then
+					local BasePart = Enemy:FindFirstChild(_FA_AttackConfig.HitboxLimbs[math.random(#_FA_AttackConfig.HitboxLimbs)])
+						or Enemy:FindFirstChild("HumanoidRootPart")
+					if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
+						if not self.EnemyRootPart then
+							self.EnemyRootPart = BasePart
+						else
+							table.insert(BladeHits, { Enemy, BasePart })
+						end
 					end
-					break
+				end
+			end)
+		end
+	end
+
+	if _FA_AttackConfig.AttackMobs then
+		pcall(ProcessTargets, _FA_Workspace:WaitForChild("Enemies"))
+	end
+	if IncludePlayers or _FA_AttackConfig.AttackPlayers then
+		pcall(ProcessTargets, _FA_Workspace:WaitForChild("Characters"))
+	end
+	return BladeHits
+end
+
+function _FA_FastAttack:GetClosestEnemy(Character, Distance)
+	self:GetBladeHits(Character, Distance, false)
+	return self.EnemyRootPart
+end
+
+function _FA_FastAttack:GetCombo()
+	local Combo = (tick() - self.ComboDebounce) <= _FA_AttackConfig.ComboResetTime and self.M1Combo or 0
+	Combo = Combo >= _FA_AttackConfig.MaxCombo and 1 or Combo + 1
+	self.ComboDebounce = tick()
+	self.M1Combo = Combo
+	return Combo
+end
+
+function _FA_FastAttack:GetValidator2()
+	if not self.ShootFunction then
+		return nil
+	end
+	local v1 = debug.getupvalue(self.ShootFunction, 15)
+	local v2 = debug.getupvalue(self.ShootFunction, 13)
+	local v3 = debug.getupvalue(self.ShootFunction, 16)
+	local v4 = debug.getupvalue(self.ShootFunction, 17)
+	local v5 = debug.getupvalue(self.ShootFunction, 14)
+	local v6 = debug.getupvalue(self.ShootFunction, 12)
+	local v7 = debug.getupvalue(self.ShootFunction, 18)
+	if not (v1 and v2 and v3 and v4 and v5 and v6 and v7) then
+		return nil
+	end
+	local v8 = v6 * v2
+	local v9 = (v5 * v2 + v6 * v1) % v3
+	v9 = (v9 * v3 + v8) % v4
+	v5 = math.floor(v9 / v3)
+	v6 = v9 - v5 * v3
+	v7 = v7 + 1
+	debug.setupvalue(self.ShootFunction, 15, v1)
+	debug.setupvalue(self.ShootFunction, 13, v2)
+	debug.setupvalue(self.ShootFunction, 16, v3)
+	debug.setupvalue(self.ShootFunction, 17, v4)
+	debug.setupvalue(self.ShootFunction, 14, v5)
+	debug.setupvalue(self.ShootFunction, 12, v6)
+	debug.setupvalue(self.ShootFunction, 18, v7)
+	return math.floor(v9 / v4 * 16777215), v7
+end
+
+function _FA_FastAttack:ShootInTarget(TargetPosition)
+	local Character = _FA_Player.Character
+	if not self:IsEntityAlive(Character) then return end
+	local Equipped = Character:FindFirstChildOfClass("Tool")
+	if not Equipped or Equipped.ToolTip ~= "Gun" then return end
+	local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or 0.3
+	if (tick() - self.ShootDebounce) < Cooldown then return end
+	local ShootType = self.SpecialShoots[Equipped.Name] or "Normal"
+
+	-- Skull Guitar needs a normal M1 input on some clients/executors.
+	-- Try the real click path first; only use TAP remote if the click did not
+	-- advance LocalTotalShots, avoiding an accidental double shot.
+	if Equipped.Name == "Skull Guitar" then
+		local BeforeShots = Equipped:GetAttribute("LocalTotalShots") or 0
+		_FA_ClickM1()
+		task.wait(0.025)
+		local AfterShots = Equipped:GetAttribute("LocalTotalShots") or 0
+
+		if AfterShots <= BeforeShots and Equipped:FindFirstChild("RemoteEvent") then
+			Equipped:SetAttribute("LocalTotalShots", BeforeShots + 1)
+			local Validator, Counter = self:GetValidator2()
+			if Validator and Counter then
+				_FA_GunValidator:FireServer(Validator, Counter)
+			end
+			Equipped.RemoteEvent:FireServer("TAP", TargetPosition)
+		end
+
+		self.ShootDebounce = tick()
+		return
+	end
+
+	if ShootType == "Position" or (ShootType == "TAP" and Equipped:FindFirstChild("RemoteEvent")) then
+		Equipped:SetAttribute("LocalTotalShots", (Equipped:GetAttribute("LocalTotalShots") or 0) + 1)
+		local Validator, Counter = self:GetValidator2()
+		if Validator and Counter then
+			_FA_GunValidator:FireServer(Validator, Counter)
+		end
+		if ShootType == "TAP" then
+			Equipped.RemoteEvent:FireServer("TAP", TargetPosition)
+		else
+			_FA_ShootGunEvent:FireServer(TargetPosition)
+		end
+		self.ShootDebounce = tick()
+	else
+		_FA_ClickM1()
+		self.ShootDebounce = tick()
+	end
+end
+
+function _FA_FastAttack:UseNormalClick(Character, Humanoid, Cooldown)
+	local BladeHits = self:GetBladeHits(Character, _FA_AttackConfig.AttackDistance, _FA_AttackConfig.AttackPlayers)
+	if self.EnemyRootPart then
+		_FA_RegisterAttack:FireServer(Cooldown)
+		if self.CombatFlags and self.HitFunction then
+			self.HitFunction(self.EnemyRootPart, BladeHits)
+		else
+			_FA_RegisterHit:FireServer(self.EnemyRootPart, BladeHits)
+		end
+	end
+end
+
+function _FA_FastAttack:UseFruitM1(Character, Equipped, Combo)
+	local BladeHits = self:GetBladeHits(Character, _FA_AttackConfig.AttackDistance, _FA_AttackConfig.AttackPlayers)
+	local Target = self.EnemyRootPart or (BladeHits[1] and BladeHits[1][2])
+	if not Target then return end
+	local Delta = Target.Position - Character:GetPivot().Position
+	if Delta.Magnitude <= 0 then return end
+	Equipped.LeftClickRemote:FireServer(Delta.Unit, Combo)
+end
+
+function _FA_FastAttack:Attack()
+	if not _FA_AttackConfig.AutoClickEnabled or tick() > self.ActiveUntil then return end
+	if (tick() - self.Debounce) < _FA_AttackConfig.AttackCooldown then return end
+	local Character = _FA_Player.Character
+	if not Character or not self:IsEntityAlive(Character) then return end
+	local Humanoid = Character:FindFirstChild("Humanoid")
+	local Equipped = Character:FindFirstChildOfClass("Tool")
+	if not Humanoid or not Equipped then return end
+	local ToolTip = Equipped.ToolTip
+	if not table.find({ "Melee", "Blox Fruit", "Sword", "Gun" }, ToolTip) then return end
+	local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or _FA_AttackConfig.AttackCooldown
+	if not self:CheckStun(Character, Humanoid, ToolTip) then return end
+	local Combo = self:GetCombo()
+	Cooldown = Cooldown + (Combo >= _FA_AttackConfig.MaxCombo and 0.05 or 0)
+	self.Debounce = Combo >= _FA_AttackConfig.MaxCombo and ToolTip ~= "Gun" and (tick() + 0.05) or tick()
+	if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
+		self:UseFruitM1(Character, Equipped, Combo)
+	elseif ToolTip == "Gun" then
+		local Target = self:GetClosestEnemy(Character, math.max(120, _FA_AttackConfig.AttackDistance))
+		if Target then self:ShootInTarget(Target.Position) end
+	else
+		self:UseNormalClick(Character, Humanoid, Cooldown)
+	end
+end
+
+local _FA_AttackInstance = _FA_FastAttack.new()
+getgenv().BNN3TNFastAttack = _FA_AttackInstance
+
+table.insert(_FA_AttackInstance.Connections, _FA_RunService.Stepped:Connect(function()
+	pcall(function()
+		_FA_AttackInstance:Attack()
+	end)
+end))
+
+-- Compatibility helper used by BNN's Auto Click / aura code.
+function AttackAOE(Distance, IncludePlayers)
+	local Character = _FA_Player.Character
+	if not Character or not _FA_AttackInstance:IsEntityAlive(Character) then return nil end
+	local Result = {}
+	local Position = Character:GetPivot().Position
+	local function Collect(Folder)
+		for _, Enemy in ipairs(Folder:GetChildren()) do
+			if Enemy ~= Character and _FA_AttackInstance:IsEntityAlive(Enemy) then
+				local Part = Enemy:FindFirstChild("HumanoidRootPart") or Enemy:FindFirstChild("Head")
+				if Part and (Position - Part.Position).Magnitude <= (Distance or 65) then
+					table.insert(Result, { Enemy, Part })
 				end
 			end
 		end
 	end
-	return V
+	pcall(Collect, _FA_Workspace:WaitForChild("Enemies"))
+	if IncludePlayers then pcall(Collect, _FA_Workspace:WaitForChild("Characters")) end
+	return #Result > 0 and Result or nil
 end
-local m = {
-	RightUpperArm = true,
-	RightLowerArm = true,
-	RightHand = true,
-	RightUpperLeg = true,
-	RightLowerLeg = true,
-	RightFoot = true,
-	LeftUpperArm = true,
-	LeftLowerArm = true,
-	LeftHand = true,
-	LeftUpperLeg = true,
-	LeftLowerLeg = true,
-	LeftFoot = true,
-	UpperTorso = true,
-	LowerTorso = true,
-	Head = true,
-}
-function AttackAOE(Q, d)
-	local I, _, o, V, N = {}, {}, getgenv().getBladeHits, t.Character, { t.Character.HumanoidRootPart }
-	for y, P in o(V, N, Q or 80, d) do
-		y = G:GetRigOfHitPart(P)
-		if y and not _[y] and m[P.Name] and (G:IsVulnerable(y)) then
-			local m, Q = y:FindFirstChild("Summoner"), t.Character:FindFirstChild("Summoner")
-			if
-				y ~= t.Character
-				and (not Q or y ~= Q.Value.Character)
-				and (
-					not S:GetPlayerFromCharacter(t.Character)
-					or not m
-					or m.Value ~= S:GetPlayerFromCharacter(t.Character)
-				)
-			then
-				table.insert(I, { y, P })
-				_[y] = true
-			end
-		end
-	end
-	return #I > 0 and I or nil
+
+AttackFunction = function(Distance)
+	_FA_AttackConfig.AttackDistance = tonumber(Distance) or 65
+	_FA_AttackConfig.AttackPlayers = false
+	_FA_AttackInstance.ActiveUntil = tick() + 0.15
+	pcall(function() _FA_AttackInstance:Attack() end)
 end
-v_u_27 = 0
-v_u_28 = false
-v_u_33 = false
-v_u_31 = nil
-v_u_32 = 0
-v_u_21 = 0
-v_u_16 = 1
-CameraShakerMain = require(game:GetService("ReplicatedStorage").Util.CameraShaker.Main)
-CameraShaker = require(game:GetService("ReplicatedStorage").Util.CameraShaker)
-function attackMelee(m)
-	local Q = game.Players.LocalPlayer.Character:FindFirstChildOfClass("Tool")
-	if not Q then
-		return
-	end
-	local d = AttackAOE(m, false)
-	if not d then
-		return
-	end
-	m = game.Players.LocalPlayer.Character.Humanoid
-	local I = m and m.RootPart
-	I = I and I.Parent
-	local _ = G:GetMovesetAnimCache(m)
-	if _ then
-		m = G:GetWeaponName(Q)
-		local Q = G:GetWeaponData(m)
-		local o, V = Q.WeaponType, Q.Moveset
-		if G:CanAttack(I, o) then
-			v_u_33 = true
-			v_u_32 = 5
-			v_u_21 = os.clock()
-			v_u_27 += 1
-			if v_u_27 > #V.Basic then
-				v_u_27 = 1
-			end
-			Q = _[G:GetPureWeaponName(m) .. "-basic" .. v_u_27]
-			E:FireServer(Q.Length / (Q:GetAttribute("SpeedMult") or 1))
-			l:FireServer(table.remove(d, 1)[2], d)
-			Q:Play(0.100000001, 1, 1 * (Q:GetAttribute("SpeedMult") or 1))
-			v_u_28 = true
-			task.delay(Q.Length / (Q:GetAttribute("SpeedMult") or 1) * v_u_16, function()
-				v_u_28 = false
-			end)
-			v_u_31 = Q
-			table.clear(d)
-		end
-	end
-end
-AttackFunction = function(G)
-	-- FIX: removed invalid LPH/VM obfuscator marker that is nil at runtime
-	if t.Character.Stun.Value ~= 0 then
-		return
-	end
-	if not Settings["Attack No Animation "] then
-		attackMelee(G)
-	else
-		local m = AttackAOE(G, false)
-		if not m then
-			return
-		end
-		E:FireServer(0)
-		l:FireServer(table.remove(m, 1)[2], m)
-		table.clear(m)
-	end
-end
+
 getgenv().AttackFunctionnhungSuperTrial = function()
-	-- FIX: removed invalid LPH/VM obfuscator marker that is nil at runtime
-	if t.Character.Stun.Value ~= 0 then
-		return
-	end
-	local G = AttackAOE(80, true)
-	if not G then
-		return
-	end
-	E:FireServer(0)
-	l:FireServer(table.remove(G, 1)[2], G)
-	table.clear(G)
+	_FA_AttackConfig.AttackDistance = 80
+	_FA_AttackConfig.AttackPlayers = true
+	_FA_AttackInstance.ActiveUntil = tick() + 0.15
+	pcall(function() _FA_AttackInstance:Attack() end)
 end
 getgenv().AttackFunctionnhungSuper = getgenv().AttackFunctionnhungSuperTrial
 local G = require(game:GetService("ReplicatedStorage").Mouse)
@@ -4136,11 +4266,21 @@ function ShootM1(E)
 end
 getgenv().SpamGunSkullGuitar = function(E)
 	local l, Q = require(m.CombatUtil), t.Character
-	local m = Q and (Q:FindFirstChild("Skull Guitar"))
-	if not m or (l:IsGunReloading(m)) then
+	local Gun = Q and Q:FindFirstChild("Skull Guitar")
+	if not Gun or (l:IsGunReloading(Gun)) then
 		return
 	end
-	m.RemoteEvent:FireServer("TAP", E.Position)
+
+	-- Let the normal client M1 handler fire Skull Guitar first.
+	local BeforeShots = Gun:GetAttribute("LocalTotalShots") or 0
+	_FA_ClickM1()
+	task.wait(0.025)
+	local AfterShots = Gun:GetAttribute("LocalTotalShots") or 0
+
+	-- Fallback for executors/clients where virtual mouse input is not consumed.
+	if AfterShots <= BeforeShots and Gun:FindFirstChild("RemoteEvent") then
+		Gun.RemoteEvent:FireServer("TAP", E.Position)
+	end
 end
 local function m(E, l)
 	local Q, d, I, _, o, V, N =
@@ -4301,80 +4441,83 @@ function isnetworkowner2(Q)
 	return true
 end
 function BringMob(Q)
-	if not Settings["Bring Mob"] then
+	-- [3TN] CombatController.Grab logic adapted to BNN's existing BringMob(Q) API.
+	if not Settings["Bring Mob"] or not Q or not Q.Parent then
 		return
 	end
-	if Q and E ~= Q then
-		E = Q
-		l = DetectPartMobBring(Q.Name, Q, true).CFrame
-		local d = game:GetService("Players").LocalPlayer.Data.Race.Value == "Cyborg"
-			and (t.Character:FindFirstChild("RaceTransformed"))
-			and t.Character.RaceTransformed.Value
-		if d then
-			l = getcenter(Q.Name)
-		end
-		DeleteIgnoredMob()
-	end
-	if DaBringMob then
-		delay(0.1, function()
-			getgenv().DaBringMob = false
-		end)
+	if not Q:FindFirstChild("Humanoid") or Q.Humanoid.Health <= 0 or not Q:FindFirstChild("HumanoidRootPart") then
 		return
 	end
-	local d = {}
-	if not Q:FindFirstChild("Ignored") then
-		table.insert(d, Q)
+	if getgenv().DaBringMob then
+		return
 	end
-	local I = Settings["Bring Mob Count"] or 2
-	local _, o = if I > 2 then 350 else 200
-	if
-		game:GetService("Players").LocalPlayer.Data.Race.Value == "Cyborg"
-		and (t.Character:FindFirstChild("RaceTransformed"))
-		and t.Character.RaceTransformed.Value
-	then
-		_, o = 300, 6
-	else
-		o = I
-	end
-	for I, I in pairs(workspace.Enemies:GetChildren()) do
-		if
-			I ~= Q
-			and I.Name == Q.Name
-			and not I:FindFirstChild("Ignored")
-			and (IsMobAlive(I))
-			and (isnetworkowner2(I.HumanoidRootPart))
-		then
-			if (I.HumanoidRootPart.Position - l.Position).Magnitude <= _ and #d < o then
-				table.insert(d, I)
-			end
-		end
-	end
-	if
-		l
-		and (t.Character.HumanoidRootPart.Position - Q.HumanoidRootPart.Position).Magnitude <= 50
-		and (isnetworkowner2(t.Character.HumanoidRootPart))
-		and #d >= 2
-	then
-		for Q, Q in pairs(d) do
-			sizepart(Q)
-			if not isnetworkowner2(Q.HumanoidRootPart) then
-				Q.HumanoidRootPart.CFrame = Q.WorldPivot
-				Instance.new("IntValue", Q).Name = "Ignored"
-				task.wait(0.3)
+	getgenv().DaBringMob = true
+	task.delay(0.1, function()
+		getgenv().DaBringMob = false
+	end)
+
+	pcall(sethiddenproperty, game.Players.LocalPlayer, "SimulationRadius", math.huge)
+	local GrabDistance = game.PlaceId == getgenv().CheckPlaceId3 and 250 or 350
+	local MidPoint, Count = Vector3.zero, 0
+	local ForcePosition = nil
+	local MobsTable = {}
+
+	for _, Mon in ipairs(workspace.Enemies:GetChildren()) do
+		if Mon.Name == Q.Name and Mon:FindFirstChild("Humanoid") and Mon.Humanoid.Health > 0 and Mon:FindFirstChild("HumanoidRootPart") then
+			local MonPosition = Mon.HumanoidRootPart.Position
+			local Owned = false
+			if isnetworkowner then
+				local ok, result = pcall(isnetworkowner, Mon.PrimaryPart or Mon.HumanoidRootPart)
+				Owned = ok and result or false
 			else
-				Q.HumanoidRootPart.CFrame = l * CFrame.new(0, math.random(0, 2), math.random(0, 2))
-				task.spawn(function()
-					local d = Q.Humanoid.Health
-					task.wait(2.2)
-					if Q.Humanoid.Health == d and not Q:FindFirstChild("Ignored") then
-						Q.HumanoidRootPart.CFrame = Q.WorldPivot
-						Instance.new("IntValue", Q).Name = "Ignored"
-						task.wait(0.3)
-					end
-				end)
+				Owned = isnetworkowner2(Mon.HumanoidRootPart)
 			end
-			getgenv().DaBringMob = true
+			if Owned and (not ForcePosition or (MonPosition - ForcePosition).Magnitude < GrabDistance) then
+				Count += 1
+				Mon:SetAttribute("OldPosition", Mon:GetAttribute("OldPosition") or MonPosition)
+				MidPoint += MonPosition
+				ForcePosition = ForcePosition or MonPosition
+				table.insert(MobsTable, Mon)
+			end
 		end
+	end
+
+	if Count <= 0 then
+		return
+	end
+	local TargetCFrame = CFrame.new(MidPoint / Count)
+
+	for _, ChildInstance in ipairs(MobsTable) do
+		pcall(function()
+			if ChildInstance:GetAttribute("IgnoreGrab") then return end
+			if (ChildInstance:GetAttribute("FailureCount") or 0) > 7 then return end
+			local RootPart = ChildInstance:FindFirstChild("HumanoidRootPart")
+			if not RootPart then return end
+
+			local BodyVelocity = RootPart:FindFirstChild("FarmingVelocity")
+			if not BodyVelocity then
+				BodyVelocity = Instance.new("BodyVelocity")
+				BodyVelocity.Name = "FarmingVelocity"
+				BodyVelocity.MaxForce = Vector3.new(4000, 4000, 4000)
+				BodyVelocity.Parent = RootPart
+			end
+			BodyVelocity.Velocity = Vector3.new(0, 0, 0)
+
+			local BodyPosition = RootPart:FindFirstChild("FarmingPosition")
+			if not BodyPosition then
+				BodyPosition = Instance.new("BodyPosition")
+				BodyPosition.Name = "FarmingPosition"
+				BodyPosition.MaxForce = Vector3.new(4000, 4000, 4000)
+				BodyPosition.P = 4.12
+				BodyPosition.D = 1000
+				BodyPosition.Parent = RootPart
+			end
+
+			ChildInstance:SetAttribute("IsGrabbed", true)
+			RootPart.CFrame = TargetCFrame
+			ChildInstance:SetAttribute("MidPoint", TargetCFrame)
+			sizepart(ChildInstance)
+		end)
 	end
 end
 task.wait(1)
@@ -11644,8 +11787,8 @@ function AutoAttackLeviathan()
 					end
 				elseif Settings["Use Click M1 Skull Guitar Leviathan"] then
 					equiptool(NameWeapon("Gun"))
-					SpamGunSkullGuitar(s.Hitbox11)
-					if t:DistanceFromCharacter(s.Hitbox11.Position) < 400 then
+					SpamGunSkullGuitar(v.Hitbox11)
+					if t:DistanceFromCharacter(v.Hitbox11.Position) < 400 then
 						UseSkillGun()
 					end
 				elseif t:DistanceFromCharacter(s.RootPart.Position) < 400 then
