@@ -1,6 +1,6 @@
 --[[
     Skider Hub V4 - Rebuilt with Fluent UI
-    Combat performance revision: PERF-20261008-7 (Ghoul V3 hop + weapon skill rotation)
+    Combat performance revision: 3TN-20261010 (3tn attack + network-owned midpoint bring)
     Original: kaiv4.lua
     Integrated modules: 3tn.lua (Tween speed = 150, BringMob, FastAttack)
     Bug fixes & Missing definitions: ngu.md
@@ -1014,9 +1014,9 @@ getgenv().CuttayTweenNoclipConnection = RunService.Stepped:Connect(function()
     TweenManager.ApplyNoclip(character)
 end)
 
--- [COMBAT, FAST ATTACK & BRING MOB] Ported from bnn.lua
+-- Shared farm helpers; fast attack and bringmob below use 3tn.lua.
 if Settings["Bring Mob"] == nil then Settings["Bring Mob"] = true end
-if Settings["Bring Mob Count"] == nil then Settings["Bring Mob Count"] = 2 end
+if Settings["Bring Mob Count"] == nil then Settings["Bring Mob Count"] = 6 end
 if Settings["Attack No Animation "] == nil then Settings["Attack No Animation "] = true end
 
 function equipWeapon(weapon_type)
@@ -1129,23 +1129,13 @@ function getcenter(name)
     return count > 0 and CFrame.new(sum / count) or nil
 end
 
-local bnnCharacterCache = {Time = 0, Models = {}}
 function isnetworkowner2(part)
     if not part then return false end
-    local characters = Workspace:FindFirstChild("Characters")
-    if bnnCharacterCache.Folder ~= characters or tick() - bnnCharacterCache.Time >= 0.2 then
-        bnnCharacterCache.Folder = characters
-        bnnCharacterCache.Time = tick()
-        bnnCharacterCache.Models = characters and characters:GetChildren() or {}
+    if isnetworkowner then
+        local ok, owned = pcall(isnetworkowner, part)
+        return ok and owned
     end
-    for _, character in ipairs(bnnCharacterCache.Models) do
-        local root = character:FindFirstChild("HumanoidRootPart")
-        if character.Parent == characters and character.Name ~= localPlayer.Name and root
-            and (root.Position - part.Position).Magnitude <= 300 then
-            return false
-        end
-    end
-    return true
+    return part.ReceiveAge == 0
 end
 
 function DeleteIgnoredMob()
@@ -1156,149 +1146,114 @@ function DeleteIgnoredMob()
     end
 end
 
-local bnnBringTarget, bnnBringAnchor
-local bnnBringChecks = setmetatable({}, {__mode = "k"})
+-- 3tn CombatController.Grab: network-owned mobs gathered at their midpoint.
+do
+local lastBring = 0
 function BringMob(target)
-    -- BNN V2/V3 calls BringMob directly. A stale NoBringMob flag left by a
-    -- trial must not disable Flower 3 or Bartilo farming until re-execution.
-    local blockedByTrial = getgenv().NoBringMob and not Settings["Auto Upgrade Race V2-V3"]
-    if not Settings["Bring Mob"] or blockedByTrial or not IsMobAlive(target) then return end
-    -- Rate limit: không bring liên tục mỗi frame
-    local bringDelay = getgenv().GhoulTrialBring and 1.25 or 0.35
-    if tick() - (getgenv().LastBringTick or 0) < bringDelay then return end
+    if not Settings["Bring Mob"] or getgenv().NoBringMob or not IsMobAlive(target) then return end
+    local now = tick()
+    if now - lastBring < (getgenv().GhoulTrialBring and 1.25 or 0.15) then return end
     local character = localPlayer.Character
     local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
     local targetRoot = target:FindFirstChild("HumanoidRootPart")
-    if not playerRoot or not targetRoot then return end
-
-    if bnnBringTarget ~= target then
-        bnnBringTarget = target
-        local spawnPart = DetectPartMobBring(target.Name, target, true)
-        bnnBringAnchor = spawnPart and spawnPart.CFrame or targetRoot.CFrame
-        local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
-        local transformed = character:FindFirstChild("RaceTransformed")
-        if race and race.Value == "Cyborg" and transformed and transformed.Value then
-            bnnBringAnchor = getcenter(target.Name) or bnnBringAnchor
-        end
-        DeleteIgnoredMob()
-    end
-
-    local selected = {}
-    if not target:FindFirstChild("Ignored") then table.insert(selected, target) end
-    local requestedCount = math.clamp(tonumber(Settings["Bring Mob Count"]) or 2, 1, 5)
-    local radius, maximum = requestedCount > 2 and 350 or 200, requestedCount
-    local race = localPlayer:FindFirstChild("Data") and localPlayer.Data:FindFirstChild("Race")
-    local transformed = character:FindFirstChild("RaceTransformed")
-    if race and race.Value == "Cyborg" and transformed and transformed.Value then radius, maximum = 300, 6 end
-    if getgenv().GhoulTrialBring then radius, maximum = 100, 2 end
-
+    if not playerRoot or not targetRoot or (playerRoot.Position - targetRoot.Position).Magnitude > 150 then return end
+    lastBring = now
+    if sethiddenproperty then pcall(sethiddenproperty, localPlayer, "SimulationRadius", math.huge) end
+    local radius = getgenv().GhoulTrialBring and 100 or (DetectCurrentSea() == 1 and 250 or 350)
+    local maximum = getgenv().GhoulTrialBring and 2 or math.clamp(tonumber(Settings["Bring Mob Count"]) or 6, 2, 6)
+    local mobs, midpoint = {}, Vector3.zero
     local enemies = Workspace:FindFirstChild("Enemies")
-    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
+    local candidates = enemies and enemies:GetChildren() or {}
+    table.sort(candidates, function(a, b) return a == target and b ~= target end)
+    for _, mob in ipairs(candidates) do
         local root = mob:FindFirstChild("HumanoidRootPart")
-        if mob ~= target and mob.Name == target.Name and not mob:FindFirstChild("Ignored")
-            and IsMobAlive(mob) and isnetworkowner2(root)
-            and (root.Position - bnnBringAnchor.Position).Magnitude <= radius and #selected < maximum
-        then
-            table.insert(selected, mob)
+        if mob.Name == target.Name and IsMobAlive(mob) and not mob:GetAttribute("IgnoreGrab")
+            and (mob:GetAttribute("FailureCount") or 0) <= 7 and isnetworkowner2(mob.PrimaryPart or root)
+            and (root.Position - targetRoot.Position).Magnitude <= radius and #mobs < maximum then
+            mob:SetAttribute("OldPosition", mob:GetAttribute("OldPosition") or root.Position)
+            table.insert(mobs, mob)
+            midpoint = midpoint + root.Position
         end
     end
-
-    if not bnnBringAnchor or (playerRoot.Position - targetRoot.Position).Magnitude > 50
-        or not isnetworkowner2(playerRoot) or #selected < 2 then return end
-
-    getgenv().LastBringTick = tick()
-    getgenv().DaBringMob = false -- LastBringTick owns the throttle; no delayed reset worker.
-    for _, mob in ipairs(selected) do
-        local broughtMob = mob
-        local root = broughtMob:FindFirstChild("HumanoidRootPart")
-        local humanoid = broughtMob:FindFirstChildOfClass("Humanoid")
-        if root and humanoid then
-            SizePart(broughtMob)
-            if not isnetworkowner2(root) then
-                root.CFrame = broughtMob.WorldPivot
-                if not broughtMob:FindFirstChild("Ignored") then Instance.new("IntValue", broughtMob).Name = "Ignored" end
-                task.wait(0.3)
-            else
-                root.CFrame = bnnBringAnchor * CFrame.new(0, math.random(0, 2), math.random(0, 2))
-                if not bnnBringChecks[broughtMob] then
-                    bnnBringChecks[broughtMob] = true
-                    local oldHealth = humanoid.Health
-                    task.delay(2.2, function()
-                        bnnBringChecks[broughtMob] = nil
-                        if broughtMob.Parent and root.Parent == broughtMob and humanoid.Parent == broughtMob
-                            and humanoid.Health > 0 and humanoid.Health == oldHealth
-                            and not broughtMob:FindFirstChild("Ignored") then
-                            root.CFrame = broughtMob.WorldPivot
-                            Instance.new("IntValue", broughtMob).Name = "Ignored"
-                        end
-                    end)
-                end
-            end
+    if #mobs == 0 then return end
+    local center = CFrame.new(midpoint / #mobs)
+    for _, mob in ipairs(mobs) do
+        local root = mob:FindFirstChild("HumanoidRootPart")
+        local velocity = root:FindFirstChild("FarmingVelocity")
+        if not velocity then
+            velocity = Instance.new("BodyVelocity")
+            velocity.Name = "FarmingVelocity"
+            velocity.MaxForce = Vector3.new(4000, 4000, 4000)
+            velocity.Parent = root
         end
+        velocity.Velocity = Vector3.zero
+        local position = root:FindFirstChild("FarmingPosition")
+        if not position then
+            position = Instance.new("BodyPosition")
+            position.Name = "FarmingPosition"
+            position.MaxForce = Vector3.new(4000, 4000, 4000)
+            position.P, position.D = 4.12, 1000
+            position.Parent = root
+        end
+        position.Position = center.Position
+        mob:SetAttribute("IsGrabbed", true)
+        root.CFrame = center
+        mob:SetAttribute("MidPoint", center)
     end
 end
+end
 
--- [[ ATTACK ENGINE - FastAttack class from pastefy X6xLHpIv ]]
--- loadstring FastMax helper
-pcall(function()
-    if not getgenv().SkiderFastMaxLoaded then
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/AnhDzaiScript/Setting/refs/heads/main/FastMax.lua"))()
-        getgenv().SkiderFastMaxLoaded = true
-    end
-end)
-
+-- [3tn ATTACK ENGINE] Native tool paths + farm multi-hit packet.
+do
 local _AtkModules = ReplicatedStorage:WaitForChild("Modules")
 local _AtkNet = _AtkModules:WaitForChild("Net")
 local _RegisterAttack = _AtkNet:WaitForChild("RE/RegisterAttack")
-local _RegisterHit    = _AtkNet:WaitForChild("RE/RegisterHit")
-local _ShootGunEvent  = _AtkNet:WaitForChild("RE/ShootGunEvent")
-local _GunValidator   = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Validator2")
-
+local _RegisterHit = _AtkNet:WaitForChild("RE/RegisterHit")
+local _ShootGunEvent = _AtkNet:WaitForChild("RE/ShootGunEvent")
+local _GunValidator = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Validator2")
 local _AtkConfig = {
-    AttackDistance  = 65,
-    AttackMobs      = true,
-    AttackPlayers   = true,
-    AttackCooldown  = 0.2,
-    ComboResetTime  = 0.3,
-    MaxCombo        = 4,
-    HitboxLimbs     = {"RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm", "RightHand", "LeftHand"},
-    AutoClickEnabled = true,
+    AttackDistance = 65,
+    AttackMobs = true,
+    AttackPlayers = true,
+    AttackCooldown = 0.05,
+    ComboResetTime = 0.05,
+    MaxCombo = 2,
+    HitboxLimbs = {"RightLowerArm", "RightUpperArm", "LeftLowerArm", "LeftUpperArm", "RightHand", "LeftHand"},
+    AutoClickEnabled = true
 }
-
 local FastAttackClass = {}
 FastAttackClass.__index = FastAttackClass
-
 function FastAttackClass.new()
     local self = setmetatable({
-        Debounce        = 0,
-        ComboDebounce   = 0,
-        ShootDebounce   = 0,
-        M1Combo         = 0,
-        EnemyRootPart   = nil,
-        Connections     = {},
-        TargetCache     = {},
-        Overheat        = { Dragonstorm = { MaxOverheat = 3, Cooldown = 0, TotalOverheat = 0, Distance = 350, Shooting = false } },
-        ShootsPerTarget = { ["Dual Flintlock"] = 2 },
-        SpecialShoots   = { ["Skull Guitar"] = "TAP", ["Bazooka"] = "Position", ["Cannon"] = "Position", ["Dragonstorm"] = "Overheat" },
-    }, FastAttackClass)
-
+        Debounce = 0,
+        ComboDebounce = 0,
+        ShootDebounce = 0,
+        M1Combo = 0,
+        EnemyRootPart = nil,
+        Connections = {},
+        Overheat = {Dragonstorm = {MaxOverheat = 3, Cooldown = 0, TotalOverheat = 0, Distance = 350, Shooting = false}},
+        ShootsPerTarget = {["Dual Flintlock"] = 2},
+        SpecialShoots = {["Skull Guitar"] = "TAP", ["Bazooka"] = "Position", ["Cannon"] = "Position", ["Dragonstorm"] = "Overheat"}
+    }, FastAttackClass)    
     pcall(function()
-        self.CombatFlags  = require(_AtkModules.Flags).COMBAT_REMOTE_THREAD
+        self.CombatFlags = require(_AtkModules.Flags).COMBAT_REMOTE_THREAD
         self.ShootFunction = getupvalue(require(ReplicatedStorage.Controllers.CombatController).Attack, 9)
         local LocalScript = localPlayer:WaitForChild("PlayerScripts"):FindFirstChildOfClass("LocalScript")
         if LocalScript and getsenv then
             self.HitFunction = getsenv(LocalScript)._G.SendHitsToServer
         end
+    end)    
+    pcall(function()
+        local net = require(_AtkNet)
+        self.FarmRegisterAttack = net:RemoteEvent("RegisterAttack", true)
+        self.FarmRegisterHit = net:RemoteEvent("RegisterHit", true)
     end)
-
     return self
 end
-
 function FastAttackClass:IsEntityAlive(entity)
     local humanoid = entity and entity:FindFirstChild("Humanoid")
     return humanoid and humanoid.Health > 0
 end
-
 function FastAttackClass:CheckStun(Character, Humanoid, ToolTip)
     local Stun = Character:FindFirstChild("Stun")
     local Busy = Character:FindFirstChild("Busy")
@@ -1309,56 +1264,45 @@ function FastAttackClass:CheckStun(Character, Humanoid, ToolTip)
     end
     return true
 end
-
 function FastAttackClass:GetBladeHits(Character, Distance)
     local Position = Character:GetPivot().Position
     local BladeHits = {}
     self.EnemyRootPart = nil
-    Distance = Distance or _AtkConfig.AttackDistance
-
-    local function ProcessTargets(Folder)
-        if not Folder then return end
-        local cached = self.TargetCache[Folder]
-        if not cached or tick() - cached.Time >= 0.2 then
-            cached = {Time = tick(), Models = Folder:GetChildren()}
-            self.TargetCache[Folder] = cached
-        end
-        for _, Enemy in ipairs(cached.Models) do
-            if Enemy.Parent == Folder and Enemy ~= Character and self:IsEntityAlive(Enemy) then
-                local BasePart = Enemy:FindFirstChild(_AtkConfig.HitboxLimbs[math.random(#_AtkConfig.HitboxLimbs)])
-                    or Enemy:FindFirstChild("HumanoidRootPart")
-                if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
-                    if not self.EnemyRootPart then
-                        self.EnemyRootPart = BasePart
-                    else
-                        table.insert(BladeHits, { Enemy, BasePart })
+    Distance = Distance or _AtkConfig.AttackDistance    
+    local function ProcessTargets(Folder, CanAttack)
+        for _, Enemy in ipairs(Folder:GetChildren()) do
+            pcall(function()
+                if Enemy ~= Character and self:IsEntityAlive(Enemy) then
+                    local BasePart = Enemy:FindFirstChild(_AtkConfig.HitboxLimbs[math.random(#_AtkConfig.HitboxLimbs)]) or Enemy:FindFirstChild("HumanoidRootPart")
+                    if BasePart and (Position - BasePart.Position).Magnitude <= Distance then
+                        if not self.EnemyRootPart then
+                            self.EnemyRootPart = BasePart
+                        else
+                            table.insert(BladeHits, {Enemy, BasePart})
+                            table.insert(BladeHits, {})
+                        end
                     end
                 end
-            end
+            end)
         end
-    end
-
-    if _AtkConfig.AttackMobs   then ProcessTargets(Workspace:FindFirstChild("Enemies")) end
-    if _AtkConfig.AttackPlayers then ProcessTargets(Workspace:FindFirstChild("Characters")) end
-
+    end    
+    if _AtkConfig.AttackMobs then pcall(ProcessTargets, Workspace.Enemies) end
+    if _AtkConfig.AttackPlayers then pcall(ProcessTargets, Workspace.Characters, true) end    
     return BladeHits
 end
-
 function FastAttackClass:GetClosestEnemy(Character, Distance)
-    local BladeHits = self:GetBladeHits(Character, Distance)
-    local Position = Character:GetPivot().Position
-    local Closest = self.EnemyRootPart
-    local MinDistance = Closest and (Position - Closest.Position).Magnitude or math.huge
-    for _, Hit in ipairs(BladeHits) do
-        local Magnitude = (Position - Hit[2].Position).Magnitude
-        if Magnitude < MinDistance then
-            MinDistance = Magnitude
-            Closest = Hit[2]
+    local hits = self:GetBladeHits(Character, Distance)
+    local position = Character:GetPivot().Position
+    local closest = self.EnemyRootPart
+    local distance = closest and (position - closest.Position).Magnitude or math.huge
+    for _, hit in ipairs(hits) do
+        if hit[2] then
+            local current = (position - hit[2].Position).Magnitude
+            if current < distance then closest, distance = hit[2], current end
         end
     end
-    return Closest
+    return closest
 end
-
 function FastAttackClass:GetCombo()
     local Combo = (tick() - self.ComboDebounce) <= _AtkConfig.ComboResetTime and self.M1Combo or 0
     Combo = Combo >= _AtkConfig.MaxCombo and 1 or Combo + 1
@@ -1366,42 +1310,18 @@ function FastAttackClass:GetCombo()
     self.M1Combo = Combo
     return Combo
 end
-
-function FastAttackClass:GetValidator2()
-    local v1  = getupvalue(self.ShootFunction, 15)
-    local v2  = getupvalue(self.ShootFunction, 13)
-    local v3  = getupvalue(self.ShootFunction, 16)
-    local v4  = getupvalue(self.ShootFunction, 17)
-    local v5  = getupvalue(self.ShootFunction, 14)
-    local v6  = getupvalue(self.ShootFunction, 12)
-    local v7  = getupvalue(self.ShootFunction, 18)
-    local v8  = v6 * v2
-    local v9  = (v5 * v2 + v6 * v1) % v3
-    v9 = (v9 * v3 + v8) % v4
-    v5 = math.floor(v9 / v3)
-    v6 = v9 - v5 * v3
-    v7 = v7 + 1
-    setupvalue(self.ShootFunction, 15, v1)
-    setupvalue(self.ShootFunction, 13, v2)
-    setupvalue(self.ShootFunction, 16, v3)
-    setupvalue(self.ShootFunction, 17, v4)
-    setupvalue(self.ShootFunction, 14, v5)
-    setupvalue(self.ShootFunction, 12, v6)
-    setupvalue(self.ShootFunction, 18, v7)
-    return math.floor(v9 / v4 * 16777215), v7
-end
-
 function FastAttackClass:ShootInTarget(TargetPosition)
     local Character = localPlayer.Character
     if not self:IsEntityAlive(Character) then return end
+    
     local Equipped = Character:FindFirstChildOfClass("Tool")
-    if not Equipped or Equipped.ToolTip ~= "Gun" then return end
+    if not Equipped or Equipped.ToolTip ~= "Gun" then return end    
     local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or 0.3
-    if (tick() - self.ShootDebounce) < Cooldown then return end
+    if (tick() - self.ShootDebounce) < Cooldown then return end    
     local ShootType = self.SpecialShoots[Equipped.Name] or "Normal"
     if ShootType == "Position" or (ShootType == "TAP" and Equipped:FindFirstChild("RemoteEvent")) then
         Equipped:SetAttribute("LocalTotalShots", (Equipped:GetAttribute("LocalTotalShots") or 0) + 1)
-        _GunValidator:FireServer(self:GetValidator2())
+        _GunValidator:FireServer(self:GetValidator2())        
         if ShootType == "TAP" then
             Equipped.RemoteEvent:FireServer("TAP", TargetPosition)
         else
@@ -1415,10 +1335,35 @@ function FastAttackClass:ShootInTarget(TargetPosition)
         self.ShootDebounce = tick()
     end
 end
-
+function FastAttackClass:GetValidator2()
+    local v1 = getupvalue(self.ShootFunction, 15)
+    local v2 = getupvalue(self.ShootFunction, 13)
+    local v3 = getupvalue(self.ShootFunction, 16)
+    local v4 = getupvalue(self.ShootFunction, 17)
+    local v5 = getupvalue(self.ShootFunction, 14)
+    local v6 = getupvalue(self.ShootFunction, 12)
+    local v7 = getupvalue(self.ShootFunction, 18)
+    
+    local v8 = v6 * v2
+    local v9 = (v5 * v2 + v6 * v1) % v3
+    v9 = (v9 * v3 + v8) % v4
+    v5 = math.floor(v9 / v3)
+    v6 = v9 - v5 * v3
+    v7 = v7 + 1    
+    setupvalue(self.ShootFunction, 15, v1)
+    setupvalue(self.ShootFunction, 13, v2)
+    setupvalue(self.ShootFunction, 16, v3)
+    setupvalue(self.ShootFunction, 17, v4)
+    setupvalue(self.ShootFunction, 14, v5)
+    setupvalue(self.ShootFunction, 12, v6)
+    setupvalue(self.ShootFunction, 18, v7)
+    
+    return math.floor(v9 / v4 * 16777215), v7
+end
 function FastAttackClass:UseNormalClick(Character, Humanoid, Cooldown)
     self.EnemyRootPart = nil
     local BladeHits = self:GetBladeHits(Character)
+    
     if self.EnemyRootPart then
         _RegisterAttack:FireServer(Cooldown)
         if self.CombatFlags and self.HitFunction then
@@ -1428,43 +1373,68 @@ function FastAttackClass:UseNormalClick(Character, Humanoid, Cooldown)
         end
     end
 end
-
 function FastAttackClass:UseFruitM1(Character, Equipped, Combo)
     self:GetBladeHits(Character)
     if not self.EnemyRootPart then return end
-    local Offset = self.EnemyRootPart.Position - Character:GetPivot().Position
-    if Offset.Magnitude < 0.01 then return end
-    local Direction = Offset.Unit
-    Equipped.LeftClickRemote:FireServer(Direction, Combo)
+    local offset = self.EnemyRootPart.Position - Character:GetPivot().Position
+    if offset.Magnitude > 0.01 then Equipped.LeftClickRemote:FireServer(offset.Unit, Combo) end
 end
-
+-- 3tn Funcs:Attack packet, driven by the existing farm callers.
+function FastAttackClass:UseFarmHits(Character)
+    local args = {nil, {}, nil, "078da341"}
+    local position = Character:GetPivot().Position
+    for _, folderName in ipairs({"Enemies", "Characters"}) do
+        local folder = Workspace:FindFirstChild(folderName)
+        for _, mob in ipairs(folder and folder:GetChildren() or {}) do
+            local root = mob:FindFirstChild("HumanoidRootPart")
+            if mob ~= Character and root and self:IsEntityAlive(mob)
+                and (root.Position - position).Magnitude <= _AtkConfig.AttackDistance then
+                (self.FarmRegisterAttack or _RegisterAttack):FireServer(0)
+                args[1] = args[1] or mob:FindFirstChild("Head") or root
+                table.insert(args[2], {mob, root})
+                table.insert(args[2], mob)
+            end
+        end
+    end
+    if args[1] then (self.FarmRegisterHit or _RegisterHit):FireServer(unpack(args, 1, 4)) end
+end
 function FastAttackClass:Attack()
     if getgenv().GhoulV3NoAutoClick or self.AttackBusy or getgenv().SkiderFastAttackInstance ~= self
-        or not _AtkConfig.AutoClickEnabled
-        or tick() < (getgenv().Flower3ClusterUntil or 0)
-        or (tick() - self.Debounce) < _AtkConfig.AttackCooldown then return end
+        or not _AtkConfig.AutoClickEnabled or (tick() - self.Debounce) < _AtkConfig.AttackCooldown then return end
     local Character = localPlayer.Character
     if not Character or not self:IsEntityAlive(Character) then return end
+    
     local Humanoid = Character.Humanoid
-    local Equipped  = Character:FindFirstChildOfClass("Tool")
+    local Equipped = Character:FindFirstChildOfClass("Tool")
     if not Equipped then return end
+    
     local ToolTip = Equipped.ToolTip
-    if ToolTip ~= "Melee" and ToolTip ~= "Blox Fruit" and ToolTip ~= "Sword" and ToolTip ~= "Gun" then return end
+    if not table.find({"Melee", "Blox Fruit", "Sword", "Gun"}, ToolTip) then return end
+    
     local Cooldown = Equipped:FindFirstChild("Cooldown") and Equipped.Cooldown.Value or _AtkConfig.AttackCooldown
     if not self:CheckStun(Character, Humanoid, ToolTip) then return end
+    
     local Combo = self:GetCombo()
     Cooldown = Cooldown + (Combo >= _AtkConfig.MaxCombo and 0.05 or 0)
     self.Debounce = Combo >= _AtkConfig.MaxCombo and ToolTip ~= "Gun" and (tick() + 0.05) or tick()
+    
     self.AttackBusy = true
     local ok, err = pcall(function()
-        if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
-            self:UseFruitM1(Character, Equipped, Combo)
-        elseif ToolTip == "Gun" then
-            local Target = self:GetClosestEnemy(Character, 120)
-            if Target then self:ShootInTarget(Target.Position) end
-        else
-            self:UseNormalClick(Character, Humanoid, Cooldown)
+    if ToolTip == "Blox Fruit" and Equipped:FindFirstChild("LeftClickRemote") then
+        self:UseFruitM1(Character, Equipped, Combo)
+    elseif ToolTip == "Gun" then
+        local Target = self:GetClosestEnemy(Character, 120)
+        if Target then
+            self:ShootInTarget(Target.Position)
         end
+    elseif tick() < (self.FarmUntil or 0) then
+        if tick() - (self.FarmDebounce or 0) >= 0.06 then
+            self.FarmDebounce = tick()
+            self:UseFarmHits(Character)
+        end
+    else
+        self:UseNormalClick(Character, Humanoid, Cooldown)
+    end
     end)
     self.AttackBusy = false
     if not ok and tick() - (self.LastErrorAt or 0) >= 5 then
@@ -1473,176 +1443,62 @@ function FastAttackClass:Attack()
     end
 end
 
--- Tạo instance và kết nối Heartbeat
-local _FastAttackInst = FastAttackClass.new()
-if getgenv().SkiderFastAttackInstance then
-    for _, connection in ipairs(getgenv().SkiderFastAttackInstance.Connections) do
-        connection:Disconnect()
-    end
+local instance = FastAttackClass.new()
+local previous = getgenv().SkiderFastAttackInstance
+if previous then
+    for _, connection in ipairs(previous.Connections or {}) do connection:Disconnect() end
 end
-getgenv().SkiderFastAttackInstance = _FastAttackInst
+getgenv().SkiderFastAttackInstance = instance
 getgenv().SkiderBnnCombatToken = nil
-getgenv().SkiderCombatRevision = "PERF-20261008-7"
-print("[Skider Combat] PERF-20261008-7 | Ghoul V3 hop + weapon skill rotation")
-table.insert(_FastAttackInst.Connections, RunService.Heartbeat:Connect(function()
-    if Settings["Auto Click"] and not getgenv().GhoulV3NoAutoClick
-        and tick() >= (getgenv().Flower3ClusterUntil or 0)
-    then
-        _FastAttackInst:Attack()
-    end
+getgenv().Flower3ClusterUntil = nil
+getgenv().SkiderCombatRevision = "3TN-20261010"
+print("[Skider Combat] 3TN-20261010 | 3tn attack + bringmob")
+table.insert(instance.Connections, RunService.Stepped:Connect(function()
+    if Settings["Auto Click"] or tick() < (instance.FarmUntil or 0) then instance:Attack() end
 end))
-
--- === Wrapper functions giữ nguyên API cho phần còn lại của script ===
-
-function AttackFunction(radius)
-    -- Gọi attack class trực tiếp qua Heartbeat; fallback manual invoke nếu cần
-    _FastAttackInst:Attack()
+function AttackFunction()
+    if getgenv().GhoulV3NoAutoClick then return end
+    instance.FarmUntil = tick() + 0.2
+    instance:Attack()
 end
-
 function AttackAOE(radius, includePlayers)
-    local Character = localPlayer.Character
-    if not Character then return nil end
-    _FastAttackInst.EnemyRootPart = nil
-    local hits = _FastAttackInst:GetBladeHits(Character, radius or 80)
-    return #hits > 0 and hits or nil
-end
-
-function FastAttack(target)
-    -- target hint: thu hẹp khoảng cách nếu cần, rồi gọi Attack
-    _FastAttackInst:Attack()
-end
-
-local fastAttackInstance = { Attack = function() _FastAttackInst:Attack() end }
-
-function ClickM1(target, wideRange)
     local character = localPlayer.Character
-    local root      = character and character:FindFirstChild("HumanoidRootPart")
-    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
-    local humanoid  = target and target:FindFirstChildOfClass("Humanoid")
-    if not root or not targetRoot or not humanoid or humanoid.Health <= 0
-        or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
-    _FastAttackInst:Attack()
+    if not character then return nil end
+    local previousPlayers = _AtkConfig.AttackPlayers
+    if includePlayers ~= nil then _AtkConfig.AttackPlayers = includePlayers end
+    local hits = instance:GetBladeHits(character, radius or 80)
+    _AtkConfig.AttackPlayers = previousPlayers
+    local all = {}
+    if instance.EnemyRootPart then table.insert(all, {instance.EnemyRootPart.Parent, instance.EnemyRootPart}) end
+    for _, hit in ipairs(hits) do if hit[2] then table.insert(all, hit) end end
+    return #all > 0 and all or nil
 end
+FastAttack = AttackFunction
+function ClickM1(target)
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
+    if not root or not targetRoot or not IsMobAlive(target)
+        or (root.Position - targetRoot.Position).Magnitude > 65 then return end
+    AttackFunction()
+end
+AttackFlower3Cluster = ClickM1
 getgenv().ClickM1 = ClickM1
-
--- Flower 3 needs the Swan Pirate used by BringMob to stay as the primary hit.
--- The generic fast attack scans every enemy and may choose another model first;
--- when that happens the second brought Swan is visible at the stack but is not
--- included in the same RegisterHit packet. Keep this scoped to Flower 3 so the
--- combat behaviour of every other farm remains unchanged.
-function AttackFlower3Cluster(primary)
+getgenv().ClickM1Dungeon = ClickM1
+getgenv().ClickM1Volcano = ClickM1
+getgenv().UseFruitM1 = function()
     local character = localPlayer.Character
-    local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    local equipped = character and character:FindFirstChildOfClass("Tool")
-    local primaryHumanoid = primary and primary:FindFirstChildOfClass("Humanoid")
-    local primaryRoot = primary and primary:FindFirstChild("HumanoidRootPart")
-    if not playerRoot or not humanoid or not equipped or not primaryRoot
-        or not primaryHumanoid or primaryHumanoid.Health <= 0
-        or (playerRoot.Position - primaryRoot.Position).Magnitude >= 70
-    then
-        return
-    end
-
-    -- Blox Fruit and Gun keep their native M1/shoot path. The BNN multi-hit
-    -- packet below is the Melee/Sword path used to kill a brought mob stack.
-    if equipped.ToolTip ~= "Melee" and equipped.ToolTip ~= "Sword" then
-        ClickM1(primary)
-        return
-    end
-    -- Pause the generic Heartbeat attacker while this scoped packet owns the
-    -- Flower 3 stack; otherwise it can consume the shared attack debounce first.
-    getgenv().Flower3ClusterUntil = tick() + 0.35
-    if not _FastAttackInst:CheckStun(character, humanoid, equipped.ToolTip)
-        or (tick() - (_FastAttackInst.Flower3Debounce or 0)) < _AtkConfig.AttackCooldown
-    then
-        return
-    end
-
-    local function hitPart(model)
-        for _, partName in ipairs(_AtkConfig.HitboxLimbs) do
-            local part = model:FindFirstChild(partName)
-            if part and part:IsA("BasePart") then return part end
-        end
-        return model:FindFirstChild("HumanoidRootPart")
-    end
-
-    local primaryPart = hitPart(primary)
-    if not primaryPart then return end
-    local extraHits = {}
-    local enemies = Workspace:FindFirstChild("Enemies")
-    for _, mob in ipairs(enemies and enemies:GetChildren() or {}) do
-        if mob ~= primary and mob.Name == primary.Name and IsMobAlive(mob) then
-            local root = mob:FindFirstChild("HumanoidRootPart")
-            local part = hitPart(mob)
-            -- BringMob stacks the models at one spawn anchor. Checking both the
-            -- player radius and stack radius prevents unrelated Swan Pirates
-            -- elsewhere on the island from entering the packet.
-            if root and part
-                and (playerRoot.Position - root.Position).Magnitude < 70
-                and (primaryRoot.Position - root.Position).Magnitude < 15
-            then
-                table.insert(extraHits, {mob, part})
-            end
-        end
-    end
-
-    local combo = _FastAttackInst:GetCombo()
-    local cooldown = equipped:FindFirstChild("Cooldown") and equipped.Cooldown.Value
-        or _AtkConfig.AttackCooldown
-    cooldown = cooldown + (combo >= _AtkConfig.MaxCombo and 0.05 or 0)
-    _FastAttackInst.Flower3Debounce = tick()
-    _FastAttackInst.Debounce = combo >= _AtkConfig.MaxCombo and tick() + 0.05 or tick()
-    _RegisterAttack:FireServer(cooldown)
-    -- BNN sends this packet straight to RegisterHit; do the same here so no
-    -- local SendHitsToServer filter can collapse the stack back to one mob.
-    _RegisterHit:FireServer(primaryPart, extraHits)
-end
-
-getgenv().ClickM1Dungeon = function(target, wideRange)
-    local character = localPlayer.Character
-    local root      = character and character:FindFirstChild("HumanoidRootPart")
-    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
-    local humanoid  = target and target:FindFirstChildOfClass("Humanoid")
-    if not root or not targetRoot or not humanoid or humanoid.Health <= 0
-        or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
-    _FastAttackInst:Attack()
-end
-
-getgenv().ClickM1Volcano = function(target, wideRange)
-    local character = localPlayer.Character
-    local root      = character and character:FindFirstChild("HumanoidRootPart")
-    local targetRoot = target and target:FindFirstChild("HumanoidRootPart")
-    local humanoid  = target and target:FindFirstChildOfClass("Humanoid")
-    if not root or not targetRoot or not humanoid or humanoid.Health <= 0
-        or (root.Position - targetRoot.Position).Magnitude >= 70 then return end
-    _FastAttackInst:Attack()
-end
-
-getgenv().UseFruitM1 = function(target, secondaryDirection)
-    if getgenv().GhoulV3NoAutoClick or _FastAttackInst.AttackBusy or tick() < (getgenv().Flower3ClusterUntil or 0)
-        or (tick() - _FastAttackInst.Debounce) < _AtkConfig.AttackCooldown then return false end
-    local Character = localPlayer.Character
-    if not Character then return false end
-    local Equipped = Character:FindFirstChildOfClass("Tool")
-    if not Equipped or Equipped.ToolTip ~= "Blox Fruit" then return false end
-    if not Equipped:FindFirstChild("LeftClickRemote") then return false end
-    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
-    if not Humanoid or Humanoid.Health <= 0
-        or not _FastAttackInst:CheckStun(Character, Humanoid, Equipped.ToolTip) then return false end
-    _FastAttackInst.Debounce = tick()
-    _FastAttackInst:UseFruitM1(Character, Equipped, _FastAttackInst:GetCombo())
+    local tool = character and character:FindFirstChildOfClass("Tool")
+    if getgenv().GhoulV3NoAutoClick or not tool or tool.ToolTip ~= "Blox Fruit"
+        or not tool:FindFirstChild("LeftClickRemote") then return false end
+    AttackFunction()
     return true
 end
 getgenv().UseFruitM1Boat = getgenv().UseFruitM1
-
 getgenv().PathClickM1 = {}
-
-getgenv().AttackFunctionnhungSuperTrial = function()
-    _AtkConfig.AttackPlayers = true
-    _FastAttackInst:Attack()
+getgenv().AttackFunctionnhungSuperTrial = AttackFunction
+getgenv().AttackFunctionnhungSuper = AttackFunction
 end
-getgenv().AttackFunctionnhungSuper = getgenv().AttackFunctionnhungSuperTrial
 
 -- KillMonster tu loader.lua: ham tieu diet quai/boss chuan muc, on dinh
 function KillMonster(_v, fallbackCFrame)
@@ -7815,7 +7671,7 @@ Tabs.Settings:AddToggle("BringMob", {
 
 Tabs.Settings:AddSlider("BringMobCount", {
     Title = "Bring Mob Count",
-    Default = Settings["Bring Mob Count"] or 2,
+    Default = Settings["Bring Mob Count"] or 6,
     Min = 2,
     Max = 6,
     Rounding = 0,
@@ -8301,7 +8157,7 @@ if getgenv().Mode == "CuttayV4" then
 end
 end)()
 
--- Auto Click is handled by the original FastAttack Heartbeat above.
+-- Auto Click is handled by the single 3tn Stepped connection above.
 -- Farm wrappers still call the same engine and share its existing cooldown.
 
 -- Worker: Auto Turn On Buso (same condition and timing as bnn.lua)
