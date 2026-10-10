@@ -3620,6 +3620,19 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         local humanoid = character and character:FindFirstChildOfClass("Humanoid")
         local root = character and character:FindFirstChild("HumanoidRootPart")
         if not character or not humanoid or not root or humanoid.Health <= 0 then break end
+        local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local myHumanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if not myRoot or not myHumanoid or myHumanoid.Health <= 0 then break end
+        local targetInShip = (root.Position - Vector3.new(920.478, 154.901, 32838.965)).Magnitude <= 3000
+        local inShip = (myRoot.Position - Vector3.new(920.478, 154.901, 32838.965)).Magnitude <= 3000
+        if targetInShip ~= inShip then
+            local arrived = targetInShip and EnterCursedShipForGhoul() or (not targetInShip and ExitCursedShipForGhoul())
+            if not arrived then
+                SetRaceUpgradeStatus(label .. ": " .. (targetInShip and "entering " or "exiting ") .. "Cursed Ship to follow " .. target.Name)
+                started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
+                continue -- Use the portal first; never tween directly across ship interiors.
+            end
+        end
         if lastHealth and humanoid.Health < lastHealth then lastDamage = tick() end
         lastHealth = humanoid.Health
         local blocked = character:FindFirstChildOfClass("ForceField") or (localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
