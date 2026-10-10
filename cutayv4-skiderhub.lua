@@ -3542,7 +3542,7 @@ end
 do
 local skillMouse
 pcall(function() skillMouse = require(ReplicatedStorage.Mouse) end)
-local ghoulWeapons, ghoulWeaponIndex, ghoulSkillAt = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0, -math.huge
+local ghoulWeapons, ghoulSkillAt = {"Melee", "Sword", "Gun", "Blox Fruit"}, -math.huge
 function UpdateGhoulV3Aim(root)
     if not root or not root.Parent then return end
     local lead = root.AssemblyLinearVelocity * 0.12
@@ -3553,15 +3553,14 @@ function UpdateGhoulV3Aim(root)
     if skillMouse then skillMouse.Hit = aim; skillMouse.Target = root end
     return aim
 end
-function GhoulV3UseSkill(root)
+function GhoulV3UseSkill(root, runtime)
+    if runtime and (not runtime.Active or runtime.Paused) then return end
     if tick() - ghoulSkillAt < 0.5 then return end
     local character = localPlayer.Character
     local main = localPlayer.PlayerGui:FindFirstChild("Main")
     local skills = main and main:FindFirstChild("Skills")
     if not character or not skills or not root or not root.Parent then return end
-    for _ = 1, #ghoulWeapons do
-        ghoulWeaponIndex = ghoulWeaponIndex % #ghoulWeapons + 1
-        local category = ghoulWeapons[ghoulWeaponIndex]
+    for _, category in ipairs(ghoulWeapons) do
         local name = NameWeapon(category)
         local tool = name and (character:FindFirstChild(name) or localPlayer.Backpack:FindFirstChild(name))
         if tool and tool:IsA("Tool") then
@@ -3571,11 +3570,11 @@ function GhoulV3UseSkill(root)
                     task.wait(0.05) -- Confirm equip/UI below instead of imposing a long fixed delay.
                 end
                 for _ = 1, 12 do
-                    if localPlayer.Character ~= character or not root.Parent then return end
+                    if localPlayer.Character ~= character or not root.Parent or (runtime and (not runtime.Active or runtime.Paused)) then return end
                     if character:FindFirstChild(name) and skills:FindFirstChild(name) then break end
                     task.wait(0.05)
                 end
-                if localPlayer.Character ~= character or not character:FindFirstChild(name) or not root.Parent then return end
+                if localPlayer.Character ~= character or not character:FindFirstChild(name) or not root.Parent or (runtime and (not runtime.Active or runtime.Paused)) then return end
                 local skill = CheckCDSkill(name, true, Settings["Select Skills " .. category])
                 if not skill then continue end
                 local key = Enum.KeyCode[skill.Name]
@@ -3584,7 +3583,11 @@ function GhoulV3UseSkill(root)
                 ghoulSkillAt = tick()
                 local ok, err = pcall(function()
                     VirtualInputManager:SendKeyEvent(true, key, false, game)
-                    task.wait(0.05)
+                    local hold = Settings["Use skill fast dont hold"] and 0.05
+                        or math.clamp(tonumber(Settings["Skill " .. skill.Name .. " " .. category]) or 0.5, 0.05, 2)
+                    local untilAt = tick() + hold
+                    repeat task.wait(0.05)
+                    until tick() >= untilAt or not root.Parent or localPlayer.Character ~= character or (runtime and (not runtime.Active or runtime.Paused))
                 end)
                 local released, releaseErr = pcall(function()
                     VirtualInputManager:SendKeyEvent(false, key, false, game)
@@ -3631,9 +3634,9 @@ function RaceV3Dash(character, side, state)
     local value = energy and tonumber(energy.Value)
     if not value or not maxValue or maxValue <= 0 then return end
     local ratio = value / maxValue
-    if ratio < 0.5 then state.Slow = true
+    if value <= 0 then state.Slow = true
     elseif ratio >= 0.7 then state.Slow = false end
-    if value <= 0 or tick() - state.At < (state.Slow and 3 or 0.25) then return end
+    if tick() - state.At < (state.Slow and 3 or 0.1) then return end
     state.At = tick()
     local direction = side > 0 and Enum.KeyCode.D or Enum.KeyCode.A
     pcall(function()
@@ -3648,6 +3651,7 @@ end
 function RunRaceV3PlayerKill(target, label, blacklist)
     if not target or target == localPlayer then return false end
     local previousSuppression = getgenv().GhoulV3NoAutoClick
+    local skillRuntime = { Active = true, Busy = false }
     getgenv().GhoulV3NoAutoClick = true -- Skill-only player combat for both Ghoul and Skypiea V3.
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
@@ -3666,6 +3670,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         local targetInShip = (root.Position - Vector3.new(920.478, 154.901, 32838.965)).Magnitude <= 3000
         local inShip = (myRoot.Position - Vector3.new(920.478, 154.901, 32838.965)).Magnitude <= 3000
         if targetInShip ~= inShip then
+            skillRuntime.Paused = true
             local arrived = targetInShip and EnterCursedShipForGhoul() or (not targetInShip and ExitCursedShipForGhoul())
             if not arrived then
                 SetRaceUpgradeStatus(label .. ": " .. (targetInShip and "entering " or "exiting ") .. "Cursed Ship to follow " .. target.Name)
@@ -3675,11 +3680,13 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         end
         local recoveryGoal, recovering = TweenManager.LowHealthGoal(root.CFrame * CFrame.new(0, 0, 3))
         if recovering then
+            skillRuntime.Paused = true
             SetRaceUpgradeStatus(label .. ": recovering above " .. target.Name .. " | HP " .. math.floor(myHumanoid.Health / myHumanoid.MaxHealth * 100) .. "%")
             ToTarget(recoveryGoal, false, true)
             started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
             continue
         end
+        skillRuntime.Paused = false
         if lastHealth and humanoid.Health < lastHealth then lastDamage = tick() end
         lastHealth = humanoid.Health
         local blocked = character:FindFirstChildOfClass("ForceField") or (localPlayer:DistanceFromCharacter(root.Position) < 50 and CheckPlayercantAttack(character))
@@ -3704,12 +3711,26 @@ function RunRaceV3PlayerKill(target, label, blacklist)
         if tick() - dodgeAt >= 0.6 then dodgeSide, dodgeAt = -dodgeSide, tick() end
         getgenv().GhoulV3AimRoot = root
         UpdateGhoulV3Aim(root)
-        local goal = root.CFrame * CFrame.new(dodgeSide * 10, 3, 12)
-        ToTarget(CFrame.new(goal.Position, root.Position), false, true)
-        if (myRoot.Position - root.Position).Magnitude < 50 and not blocked then
+        local distance = (myRoot.Position - root.Position).Magnitude
+        if distance <= 35 then
+            if getgenv().CuttayTweenNoclipActive then TweenManager.CancelCurrent() end
+            myHumanoid:Move(root.CFrame.RightVector * dodgeSide, false)
+        else
+            myHumanoid:Move(Vector3.zero, false)
+            local goal = root.CFrame * CFrame.new(0, 0, 12)
+            ToTarget(CFrame.new(goal.Position, root.Position), false, true)
+        end
+        if distance < 50 and not blocked then
             lastDamage = lastDamage or tick()
             RaceV3Dash(localPlayer.Character, dodgeSide, dash)
-            GhoulV3UseSkill(root)
+            if not skillRuntime.Busy then
+                skillRuntime.Busy = true
+                task.spawn(function()
+                    local skillOk, skillErr = pcall(GhoulV3UseSkill, root, skillRuntime)
+                    skillRuntime.Busy = false
+                    if not skillOk then warn("[Race V3 Skill] " .. tostring(skillErr)) end
+                end)
+            end
         end
     until tick() - (lastDamage or started) >= 90
         or not Settings["Auto Upgrade Race V2-V3"]
@@ -3724,6 +3745,8 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     end
     return humanoid ~= nil and humanoid.Health <= 0
     end)
+    skillRuntime.Active = false
+    pcall(function() localPlayer.Character:FindFirstChildOfClass("Humanoid"):Move(Vector3.zero, false) end)
     getgenv().GhoulV3NoAutoClick = previousSuppression
     getgenv().GhoulV3AimRoot = nil
     getgenv().GhoulV3SkillAim = nil
