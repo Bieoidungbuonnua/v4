@@ -2709,8 +2709,9 @@ getgenv().CuttayCyborgV3Gacha.LastBuyAt = getgenv().CuttayCyborgV3Gacha.LastBuyA
 getgenv().CuttayCyborgV3Gacha.Remote = ReplicatedStorage
     :WaitForChild("Modules")
     :WaitForChild("Net")
-    :WaitForChild("RF/GachaNetworkRF")
+    :FindFirstChild("RF/GachaNetworkRF") -- Optional Cyborg remote must not stall other races.
 getgenv().CuttayCyborgV3Gacha.CheckCooldown = function(self)
+    self.Remote = self.Remote or ReplicatedStorage.Modules.Net:FindFirstChild("RF/GachaNetworkRF")
     if not self.Remote then return false end
     local ok, response = pcall(function()
         return self.Remote:InvokeServer({ Context = "Check", BoxName = "ZiolesGacha" })
@@ -2720,6 +2721,7 @@ getgenv().CuttayCyborgV3Gacha.CheckCooldown = function(self)
         and response.Cooldown.RequirementMet == true
 end
 getgenv().CuttayCyborgV3Gacha.Buy = function(self)
+    self.Remote = self.Remote or ReplicatedStorage.Modules.Net:FindFirstChild("RF/GachaNetworkRF")
     if not self.Remote then return false end
     if tick() - (tonumber(self.LastBuyAt) or -math.huge) < 5 then return false end
     self.LastBuyAt = tick()
@@ -3269,10 +3271,12 @@ function DetectPlayerAngel()
 		if
 			player ~= localPlayer
 			and player:FindFirstChild("Data") and player.Data:FindFirstChild("Race") and player.Data.Race.Value == "Skypiea"
+			and Workspace:FindFirstChild("Characters") and Workspace.Characters:FindFirstChild(player.Name)
 			and not table.find(items16, player.Name)
 			and player.Character and player.Character:FindFirstChild("Humanoid")
 			and player.Character.Humanoid.Health > 0
 			and player.Character:FindFirstChild("HumanoidRootPart")
+			and not player.Character:FindFirstChildOfClass("ForceField")
 		then
 			return player
 		end
@@ -3598,6 +3602,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
+    if not ghoulFight and blacklist and not table.find(blacklist, target.Name) then table.insert(blacklist, target.Name) end
     SetRaceUpgradeStatus(label .. ": attacking " .. target.Name)
     repeat
         task.wait(0.1)
@@ -3642,8 +3647,8 @@ function RunRaceV3PlayerKill(target, label, blacklist)
                 TweenManager.CancelTweenOnly()
                 myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 3)
             end
-            -- Preserve the existing Angel flow.
-            AutoAllSkill(true, 0.03)
+            -- BNN's ready-skill/equip flow; reuse the existing weapon worker.
+            GhoulV3UseSkill(root)
             if not ghoulFight then pcall(getgenv().AttackFunctionnhungSuperTrial) end
         else
             ToTarget(root.CFrame * CFrame.new(0, 0, 3))
@@ -3666,10 +3671,10 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     if ghoulFight then
         getgenv().GhoulV3NoAutoClick = previousSuppression
         getgenv().GhoulV3AimRoot = nil
-        getgenv().GhoulV3SkillAim = nil
-        getgenv().AimPos = nil
-        TweenManager.CancelCurrent()
     end
+    getgenv().GhoulV3SkillAim = nil
+    getgenv().AimPos = nil
+    TweenManager.CancelCurrent()
     if not ok then warn("[Race V2-V3] " .. label .. ": " .. tostring(result)); return false end
     return result
 end
@@ -3720,11 +3725,11 @@ function UpgradeRaceV2AndV3()
             if not DetectItemPlr("Flower 1") then
                 SetRaceUpgradeStatus("Race V2: collecting Flower 1 (Red)")
                 local flower = Workspace:FindFirstChild("Flower1")
-                if flower then ToTarget(flower.CFrame) end
+                if flower then ToTarget(flower.CFrame) else SetRaceUpgradeStatus("Race V2: Flower 1 not spawned / waiting daytime", true) end
             elseif not DetectItemPlr("Flower 2") then
                 SetRaceUpgradeStatus("Race V2: collecting Flower 2 (Blue)")
                 local flower = Workspace:FindFirstChild("Flower2")
-                if flower then ToTarget(flower.CFrame) end
+                if flower then ToTarget(flower.CFrame) else SetRaceUpgradeStatus("Race V2: Flower 2 not spawned / waiting night", true) end
             elseif not DetectItemPlr("Flower 3") then
                 local swan = DetectMob("Swan Pirate")
                 if not swan then
@@ -3772,7 +3777,7 @@ function UpgradeRaceV2AndV3()
                         else
                             TweenManager.FollowMob(swan, CFrame.new(7, 20, 0))
                         end
-                    until not IsMobAlive(swan) or not Settings["Auto Upgrade Race V2-V3"]
+                    until not IsMobAlive(swan) or DetectItemPlr("Flower 3") or not Settings["Auto Upgrade Race V2-V3"]
                 end
             end
             return false
@@ -3896,7 +3901,10 @@ function UpgradeRaceV2AndV3()
         if target then
             RunRaceV3PlayerKill(target, "Angel V3", items16)
         else
-            SetRaceUpgradeStatus("Angel V3: waiting for another Angel player")
+            SetRaceUpgradeStatus("Angel V3: no eligible Angel player; hopping server")
+            TweenManager.CancelCurrent()
+            HopServer(8)
+            task.wait(5)
         end
     elseif race == "Ghoul" then
         local target = DetectPlayerGhoul()
@@ -10027,7 +10035,13 @@ end)
     task.wait(0.5)
 
     task.spawn(function()
-        while joinV4RuntimeAlive() and task.wait(0.4) do pcall(updateUI) end
+        while joinV4RuntimeAlive() and task.wait(0.4) do
+            local ok, err = pcall(updateUI)
+            if not ok and tick() - (getgenv().JoinV4UIErrorAt or 0) >= 5 then
+                getgenv().JoinV4UIErrorAt = tick()
+                warn("[JoinV4] UI update failed: " .. tostring(err))
+            end
+        end
     end)
 
     if not isHelper and not isMain then
