@@ -4383,8 +4383,42 @@ function EnterCursedShipForGhoul()
     return false
 end
 
+function ExitCursedShipForGhoul()
+    local character = localPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health <= 0 then return false end
+    if localPlayer:GetAttribute("CurrentLocation") ~= "Cursed Ship"
+        and (root.Position - Vector3.new(920.478, 154.901, 32838.965)).Magnitude > 3000 then
+        getgenv().GhoulExitRequestAt = nil
+        return true
+    end
+    SetGhoulStatus("exiting Cursed Ship")
+    if humanoid.Sit then humanoid.Jump = true; return false end
+    local map = Workspace:FindFirstChild("Map")
+    local inside = map and map:FindFirstChild("GhostShipInterior")
+    local outside = map and map:FindFirstChild("GhostShip")
+    local gate = inside and inside:FindFirstChild("Teleport")
+    local spawn = outside and outside:FindFirstChild("TeleportSpawn")
+    local gateCF = gate and gate:IsA("BasePart") and gate.CFrame or CFrame.new(920.478, 154.901, 32838.965)
+    if (root.Position - gateCF.Position).Magnitude > 12 then
+        ToTarget(CFrame.new(gateCF.Position) * (root.CFrame - root.Position), false, true)
+    elseif tick() - (getgenv().GhoulExitRequestAt or -math.huge) >= 4 then
+        TweenManager.CancelCurrent()
+        getgenv().GhoulExitRequestAt = tick()
+        local tags = game:GetService("CollectionService")
+        if not tags:HasTag(localPlayer, "Teleporting") then
+            tags:AddTag(localPlayer, "Teleporting")
+            task.delay(1.5, function() tags:RemoveTag(localPlayer, "Teleporting") end)
+        end
+        local spawnPos = spawn and spawn:IsA("BasePart") and spawn.Position or Vector3.new(-6508.558, 89.035, -132.840)
+        ReplicatedStorage.Remotes.CommF_:InvokeServer("requestEntrance", spawnPos)
+    end
+    return false
+end
+
 function GetRaceGhoul()
-    if localPlayer.Data.Race.Value == "Ghoul" then return true end
+    if localPlayer.Data.Race.Value == "Ghoul" then return ExitCursedShipForGhoul() end
     if not GoToSea(getgenv().CheckPlaceId2) then
         SetGhoulStatus("traveling to Sea 2")
         return false
@@ -4392,7 +4426,7 @@ function GetRaceGhoul()
     local unlocked = ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4, true)
     local changeState = tonumber(unlocked) ~= 2
         and ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "Change", 4, true)
-    if localPlayer.Data.Race.Value == "Ghoul" then return true end
+    if localPlayer.Data.Race.Value == "Ghoul" then return ExitCursedShipForGhoul() end
     if tonumber(unlocked) == 2 or tonumber(changeState) == 1 then
         SetGhoulStatus("changing to unlocked race")
         ReplicatedStorage.Remotes.CommF_:InvokeServer("Ectoplasm", "BuyCheck", 4)
@@ -4400,10 +4434,10 @@ function GetRaceGhoul()
         if localPlayer.Data.Race.Value ~= "Ghoul" then
             SetGhoulStatus("change pending; response: " .. tostring(result))
         end
-        return localPlayer.Data.Race.Value == "Ghoul"
+        return localPlayer.Data.Race.Value == "Ghoul" and ExitCursedShipForGhoul()
     end
     if not EnterCursedShipForGhoul() then return false end
-    if localPlayer.Data.Race.Value == "Ghoul" then return true end
+    if localPlayer.Data.Race.Value == "Ghoul" then return ExitCursedShipForGhoul() end
     local target
     if not CheckCountItem("Ectoplasm", 100) then
         local names = { "Ship Deckhand", "Ship Steward", "Ship Officer", "Ship Engineer" }
@@ -4436,7 +4470,7 @@ function GetRaceGhoul()
             end
             SetGhoulStatus("purchase response: " .. tostring(result))
         end
-        return localPlayer.Data.Race.Value == "Ghoul"
+        return localPlayer.Data.Race.Value == "Ghoul" and ExitCursedShipForGhoul()
     else
         target = CheckNameBoss("Cursed Captain")
         if not target then
@@ -8095,6 +8129,7 @@ local function CuttayRunStep()
         CuttayAcquireRace(targetRace)
         return
     end
+    if not ExitCursedShipForGhoul() then return end
 
     if CuttayIsRaceFullGear() then
         getgenv().CuttayResourceFarmActive = false
