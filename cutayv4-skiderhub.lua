@@ -877,6 +877,21 @@ function TweenManager.CancelCurrent()
     if humanoid then humanoid.PlatformStand = false end
 end
 
+function TweenManager.LowHealthGoal(goal)
+    local character = localPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if TweenManager.lowHealthCharacter ~= character then
+        TweenManager.lowHealthCharacter, TweenManager.lowHealthRetreat = character, false
+    end
+    if humanoid and humanoid.MaxHealth > 0 then
+        local health = humanoid.Health / humanoid.MaxHealth
+        if health < 0.3 then TweenManager.lowHealthRetreat = true
+        elseif health > 0.8 then TweenManager.lowHealthRetreat = false end
+    end
+    if TweenManager.lowHealthRetreat then return goal + Vector3.new(0, 500, 0), true end
+    return goal, false
+end
+
 function TweenManager.FollowMob(target, offset, worldSpace)
     local root = target and target:FindFirstChild("HumanoidRootPart")
     local humanoid = target and target:FindFirstChildOfClass("Humanoid")
@@ -930,6 +945,10 @@ function ToTarget(targetCFrame, skipTween, forceTween, preserveCollision, follow
 
     local targetPos = typeof(targetCFrame) == "CFrame" and targetCFrame.Position or targetCFrame
     local targetCF = typeof(targetCFrame) == "CFrame" and targetCFrame or CFrame.new(targetPos)
+    if followUpdate then
+        targetCF = TweenManager.LowHealthGoal(targetCF)
+        targetPos = targetCF.Position
+    end
     local dist = (hrp.Position - targetPos).Magnitude
 
     if skipTween or (dist <= (followUpdate and 2.5 or 15) and not forceTween) then
@@ -3523,7 +3542,7 @@ end
 do
 local skillMouse
 pcall(function() skillMouse = require(ReplicatedStorage.Mouse) end)
-local ghoulWeapons, ghoulWeaponIndex, ghoulSkillAt = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0, 0
+local ghoulWeapons, ghoulWeaponIndex = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0
 function UpdateGhoulV3Aim(root)
     if not root or not root.Parent then return end
     local lead = root.AssemblyLinearVelocity * 0.12
@@ -3535,7 +3554,6 @@ function UpdateGhoulV3Aim(root)
     return aim
 end
 function GhoulV3UseSkill(root)
-    if tick() - ghoulSkillAt < 0.75 then return end
     local character = localPlayer.Character
     local main = localPlayer.PlayerGui:FindFirstChild("Main")
     local skills = main and main:FindFirstChild("Skills")
@@ -3549,7 +3567,7 @@ function GhoulV3UseSkill(root)
             if not skills:FindFirstChild(name) or CheckCDSkill(name, true, Settings["Select Skills " .. category]) then
                 if not character:FindFirstChild(name) then
                     EquipTool(name, false, true)
-                    task.wait(0.15) -- Let the equipped tool activate before sending input.
+                    task.wait(0.05) -- Confirm equip/UI below instead of imposing a long fixed delay.
                 end
                 for _ = 1, 12 do
                     if localPlayer.Character ~= character or not root.Parent then return end
@@ -3562,10 +3580,9 @@ function GhoulV3UseSkill(root)
                 local key = Enum.KeyCode[skill.Name]
                 if not key then continue end
                 UpdateGhoulV3Aim(root)
-                ghoulSkillAt = tick()
                 local ok, err = pcall(function()
                     VirtualInputManager:SendKeyEvent(true, key, false, game)
-                    task.wait(0.2)
+                    task.wait(0.05)
                 end)
                 local released, releaseErr = pcall(function()
                     VirtualInputManager:SendKeyEvent(false, key, false, game)
@@ -3632,6 +3649,13 @@ function RunRaceV3PlayerKill(target, label, blacklist)
                 started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
                 continue -- Use the portal first; never tween directly across ship interiors.
             end
+        end
+        local recoveryGoal, recovering = TweenManager.LowHealthGoal(root.CFrame * CFrame.new(0, 0, 3))
+        if recovering then
+            SetRaceUpgradeStatus(label .. ": recovering above " .. target.Name .. " | HP " .. math.floor(myHumanoid.Health / myHumanoid.MaxHealth * 100) .. "%")
+            ToTarget(recoveryGoal, false, true)
+            started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
+            continue
         end
         if lastHealth and humanoid.Health < lastHealth then lastDamage = tick() end
         lastHealth = humanoid.Health
