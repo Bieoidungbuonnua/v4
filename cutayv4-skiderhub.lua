@@ -8989,7 +8989,7 @@ end)
     getgenv().JoinV4RuntimeStatus = "Starting"
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "https://apiibf.kurinian-hub.xyz/api/bloxfruit/fullmoon"
+    local FM_API_URL      = "http://mbasic6.pikamc.vn:25153/fullmoon"
     local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
@@ -9178,7 +9178,7 @@ end)
 
     -- FIND FM SERVER: endfullmoon -> fullmoonin -> ordinary Fullmoon row.
     local function findFMServer()
-        getgenv().JoinV4FMFilterStatus = "requesting kurinian Full Moon API"
+        getgenv().JoinV4FMFilterStatus = "requesting aggregate Full Moon API"
         if not FM_API_URL or FM_API_URL == "" then
             getgenv().JoinV4FMFilterStatus = "FM API URL missing"
             return nil
@@ -9240,6 +9240,11 @@ end)
             getgenv().JoinV4FMFilterStatus = "FM API JSON decode failed"
             return nil
         end
+        local sourceType = tostring(parsed.type or ""):lower()
+        if parsed.success ~= true or (sourceType ~= "main" and sourceType ~= "duphong") then
+            getgenv().JoinV4FMFilterStatus = "FM API failed or unsupported type: " .. sourceType
+            return nil
+        end
 
         local entries
         if type(parsed.data) == "table" and #parsed.data > 0 then
@@ -9267,14 +9272,14 @@ end)
             local incomingValue = getField(v, "fullmoonin", "fullMoonIn", "full_moon_in")
             local endSeconds = parseClock(endValue)
             local incomingSeconds = parseClock(incomingValue)
-            local moonName = tostring(getField(v, "moon", "Moon") or ""):lower():gsub("%s+", "")
+            local moonName = tostring(getField(v, sourceType == "duphong" and "name" or "moon") or ""):lower():gsub("%s+", "")
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
             currentPlaceRows = currentPlaceRows + 1
-            if not players or players < 0 or players >= maxPlayers then continue end
+            if not players or players < 2 or players > 6 or players >= maxPlayers then continue end
 
             -- Priority 1: active Full Moon with 4:00-9:00 remaining.
             if endSeconds and endSeconds >= 4 * 60 and endSeconds <= 9 * 60 then
@@ -9296,10 +9301,9 @@ end)
                 continue
             end
 
-            -- Priority 3: ordinary records have no timer fields. The requested
-            -- 2-7 player restriction applies only to this fallback group.
+            -- Priority 3: no timer fields; main uses moon, duphong uses name.
+            -- All three groups require 2-6 players; age is not a moon timer.
             if endValue == nil and incomingValue == nil and moonName == "fullmoon"
-                and players >= 2 and players <= 7
             then
                 table.insert(ordinaryCandidates, {
                     jobId = tostring(jobId),
