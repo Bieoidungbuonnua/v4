@@ -3523,7 +3523,7 @@ end
 do
 local skillMouse
 pcall(function() skillMouse = require(ReplicatedStorage.Mouse) end)
-local ghoulWeapons, ghoulWeaponIndex = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0
+local ghoulWeapons, ghoulWeaponIndex, ghoulSkillAt = {"Melee", "Sword", "Gun", "Blox Fruit"}, 0, 0
 function UpdateGhoulV3Aim(root)
     if not root or not root.Parent then return end
     local lead = root.AssemblyLinearVelocity * 0.12
@@ -3535,6 +3535,7 @@ function UpdateGhoulV3Aim(root)
     return aim
 end
 function GhoulV3UseSkill(root)
+    if tick() - ghoulSkillAt < 0.75 then return end
     local character = localPlayer.Character
     local main = localPlayer.PlayerGui:FindFirstChild("Main")
     local skills = main and main:FindFirstChild("Skills")
@@ -3545,18 +3546,20 @@ function GhoulV3UseSkill(root)
         local name = NameWeapon(category)
         local tool = name and (character:FindFirstChild(name) or localPlayer.Backpack:FindFirstChild(name))
         if tool and tool:IsA("Tool") then
-            if not skills:FindFirstChild(name) then EquipTool(name, false, true); return end
+            if not skills:FindFirstChild(name) then ghoulSkillAt = tick(); EquipTool(name, false, true); return end
             local skill = CheckCDSkill(name, true, Settings["Select Skills " .. category])
             if skill then
+                ghoulSkillAt = tick()
                 if not character:FindFirstChild(name) then
                     EquipTool(name, false, true)
-                    task.wait(0.05)
+                    task.wait(0.15)
                 end
                 if localPlayer.Character ~= character or not character:FindFirstChild(name) or not root.Parent then return end
                 UpdateGhoulV3Aim(root)
+                ghoulSkillAt = tick()
                 local ok, err = pcall(function()
                     VirtualInputManager:SendKeyEvent(true, skill.Name, false, game)
-                    task.wait(0.05)
+                    task.wait(0.1)
                 end)
                 VirtualInputManager:SendKeyEvent(false, skill.Name, false, game)
                 if not ok then error(err) end
@@ -3598,7 +3601,7 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     if not target or target == localPlayer then return false end
     local ghoulFight = label == "Ghoul V3"
     local previousSuppression = getgenv().GhoulV3NoAutoClick
-    if ghoulFight then getgenv().GhoulV3NoAutoClick = true end
+    getgenv().GhoulV3NoAutoClick = true -- Skill-only player combat for both Ghoul and Skypiea V3.
     local ok, result = pcall(function()
     TweenManager.CancelCurrent() -- Player positioning must not fight an earlier mob/chest tween.
     local started, lastDamage, lastHealth, blockedSince = tick(), nil, nil, nil
@@ -3650,7 +3653,6 @@ function RunRaceV3PlayerKill(target, label, blacklist)
             end
             -- BNN's ready-skill/equip flow; reuse the existing weapon worker.
             GhoulV3UseSkill(root)
-            if not ghoulFight then pcall(getgenv().AttackFunctionnhungSuperTrial) end
         else
             ToTarget(root.CFrame * CFrame.new(0, 0, 3))
         end
@@ -3667,10 +3669,8 @@ function RunRaceV3PlayerKill(target, label, blacklist)
     end
     return humanoid ~= nil and humanoid.Health <= 0
     end)
-    if ghoulFight then
-        getgenv().GhoulV3NoAutoClick = previousSuppression
-        getgenv().GhoulV3AimRoot = nil
-    end
+    getgenv().GhoulV3NoAutoClick = previousSuppression
+    getgenv().GhoulV3AimRoot = nil
     getgenv().GhoulV3SkillAim = nil
     getgenv().AimPos = nil
     TweenManager.CancelCurrent()
