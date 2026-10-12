@@ -1119,12 +1119,13 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER (API kurinian-hub: 2-6 player, chi server dang FM co endfullmoon 4:00-9:00, uu tien con lai lau nhat)
-    local function findFMServer()
+    -- FIND FM SERVER: API kurinian hien tai tra ve moon = "Fullmoon"/"Full Moon" (khong co endfullmoon/fullmoonin)
+    -- Uu tien: endfullmoon 4:00-9:00 (neu co field) -> server moon Fullmoon 2-8 player (it player nhat truoc)
+    local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
         local FM_MIN_PLAYERS = 2
-        local FM_MAX_PLAYERS = 6
+        local FM_MAX_PLAYERS = 8
         local FM_MIN_SECONDS = 240   -- endfullmoon toi thieu 4:00
         local FM_MAX_SECONDS = 540   -- endfullmoon toi da 9:00
 
@@ -1153,38 +1154,64 @@ end
                 break
             end
         end
-        if not resp or resp.StatusCode ~= 200 then return nil end
+        if not resp or resp.StatusCode ~= 200 then
+            getgenv().JoinV4FMFilterStatus = "API loi"
+            return nil
+        end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
-        if not ok2 or type(parsed) ~= "table" then return nil end
+        if not ok2 or type(parsed) ~= "table" then
+            getgenv().JoinV4FMFilterStatus = "API loi"
+            return nil
+        end
 
         local entries = parsed.data
-        if type(entries) ~= "table" or #entries == 0 then return nil end
+        if type(entries) ~= "table" or #entries == 0 then
+            getgenv().JoinV4FMFilterStatus = "API rong"
+            return nil
+        end
 
-        local candidates = {}
+        local endCands, plainCands = {}, {}
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
             local jobId   = v.jobid
             local placeId = v.placeid
             local players = tonumber(v.players)
-            local ttf     = parseMMSS(v.endfullmoon)  -- giay con lai truoc khi Full Moon ket thuc
-            if v.fullmoonin ~= nil then continue end   -- chua toi FM -> bo qua
             if not jobId or jobId == "" then continue end
-            if tostring(jobId) == tostring(game.JobId) then continue end
-            local cached = fmJoinedCache[tostring(jobId)]
+            local jid = tostring(jobId)
+            if jid == tostring(game.JobId) then continue end
+            if excluded and excluded[jid] then continue end
+            local cached = fmJoinedCache[jid]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
             if not players or players < FM_MIN_PLAYERS or players > FM_MAX_PLAYERS then continue end
-            if not ttf or ttf < FM_MIN_SECONDS or ttf > FM_MAX_SECONDS then continue end
-            table.insert(candidates, {jobId = tostring(jobId), players = players, ttf = ttf})
+
+            local ttf = parseMMSS(v.endfullmoon)
+            local moonName = tostring(v.moon or ""):lower():gsub("%s+", "")
+            if ttf then
+                if ttf >= FM_MIN_SECONDS and ttf <= FM_MAX_SECONDS then
+                    table.insert(endCands, {jobId = jid, players = players, ttf = ttf})
+                end
+            elseif v.fullmoonin == nil and moonName == "fullmoon" then
+                table.insert(plainCands, {jobId = jid, players = players})
+            end
         end
-        if #candidates == 0 then return nil end
-        -- Uu tien endfullmoon con lai lau nhat, bang nhau thi it player hon
-        table.sort(candidates, function(a, b)
-            if a.ttf ~= b.ttf then return a.ttf > b.ttf end
-            return a.players < b.players
-        end)
-        return candidates[1].jobId
+
+        if #endCands > 0 then
+            getgenv().JoinV4FMFilterStatus = "endfullmoon"
+            table.sort(endCands, function(a, b)
+                if a.ttf ~= b.ttf then return a.ttf > b.ttf end
+                return a.players < b.players
+            end)
+            return endCands[1].jobId
+        end
+        if #plainCands > 0 then
+            getgenv().JoinV4FMFilterStatus = "Fullmoon 2-8p"
+            table.sort(plainCands, function(a, b) return a.players < b.players end)
+            return plainCands[1].jobId
+        end
+        getgenv().JoinV4FMFilterStatus = "khong co server Fullmoon 2-8p"
+        return nil
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
@@ -2028,7 +2055,7 @@ end
                 if not isFetching and nowTick - lastFmApiAt >= FM_API_INTERVAL then
                     lastFmApiAt = nowTick; isFetching = true
                     task.spawn(function()
-                        local found = findFMServer()
+                        local found = findFMServer(takenJobIds)
                         -- Fallback: neu FM API khong co server, thu Near Moon API
                         if not found and NEAR_MOON_ENABLED then
                             found = findNearMoonServer()
@@ -2038,7 +2065,6 @@ end
                         end
                         if found and takenJobIds[found] then
                             warn("[JoinV4][HopFM] Server " .. found:sub(1,8) .. "... da bi " .. takenJobIds[found] .. " claim - tim server khac")
-                            fmJoinedCache[found] = os.time()
                             lastFmApiResult = nil
                         else
                             lastFmApiResult = (found and found ~= game.JobId) and found or nil
@@ -2052,7 +2078,6 @@ end
                     local hopT = lastFmApiResult
                     if takenJobIds[hopT] then
                         warn("[JoinV4][HopFM] Truoc hop phat hien " .. takenJobIds[hopT] .. " dang o server nay - bo qua")
-                        fmJoinedCache[hopT] = os.time()
                         lastFmApiResult = nil; lastHopT = ""
                     elseif hopT ~= lastHopT then
                         lastHopAt_ = nowTick; lastHopT = hopT
@@ -2106,14 +2131,17 @@ end
 
             while task.wait(SYNC_INTERVAL) do
                 pcall(function()
-                    if fmHopPending and tick() < fmPendingCheckAt then
+                    local settling = fmHopPending and tick() < fmPendingCheckAt
+                    local hasFM = isNight() and isFullMoon()
+
+                    -- LUON gui sync, ke ca luc settling, de HopFM khong bi server xoa khoi accounts
+                    local resp = syncToAPI()
+
+                    if settling then
                         setStatus(string.format("Settling... %ds", math.ceil(fmPendingCheckAt - tick())))
                         return
                     end
                     fmHopPending = false
-                    local hasFM = isNight() and isFullMoon()
-
-                    local resp = syncToAPI()
 
                     if isHopFM then
                         setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
@@ -2131,9 +2159,12 @@ end
                     local hopFMFMState = "?"  -- debug: fullMoon cua HopFM la gi
                     local accCount = 0
 
+                    local hopFMKey = {}   -- ten HopFM (lowercase) -> ten goc trong config
+                    for n in pairs(MY_HopFMSet) do hopFMKey[tostring(n):lower()] = n end
+
                     for name, data in pairs(resp.accounts) do
                         accCount = accCount + 1
-                        if MY_HopFMSet[name] and name ~= USERNAME then
+                        if hopFMKey[tostring(name):lower()] and name ~= USERNAME then
                             hopFMFound = true
                             local helperHasFM  = (data.fullMoon  == true) or (data.fullmoon  == true)
                             local helperNearFM = (data.nearFM    == true) or (data.nearfm    == true)
@@ -2157,7 +2188,13 @@ end
                         if hopFMFound then
                             setStatus("Waiting HopFM FM: " .. hopFMFMState .. " | acc=" .. accCount)
                         else
-                            setStatus("HopFM not in group | acc=" .. accCount .. (hasFM and " [FM here]" or ""))
+                            local expectNames, seenNames = {}, {}
+                            for n in pairs(MY_HopFMSet) do table.insert(expectNames, tostring(n)) end
+                            for n in pairs(resp.accounts) do table.insert(seenNames, tostring(n)) end
+                            setStatus(("HopFM khong thay: [%s] | acc=%d seen=[%s]"):format(
+                                table.concat(expectNames, ","),
+                                accCount,
+                                table.concat(seenNames, ",")):sub(1, 160))
                         end
                         lastHopTHelper = ""; return
                     end
