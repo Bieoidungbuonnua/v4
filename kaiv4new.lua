@@ -1302,28 +1302,84 @@ end
         return ok and (val or 9999) or 9999
     end
 
+    if type(getgenv().JoinV4RejectedHopJobs) ~= "table" then
+        getgenv().JoinV4RejectedHopJobs = {}
+    end
+
     -- TELEPORT
     local TeleportService = game:GetService("TeleportService")
     TeleportService.TeleportInitFailed:Connect(function(_player, result, _msg)
-        local dead = result == Enum.TeleportResult.Failure
-            or result == Enum.TeleportResult.GameEnded
-            or result == Enum.TeleportResult.Unauthorized
-        if dead and lastFmApiResult and lastFmApiResult ~= "" then
-            warn("[JoinV4] TeleportInitFailed (" .. tostring(result) .. ") -> blacklist " .. lastFmApiResult:sub(1,8))
-            _failedHopJobId = lastFmApiResult
-            fmJoinedCache[lastFmApiResult] = os.time()
-            lastFmApiResult = nil
-            lastFmApiAt     = 0
+        local lastAttempt = getgenv().JoinV4LastHopAttempt
+        local failedJobId = nil
+        if type(lastAttempt) == "table"
+            and tostring(lastAttempt.SourceJobId or "") == tostring(game.JobId)
+            and tick() - (tonumber(lastAttempt.At) or 0) <= 30
+        then
+            failedJobId = tostring(lastAttempt.JobId or "")
+        end
+        if not failedJobId or failedJobId == "" then
+            failedJobId = lastFmApiResult
+        end
+        -- This event only fires for a failed teleport. Handle every result,
+        -- including GameNotFound/GameFull/Flooded (771 was previously missed).
+        if failedJobId and failedJobId ~= "" then
+            warn("[JoinV4] TeleportInitFailed (" .. tostring(result) .. ") -> blacklist " .. failedJobId:sub(1,8))
+            _failedHopJobId = failedJobId
+            fmJoinedCache[failedJobId] = os.time()
+            getgenv().JoinV4RejectedHopJobs[failedJobId] = os.time()
+            if lastFmApiResult == failedJobId then
+                lastFmApiResult = nil
+            end
+            lastFmApiAt = 0
+            getgenv().JoinV4LastHopAttempt = nil
         end
     end)
 
-    local function hopTo(jobId)
-        pcall(function()
-            local sb = ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-            if sb then
-                sb:InvokeServer("teleport", jobId)
-            end
+    local function hopTo(jobId, targetPlaceId, allowWindowRetry)
+        jobId = tostring(jobId or "")
+        if jobId == "" or jobId == tostring(game.JobId) then return false end
+        local failedAt = fmJoinedCache[jobId]
+        if not allowWindowRetry and failedAt and os.time() - failedAt < FM_CACHE_EXPIRE then
+            return false, "cached"
+        end
+        local rejectedAt = getgenv().JoinV4RejectedHopJobs[jobId]
+        if not allowWindowRetry and rejectedAt and os.time() - rejectedAt < 1800 then
+            return false, "rejected"
+        end
+
+        -- Never send an unverified or cross-place JobId to __ServerBrowser.
+        -- Account sync and the Full Moon endpoint must both prove that the
+        -- JobId belongs to the exact sub-place the player is currently in.
+        local verifiedPlaceId = tonumber(targetPlaceId)
+        local currentPlaceId = tonumber(game.PlaceId)
+        if not verifiedPlaceId or verifiedPlaceId ~= currentPlaceId then
+            warn(string.format(
+                "[JoinV4] Blocked JobId %s: target PlaceId=%s, current PlaceId=%s",
+                jobId:sub(1, 8), tostring(targetPlaceId), tostring(game.PlaceId)
+            ))
+            fmJoinedCache[jobId] = os.time()
+            getgenv().JoinV4RejectedHopJobs[jobId] = os.time()
+            return false, "wrong_place"
+        end
+
+        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+            or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+        if not sb then return false, "no_server_browser" end
+
+        -- Exact mechanism from the stable reference: callers control the retry
+        -- window; every call sends one __ServerBrowser teleport request.
+        local now = tick()
+        getgenv().JoinV4LastHopAttempt = {
+            JobId = jobId,
+            PlaceId = verifiedPlaceId,
+            SourceJobId = tostring(game.JobId),
+            At = now,
+        }
+
+        local ok = pcall(function()
+            sb:InvokeServer("teleport", jobId)
         end)
+        return ok, ok and "sent" or "invoke_failed"
     end
 
     -- NATIVE V4 STATUS CHECK
@@ -2086,7 +2142,7 @@ end
                         writeHopFMJobIdFile("")   -- Xoa claim cu truoc khi teleport sang FM moi
                         pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
                         task.spawn(function()
-                            hopTo(hopT)
+                            hopTo(hopT, game.PlaceId)
                             task.wait(12)   -- cho teleport hoan tat (toi da 12s)
                             isHopping = false
                         end)
@@ -2154,47 +2210,53 @@ end
                     end
 
                     local fmJobId = nil
+                    local fmPlaceId = nil
                     local fmWho   = nil
                     local hopFMFound = false   -- debug: co tim thay HopFM trong accounts khong
                     local hopFMFMState = "?"  -- debug: fullMoon cua HopFM la gi
+                    local rejectedPlaceId = nil
                     local accCount = 0
-
-                    local hopFMKey = {}   -- ten HopFM (lowercase) -> ten goc trong config
-                    for n in pairs(MY_HopFMSet) do hopFMKey[tostring(n):lower()] = n end
 
                     for name, data in pairs(resp.accounts) do
                         accCount = accCount + 1
-                        if hopFMKey[tostring(name):lower()] and name ~= USERNAME then
+                        if MY_HopFMSet[name] and name ~= USERNAME then
                             hopFMFound = true
                             local helperHasFM  = (data.fullMoon  == true) or (data.fullmoon  == true)
                             local helperNearFM = (data.nearFM    == true) or (data.nearfm    == true)
+                            local accountPlaceId = tonumber(data.placeid or data.placeId or data.PlaceId)
                             hopFMFMState = tostring(data.fullMoon or data.fullmoon or "nil")
                             if helperHasFM then
                                 local jid = tostring(data.jobid or data.jobId or "")
-                                if jid ~= "" then
-                                    fmJobId = jid; fmWho = name; break
+                                if jid ~= "" and accountPlaceId == tonumber(game.PlaceId) then
+                                    fmJobId = jid; fmPlaceId = accountPlaceId; fmWho = name; break
+                                elseif jid ~= "" then
+                                    rejectedPlaceId = accountPlaceId or "missing"
                                 end
                             elseif helperNearFM then
                                 -- HopFM dang o near-moon server, follow vao de chuan bi
                                 local jid = tostring(data.jobid or data.jobId or "")
-                                if jid ~= "" and jid ~= game.JobId then
-                                    fmJobId = jid; fmWho = name .. "[NearFM]"; break
+                                if jid ~= "" and jid ~= game.JobId
+                                    and accountPlaceId == tonumber(game.PlaceId)
+                                then
+                                    fmJobId = jid; fmPlaceId = accountPlaceId; fmWho = name .. "[NearFM]"; break
+                                elseif jid ~= "" and jid ~= game.JobId then
+                                    rejectedPlaceId = accountPlaceId or "missing"
                                 end
                             end
                         end
                     end
 
                     if not fmJobId then
-                        if hopFMFound then
+                        if rejectedPlaceId ~= nil then
+                            setStatus("Skip HopFM PlaceId " .. tostring(rejectedPlaceId) .. " != " .. tostring(game.PlaceId))
+                        elseif hopFMFound then
                             setStatus("Waiting HopFM FM: " .. hopFMFMState .. " | acc=" .. accCount)
                         else
                             local expectNames, seenNames = {}, {}
                             for n in pairs(MY_HopFMSet) do table.insert(expectNames, tostring(n)) end
                             for n in pairs(resp.accounts) do table.insert(seenNames, tostring(n)) end
                             setStatus(("HopFM khong thay: [%s] | acc=%d seen=[%s]"):format(
-                                table.concat(expectNames, ","),
-                                accCount,
-                                table.concat(seenNames, ",")):sub(1, 160))
+                                table.concat(expectNames, ","), accCount, table.concat(seenNames, ",")):sub(1, 160))
                         end
                         lastHopTHelper = ""; return
                     end
@@ -2208,7 +2270,7 @@ end
                     if fmJobId ~= lastHopTHelper then
                         lastHopAtHelper = nowTick; lastHopTHelper = fmJobId
                         setStatus("Join " .. (fmWho or "HopFM") .. " -> " .. fmJobId:sub(1,8) .. "...")
-                        hopTo(fmJobId); task.wait(0.5)
+                        hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                     else
                         local el = nowTick - lastHopAtHelper
                         if el >= 8 then
@@ -2217,7 +2279,7 @@ end
                             lastHopTHelper = ""; lastHopAtHelper = 0
                         else
                             setStatus("Hopping -> " .. fmJobId:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
-                            hopTo(fmJobId); task.wait(0.5)
+                            hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                         end
                     end
                 end)
@@ -2346,6 +2408,7 @@ end
                     end
 
                     local fmJobId    = nil
+                    local fmPlaceId  = nil
                     local notReady   = {}
                     local helperTotal = 0
 
@@ -2357,11 +2420,15 @@ end
                         else
                             local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true)
                             local jid = tostring(data.jobid or data.jobId or "")
+                            local accountPlaceId = tonumber(data.placeid or data.placeId or data.PlaceId)
                             if not helperHasFM or jid == "" then
                                 table.insert(notReady, name .. "(no FM)")
+                            elseif accountPlaceId ~= tonumber(game.PlaceId) then
+                                table.insert(notReady, name .. "(wrong place " .. tostring(accountPlaceId or "missing") .. ")")
                             elseif fmJobId == nil then
                                 fmJobId = jid
-                            elseif fmJobId ~= jid then
+                                fmPlaceId = accountPlaceId
+                            elseif fmJobId ~= jid or fmPlaceId ~= accountPlaceId then
                                 table.insert(notReady, name .. "(diff server)")
                             end
                         end
@@ -2386,7 +2453,7 @@ end
                     if fmJobId ~= lastHopTMain then
                         lastHopAtMain = nowTick; lastHopTMain = fmJobId
                         setStatus("Join FM (all helpers ready)...")
-                        hopTo(fmJobId); task.wait(0.5)
+                        hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                     else
                         local el = nowTick - lastHopAtMain
                         if el >= 8 then
@@ -2394,7 +2461,7 @@ end
                             lastHopTMain = ""; lastHopAtMain = 0
                         else
                             setStatus("Retry join: " .. fmJobId:sub(1,8) .. "...")
-                            hopTo(fmJobId); task.wait(0.5)
+                            hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                         end
                     end
 
