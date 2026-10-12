@@ -1530,6 +1530,45 @@ end
         return httpPost(API_BASE .. "/data", buildPayload(hasFM))
     end
 
+    -- /v4info tra ve DAY DU account (jobid/fullmoon/placeid). /data cho helper co the thieu HopFM
+    -- -> gop them /v4info de helper/main thay HopFM cung group.
+    local _v4AccCache   = nil
+    local _v4AccCacheAt = 0
+    local function fetchV4InfoAccounts()
+        if _v4AccCache and tick() - _v4AccCacheAt < SYNC_INTERVAL then return _v4AccCache end
+        local out = nil
+        pcall(function()
+            local r = httpReq()
+            if not r then return end
+            local res = r({ Url = API_BASE .. "/v4info", Method = "GET" })
+            if not res then return end
+            local body = res.Body or res.body or ""
+            local code = tonumber(res.StatusCode or res.status or 200) or 200
+            if code ~= 200 or body == "" then return end
+            local decoded = HttpService:JSONDecode(body)
+            if type(decoded) == "table" and type(decoded.accounts) == "table" then
+                out = decoded.accounts
+            end
+        end)
+        if out then
+            _v4AccCache   = out
+            _v4AccCacheAt = tick()
+        end
+        return _v4AccCache
+    end
+
+    local function getMergedAccounts(resp)
+        local merged = {}
+        if type(resp) == "table" and type(resp.accounts) == "table" then
+            for k, v in pairs(resp.accounts) do merged[k] = v end
+        end
+        local v4 = fetchV4InfoAccounts()
+        if type(v4) == "table" then
+            for k, v in pairs(v4) do merged[k] = v end
+        end
+        return merged
+    end
+
     -- STATUS TEXT
     local function setStatus(txt)
         currentStatus = tostring(txt or "")
@@ -2209,6 +2248,7 @@ end
                         return
                     end
 
+                    local viewAccounts = getMergedAccounts(resp)
                     local fmJobId = nil
                     local fmPlaceId = nil
                     local fmWho   = nil
@@ -2217,7 +2257,7 @@ end
                     local rejectedPlaceId = nil
                     local accCount = 0
 
-                    for name, data in pairs(resp.accounts) do
+                    for name, data in pairs(viewAccounts) do
                         accCount = accCount + 1
                         if MY_HopFMSet[name] and name ~= USERNAME then
                             hopFMFound = true
@@ -2254,7 +2294,7 @@ end
                         else
                             local expectNames, seenNames = {}, {}
                             for n in pairs(MY_HopFMSet) do table.insert(expectNames, tostring(n)) end
-                            for n in pairs(resp.accounts) do table.insert(seenNames, tostring(n)) end
+                            for n in pairs(viewAccounts) do table.insert(seenNames, tostring(n)) end
                             setStatus(("HopFM khong thay: [%s] | acc=%d seen=[%s]"):format(
                                 table.concat(expectNames, ","), accCount, table.concat(seenNames, ",")):sub(1, 160))
                         end
@@ -2407,6 +2447,7 @@ end
                         end
                     end
 
+                    local viewAccounts = getMergedAccounts(resp)
                     local fmJobId    = nil
                     local fmPlaceId  = nil
                     local notReady   = {}
@@ -2414,7 +2455,7 @@ end
 
                     for name, _ in pairs(myGroupHelpers) do
                         helperTotal = helperTotal + 1
-                        local data  = resp.accounts[name]
+                        local data  = viewAccounts[name]
                         if not data then
                             table.insert(notReady, name .. "(no data)")
                         else
