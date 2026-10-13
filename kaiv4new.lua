@@ -1569,6 +1569,42 @@ end
         return merged
     end
 
+    -- Ten account thuoc group KHAC (config + /v4info groupid khac note cua minh)
+    local function getOtherGroupNames()
+        local set = {}
+        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
+        for i, hl in ipairs(helperGroups) do
+            local note = trim(noteList[i] or ("group" .. i))
+            if note:lower() ~= myNote then
+                for _, h in ipairs(hl) do
+                    local n = trim(h)
+                    if n ~= "" then set[n:lower()] = true end
+                end
+            end
+        end
+        local v4 = fetchV4InfoAccounts()
+        if type(v4) == "table" then
+            for name, info in pairs(v4) do
+                local g = type(info) == "table" and tostring(info.groupid or info.groupId or "") or ""
+                if g ~= "" and g:lower() ~= myNote then
+                    set[tostring(name):lower()] = true
+                end
+            end
+        end
+        return set
+    end
+
+    -- KIEM TRA TRONG SERVER THAT (Players): co account group khac dang trong server nay khong
+    local function otherGroupInThisServer()
+        local set = getOtherGroupNames()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= Player and set[p.Name:lower()] then
+                return p.Name
+            end
+        end
+        return nil
+    end
+
     -- STATUS TEXT
     local function setStatus(txt)
         currentStatus = tostring(txt or "")
@@ -2012,10 +2048,27 @@ end
                 return result
             end
 
+            local _intruderWarned = nil
             while task.wait(0.25) do
                 local nowTick = tick()
 
-                if isNight() and isFullMoon() then
+                -- Group khac trong server (Players that) -> khong giu server nay, roi di tim server khac
+                local intruder = otherGroupInThisServer()
+                if intruder then
+                    if _intruderWarned ~= intruder then
+                        warn("[JoinV4][HopFM] Co account group khac trong server: " .. intruder .. " -> tim server khac")
+                        _intruderWarned = intruder
+                    end
+                    writeHopFMJobIdFile("")
+                    fmJoinedCache[game.JobId] = os.time()
+                    lastFmApiResult = nil
+                    lastHopT = ""
+                    setStatus("Group khac trong server (" .. intruder .. ") - tim server khac")
+                else
+                    _intruderWarned = nil
+                end
+
+                if isNight() and isFullMoon() and not intruder then
                     local myGroupIdx  = AllHopFMSet[USERNAME] or 999
                     local conflictWith   = nil
                     local conflictSource = nil
@@ -2094,7 +2147,7 @@ end
                     task.wait(3); continue
                 end
 
-                if isPreFMReady() then
+                if isPreFMReady() and not intruder then
                     -- Ghi file: reserve server nay cho group minh de group khac tranh vao
                     writeHopFMJobIdFile(game.JobId)
                     -- Kiem tra timetonight: neu > NEAR_MOON_MAX_TTN (300s) thi la fake moon -> hop di
@@ -2143,6 +2196,21 @@ end
                     for gi, jid in pairs(crossJids) do
                         if jid ~= "" and not takenJobIds[jid] then
                             takenJobIds[jid] = "G" .. gi .. "-HopFM(file)"
+                        end
+                    end
+                end
+
+                -- Nap server dang co account group khac (/v4info) vao takenJobIds de tim server khac
+                do
+                    local v4all = fetchV4InfoAccounts()
+                    local myNoteL = tostring(MY_GROUP_NOTE or ""):lower()
+                    if type(v4all) == "table" then
+                        for name, info in pairs(v4all) do
+                            local g   = type(info) == "table" and tostring(info.groupid or info.groupId or ""):lower() or ""
+                            local jid = type(info) == "table" and tostring(info.jobid or "") or ""
+                            if g ~= "" and g ~= myNoteL and jid ~= "" and not takenJobIds[jid] then
+                                takenJobIds[jid] = tostring(name) .. "[v4-group " .. g .. "]"
+                            end
                         end
                     end
                 end
