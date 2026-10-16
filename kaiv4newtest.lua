@@ -940,7 +940,7 @@ end
     local CFG = getgenv().JoinV4Config
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "https://apiibf.kurinian-hub.xyz/api/bloxfruit/fullmoon"
+    local FM_API_URL      = "http://162.4.177.49:8080/jobid/fullmoon/300"
     local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
@@ -1119,24 +1119,10 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER: API kurinian hien tai tra ve moon = "Fullmoon"/"Full Moon" (khong co endfullmoon/fullmoonin)
-    -- Uu tien: endfullmoon 4:00-9:00 (neu co field) -> server moon Fullmoon 2-8 player (it player nhat truoc)
+    -- FIND FM SERVER (API 162.4.177.49 /jobid/fullmoon/300): format { data: [ { jobid, placeid, players } ] }
+    -- Loc: dung placeid hien tai, 2-6 player, khong phai JobId minh, khong bi group khac giu, khong cache
     local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
-
-        local FM_MIN_PLAYERS = 2
-        local FM_MAX_PLAYERS = 8
-        local FM_MIN_SECONDS = 240   -- endfullmoon toi thieu 4:00
-        local FM_MAX_SECONDS = 540   -- endfullmoon toi da 9:00
-
-        -- "9:15" -> 555 giay
-        local function parseMMSS(s)
-            if type(s) == "number" then return s end
-            if type(s) ~= "string" then return nil end
-            local m, sec = s:match("^(%d+):(%d+)$")
-            if m then return tonumber(m) * 60 + tonumber(sec) end
-            return nil
-        end
 
         local resp = nil
         local httpMethods = {
@@ -1154,64 +1140,42 @@ end
                 break
             end
         end
-        if not resp or resp.StatusCode ~= 200 then
-            getgenv().JoinV4FMFilterStatus = "API loi"
-            return nil
-        end
+        if not resp or resp.StatusCode ~= 200 then return nil end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
-        if not ok2 or type(parsed) ~= "table" then
-            getgenv().JoinV4FMFilterStatus = "API loi"
+        if not ok2 or type(parsed) ~= "table" then return nil end
+
+        local entries
+        if type(parsed.data) == "table" and #parsed.data > 0 then
+            entries = parsed.data
+        elseif #parsed > 0 then
+            entries = parsed
+        else
             return nil
         end
 
-        local entries = parsed.data
-        if type(entries) ~= "table" or #entries == 0 then
-            getgenv().JoinV4FMFilterStatus = "API rong"
-            return nil
-        end
-
-        local endCands, plainCands = {}, {}
-        for _, v in ipairs(entries) do
-            if type(v) ~= "table" then continue end
-            local jobId   = v.jobid
-            local placeId = v.placeid
-            local players = tonumber(v.players)
-            if not jobId or jobId == "" then continue end
-            local jid = tostring(jobId)
-            if jid == tostring(game.JobId) then continue end
-            if excluded and excluded[jid] then continue end
-            local cached = fmJoinedCache[jid]
-            if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
-            if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            if not players or players < FM_MIN_PLAYERS or players > FM_MAX_PLAYERS then continue end
-
-            local ttf = parseMMSS(v.endfullmoon)
-            local moonName = tostring(v.moon or ""):lower():gsub("%s+", "")
-            if ttf then
-                if ttf >= FM_MIN_SECONDS and ttf <= FM_MAX_SECONDS then
-                    table.insert(endCands, {jobId = jid, players = players, ttf = ttf})
+        local candidates = {}
+        for _, s in ipairs(entries) do
+            if type(s) == "table" then
+                local jid     = tostring(s.jobid or s.JobId or s.jobId or "")
+                local placeId = s.placeid or s.PlaceID or s.placeId
+                local pRaw    = s.players or s.PlayerCount or s.Players
+                local players = tonumber(pRaw)
+                if type(pRaw) == "string" then
+                    players = tonumber(pRaw:match("(%d+)%s*/%s*%d+") or pRaw)
                 end
-            elseif v.fullmoonin == nil and moonName == "fullmoon" then
-                table.insert(plainCands, {jobId = jid, players = players})
+                if jid ~= "" and jid ~= tostring(game.JobId)
+                    and not (excluded and excluded[jid])
+                    and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
+                    and placeId and tonumber(placeId) == tonumber(game.PlaceId)
+                    and players and players >= 2 and players <= 6 then
+                    table.insert(candidates, {jobId = jid, players = players})
+                end
             end
         end
-
-        if #endCands > 0 then
-            getgenv().JoinV4FMFilterStatus = "endfullmoon"
-            table.sort(endCands, function(a, b)
-                if a.ttf ~= b.ttf then return a.ttf > b.ttf end
-                return a.players < b.players
-            end)
-            return endCands[1].jobId
-        end
-        if #plainCands > 0 then
-            getgenv().JoinV4FMFilterStatus = "Fullmoon 2-8p"
-            table.sort(plainCands, function(a, b) return a.players < b.players end)
-            return plainCands[1].jobId
-        end
-        getgenv().JoinV4FMFilterStatus = "khong co server Fullmoon 2-8p"
-        return nil
+        if #candidates == 0 then return nil end
+        table.sort(candidates, function(a, b) return a.players < b.players end)
+        return candidates[1].jobId
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
@@ -1302,28 +1266,84 @@ end
         return ok and (val or 9999) or 9999
     end
 
+    if type(getgenv().JoinV4RejectedHopJobs) ~= "table" then
+        getgenv().JoinV4RejectedHopJobs = {}
+    end
+
     -- TELEPORT
     local TeleportService = game:GetService("TeleportService")
     TeleportService.TeleportInitFailed:Connect(function(_player, result, _msg)
-        local dead = result == Enum.TeleportResult.Failure
-            or result == Enum.TeleportResult.GameEnded
-            or result == Enum.TeleportResult.Unauthorized
-        if dead and lastFmApiResult and lastFmApiResult ~= "" then
-            warn("[JoinV4] TeleportInitFailed (" .. tostring(result) .. ") -> blacklist " .. lastFmApiResult:sub(1,8))
-            _failedHopJobId = lastFmApiResult
-            fmJoinedCache[lastFmApiResult] = os.time()
-            lastFmApiResult = nil
-            lastFmApiAt     = 0
+        local lastAttempt = getgenv().JoinV4LastHopAttempt
+        local failedJobId = nil
+        if type(lastAttempt) == "table"
+            and tostring(lastAttempt.SourceJobId or "") == tostring(game.JobId)
+            and tick() - (tonumber(lastAttempt.At) or 0) <= 30
+        then
+            failedJobId = tostring(lastAttempt.JobId or "")
+        end
+        if not failedJobId or failedJobId == "" then
+            failedJobId = lastFmApiResult
+        end
+        -- This event only fires for a failed teleport. Handle every result,
+        -- including GameNotFound/GameFull/Flooded (771 was previously missed).
+        if failedJobId and failedJobId ~= "" then
+            warn("[JoinV4] TeleportInitFailed (" .. tostring(result) .. ") -> blacklist " .. failedJobId:sub(1,8))
+            _failedHopJobId = failedJobId
+            fmJoinedCache[failedJobId] = os.time()
+            getgenv().JoinV4RejectedHopJobs[failedJobId] = os.time()
+            if lastFmApiResult == failedJobId then
+                lastFmApiResult = nil
+            end
+            lastFmApiAt = 0
+            getgenv().JoinV4LastHopAttempt = nil
         end
     end)
 
-    local function hopTo(jobId)
-        pcall(function()
-            local sb = ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-            if sb then
-                sb:InvokeServer("teleport", jobId)
-            end
+    local function hopTo(jobId, targetPlaceId, allowWindowRetry)
+        jobId = tostring(jobId or "")
+        if jobId == "" or jobId == tostring(game.JobId) then return false end
+        local failedAt = fmJoinedCache[jobId]
+        if not allowWindowRetry and failedAt and os.time() - failedAt < FM_CACHE_EXPIRE then
+            return false, "cached"
+        end
+        local rejectedAt = getgenv().JoinV4RejectedHopJobs[jobId]
+        if not allowWindowRetry and rejectedAt and os.time() - rejectedAt < 1800 then
+            return false, "rejected"
+        end
+
+        -- Never send an unverified or cross-place JobId to __ServerBrowser.
+        -- Account sync and the Full Moon endpoint must both prove that the
+        -- JobId belongs to the exact sub-place the player is currently in.
+        local verifiedPlaceId = tonumber(targetPlaceId)
+        local currentPlaceId = tonumber(game.PlaceId)
+        if not verifiedPlaceId or verifiedPlaceId ~= currentPlaceId then
+            warn(string.format(
+                "[JoinV4] Blocked JobId %s: target PlaceId=%s, current PlaceId=%s",
+                jobId:sub(1, 8), tostring(targetPlaceId), tostring(game.PlaceId)
+            ))
+            fmJoinedCache[jobId] = os.time()
+            getgenv().JoinV4RejectedHopJobs[jobId] = os.time()
+            return false, "wrong_place"
+        end
+
+        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
+            or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+        if not sb then return false, "no_server_browser" end
+
+        -- Exact mechanism from the stable reference: callers control the retry
+        -- window; every call sends one __ServerBrowser teleport request.
+        local now = tick()
+        getgenv().JoinV4LastHopAttempt = {
+            JobId = jobId,
+            PlaceId = verifiedPlaceId,
+            SourceJobId = tostring(game.JobId),
+            At = now,
+        }
+
+        local ok = pcall(function()
+            sb:InvokeServer("teleport", jobId)
         end)
+        return ok, ok and "sent" or "invoke_failed"
     end
 
     -- NATIVE V4 STATUS CHECK
@@ -1472,6 +1492,81 @@ end
     local function syncToAPI()
         local hasFM = isNight() and isFullMoon()
         return httpPost(API_BASE .. "/data", buildPayload(hasFM))
+    end
+
+    -- /v4info tra ve DAY DU account (jobid/fullmoon/placeid). /data cho helper co the thieu HopFM
+    -- -> gop them /v4info de helper/main thay HopFM cung group.
+    local _v4AccCache   = nil
+    local _v4AccCacheAt = 0
+    local function fetchV4InfoAccounts()
+        if _v4AccCache and tick() - _v4AccCacheAt < SYNC_INTERVAL then return _v4AccCache end
+        local out = nil
+        pcall(function()
+            local r = httpReq()
+            if not r then return end
+            local res = r({ Url = API_BASE .. "/v4info", Method = "GET" })
+            if not res then return end
+            local body = res.Body or res.body or ""
+            local code = tonumber(res.StatusCode or res.status or 200) or 200
+            if code ~= 200 or body == "" then return end
+            local decoded = HttpService:JSONDecode(body)
+            if type(decoded) == "table" and type(decoded.accounts) == "table" then
+                out = decoded.accounts
+            end
+        end)
+        if out then
+            _v4AccCache   = out
+            _v4AccCacheAt = tick()
+        end
+        return _v4AccCache
+    end
+
+    local function getMergedAccounts(resp)
+        local merged = {}
+        if type(resp) == "table" and type(resp.accounts) == "table" then
+            for k, v in pairs(resp.accounts) do merged[k] = v end
+        end
+        local v4 = fetchV4InfoAccounts()
+        if type(v4) == "table" then
+            for k, v in pairs(v4) do merged[k] = v end
+        end
+        return merged
+    end
+
+    -- Ten account thuoc group KHAC (config + /v4info groupid khac note cua minh)
+    local function getOtherGroupNames()
+        local set = {}
+        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
+        for i, hl in ipairs(helperGroups) do
+            local note = trim(noteList[i] or ("group" .. i))
+            if note:lower() ~= myNote then
+                for _, h in ipairs(hl) do
+                    local n = trim(h)
+                    if n ~= "" then set[n:lower()] = true end
+                end
+            end
+        end
+        local v4 = fetchV4InfoAccounts()
+        if type(v4) == "table" then
+            for name, info in pairs(v4) do
+                local g = type(info) == "table" and tostring(info.groupid or info.groupId or "") or ""
+                if g ~= "" and g:lower() ~= myNote then
+                    set[tostring(name):lower()] = true
+                end
+            end
+        end
+        return set
+    end
+
+    -- KIEM TRA TRONG SERVER THAT (Players): co account group khac dang trong server nay khong
+    local function otherGroupInThisServer()
+        local set = getOtherGroupNames()
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= Player and set[p.Name:lower()] then
+                return p.Name
+            end
+        end
+        return nil
     end
 
     -- STATUS TEXT
@@ -1917,10 +2012,27 @@ end
                 return result
             end
 
+            local _intruderWarned = nil
             while task.wait(0.25) do
                 local nowTick = tick()
 
-                if isNight() and isFullMoon() then
+                -- Group khac trong server (Players that) -> khong giu server nay, roi di tim server khac
+                local intruder = otherGroupInThisServer()
+                if intruder then
+                    if _intruderWarned ~= intruder then
+                        warn("[JoinV4][HopFM] Co account group khac trong server: " .. intruder .. " -> tim server khac")
+                        _intruderWarned = intruder
+                    end
+                    writeHopFMJobIdFile("")
+                    fmJoinedCache[game.JobId] = os.time()
+                    lastFmApiResult = nil
+                    lastHopT = ""
+                    setStatus("Group khac trong server (" .. intruder .. ") - tim server khac")
+                else
+                    _intruderWarned = nil
+                end
+
+                if isNight() and isFullMoon() and not intruder then
                     local myGroupIdx  = AllHopFMSet[USERNAME] or 999
                     local conflictWith   = nil
                     local conflictSource = nil
@@ -1999,7 +2111,7 @@ end
                     task.wait(3); continue
                 end
 
-                if isPreFMReady() then
+                if isPreFMReady() and not intruder then
                     -- Ghi file: reserve server nay cho group minh de group khac tranh vao
                     writeHopFMJobIdFile(game.JobId)
                     -- Kiem tra timetonight: neu > NEAR_MOON_MAX_TTN (300s) thi la fake moon -> hop di
@@ -2052,11 +2164,26 @@ end
                     end
                 end
 
+                -- Nap server dang co account group khac (/v4info) vao takenJobIds de tim server khac
+                do
+                    local v4all = fetchV4InfoAccounts()
+                    local myNoteL = tostring(MY_GROUP_NOTE or ""):lower()
+                    if type(v4all) == "table" then
+                        for name, info in pairs(v4all) do
+                            local g   = type(info) == "table" and tostring(info.groupid or info.groupId or ""):lower() or ""
+                            local jid = type(info) == "table" and tostring(info.jobid or "") or ""
+                            if g ~= "" and g ~= myNoteL and jid ~= "" and not takenJobIds[jid] then
+                                takenJobIds[jid] = tostring(name) .. "[v4-group " .. g .. "]"
+                            end
+                        end
+                    end
+                end
+
                 if not isFetching and nowTick - lastFmApiAt >= FM_API_INTERVAL then
                     lastFmApiAt = nowTick; isFetching = true
                     task.spawn(function()
                         local found = findFMServer(takenJobIds)
-                        -- Fallback: neu FM API khong co server, thu Near Moon API
+                        -- Fallback cuoi: Near Moon API
                         if not found and NEAR_MOON_ENABLED then
                             found = findNearMoonServer()
                             if found then
@@ -2086,7 +2213,7 @@ end
                         writeHopFMJobIdFile("")   -- Xoa claim cu truoc khi teleport sang FM moi
                         pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
                         task.spawn(function()
-                            hopTo(hopT)
+                            hopTo(hopT, game.PlaceId)
                             task.wait(12)   -- cho teleport hoan tat (toi da 12s)
                             isHopping = false
                         end)
@@ -2131,14 +2258,17 @@ end
 
             while task.wait(SYNC_INTERVAL) do
                 pcall(function()
-                    if fmHopPending and tick() < fmPendingCheckAt then
+                    local settling = fmHopPending and tick() < fmPendingCheckAt
+                    local hasFM = isNight() and isFullMoon()
+
+                    -- LUON gui sync, ke ca luc settling, de HopFM khong bi server xoa khoi accounts
+                    local resp = syncToAPI()
+
+                    if settling then
                         setStatus(string.format("Settling... %ds", math.ceil(fmPendingCheckAt - tick())))
                         return
                     end
                     fmHopPending = false
-                    local hasFM = isNight() and isFullMoon()
-
-                    local resp = syncToAPI()
 
                     if isHopFM then
                         setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
@@ -2150,39 +2280,55 @@ end
                         return
                     end
 
+                    local viewAccounts = getMergedAccounts(resp)
                     local fmJobId = nil
+                    local fmPlaceId = nil
                     local fmWho   = nil
                     local hopFMFound = false   -- debug: co tim thay HopFM trong accounts khong
                     local hopFMFMState = "?"  -- debug: fullMoon cua HopFM la gi
+                    local rejectedPlaceId = nil
                     local accCount = 0
 
-                    for name, data in pairs(resp.accounts) do
+                    for name, data in pairs(viewAccounts) do
                         accCount = accCount + 1
                         if MY_HopFMSet[name] and name ~= USERNAME then
                             hopFMFound = true
                             local helperHasFM  = (data.fullMoon  == true) or (data.fullmoon  == true)
                             local helperNearFM = (data.nearFM    == true) or (data.nearfm    == true)
+                            local accountPlaceId = tonumber(data.placeid or data.placeId or data.PlaceId)
                             hopFMFMState = tostring(data.fullMoon or data.fullmoon or "nil")
                             if helperHasFM then
                                 local jid = tostring(data.jobid or data.jobId or "")
-                                if jid ~= "" then
-                                    fmJobId = jid; fmWho = name; break
+                                if jid ~= "" and accountPlaceId == tonumber(game.PlaceId) then
+                                    fmJobId = jid; fmPlaceId = accountPlaceId; fmWho = name; break
+                                elseif jid ~= "" then
+                                    rejectedPlaceId = accountPlaceId or "missing"
                                 end
                             elseif helperNearFM then
                                 -- HopFM dang o near-moon server, follow vao de chuan bi
                                 local jid = tostring(data.jobid or data.jobId or "")
-                                if jid ~= "" and jid ~= game.JobId then
-                                    fmJobId = jid; fmWho = name .. "[NearFM]"; break
+                                if jid ~= "" and jid ~= game.JobId
+                                    and accountPlaceId == tonumber(game.PlaceId)
+                                then
+                                    fmJobId = jid; fmPlaceId = accountPlaceId; fmWho = name .. "[NearFM]"; break
+                                elseif jid ~= "" and jid ~= game.JobId then
+                                    rejectedPlaceId = accountPlaceId or "missing"
                                 end
                             end
                         end
                     end
 
                     if not fmJobId then
-                        if hopFMFound then
+                        if rejectedPlaceId ~= nil then
+                            setStatus("Skip HopFM PlaceId " .. tostring(rejectedPlaceId) .. " != " .. tostring(game.PlaceId))
+                        elseif hopFMFound then
                             setStatus("Waiting HopFM FM: " .. hopFMFMState .. " | acc=" .. accCount)
                         else
-                            setStatus("HopFM not in group | acc=" .. accCount .. (hasFM and " [FM here]" or ""))
+                            local expectNames, seenNames = {}, {}
+                            for n in pairs(MY_HopFMSet) do table.insert(expectNames, tostring(n)) end
+                            for n in pairs(viewAccounts) do table.insert(seenNames, tostring(n)) end
+                            setStatus(("HopFM khong thay: [%s] | acc=%d seen=[%s]"):format(
+                                table.concat(expectNames, ","), accCount, table.concat(seenNames, ",")):sub(1, 160))
                         end
                         lastHopTHelper = ""; return
                     end
@@ -2196,7 +2342,7 @@ end
                     if fmJobId ~= lastHopTHelper then
                         lastHopAtHelper = nowTick; lastHopTHelper = fmJobId
                         setStatus("Join " .. (fmWho or "HopFM") .. " -> " .. fmJobId:sub(1,8) .. "...")
-                        hopTo(fmJobId); task.wait(0.5)
+                        hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                     else
                         local el = nowTick - lastHopAtHelper
                         if el >= 8 then
@@ -2205,7 +2351,7 @@ end
                             lastHopTHelper = ""; lastHopAtHelper = 0
                         else
                             setStatus("Hopping -> " .. fmJobId:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
-                            hopTo(fmJobId); task.wait(0.5)
+                            hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                         end
                     end
                 end)
@@ -2333,23 +2479,29 @@ end
                         end
                     end
 
+                    local viewAccounts = getMergedAccounts(resp)
                     local fmJobId    = nil
+                    local fmPlaceId  = nil
                     local notReady   = {}
                     local helperTotal = 0
 
                     for name, _ in pairs(myGroupHelpers) do
                         helperTotal = helperTotal + 1
-                        local data  = resp.accounts[name]
+                        local data  = viewAccounts[name]
                         if not data then
                             table.insert(notReady, name .. "(no data)")
                         else
                             local helperHasFM = (data.fullMoon == true) or (data.fullmoon == true)
                             local jid = tostring(data.jobid or data.jobId or "")
+                            local accountPlaceId = tonumber(data.placeid or data.placeId or data.PlaceId)
                             if not helperHasFM or jid == "" then
                                 table.insert(notReady, name .. "(no FM)")
+                            elseif accountPlaceId ~= tonumber(game.PlaceId) then
+                                table.insert(notReady, name .. "(wrong place " .. tostring(accountPlaceId or "missing") .. ")")
                             elseif fmJobId == nil then
                                 fmJobId = jid
-                            elseif fmJobId ~= jid then
+                                fmPlaceId = accountPlaceId
+                            elseif fmJobId ~= jid or fmPlaceId ~= accountPlaceId then
                                 table.insert(notReady, name .. "(diff server)")
                             end
                         end
@@ -2374,7 +2526,7 @@ end
                     if fmJobId ~= lastHopTMain then
                         lastHopAtMain = nowTick; lastHopTMain = fmJobId
                         setStatus("Join FM (all helpers ready)...")
-                        hopTo(fmJobId); task.wait(0.5)
+                        hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                     else
                         local el = nowTick - lastHopAtMain
                         if el >= 8 then
@@ -2382,7 +2534,7 @@ end
                             lastHopTMain = ""; lastHopAtMain = 0
                         else
                             setStatus("Retry join: " .. fmJobId:sub(1,8) .. "...")
-                            hopTo(fmJobId); task.wait(0.5)
+                            hopTo(fmJobId, fmPlaceId, true); task.wait(0.5)
                         end
                     end
 
