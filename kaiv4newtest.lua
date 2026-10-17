@@ -2035,15 +2035,16 @@ end
                 -- Group khac trong server (Players that) -> khong giu server nay, roi di tim server khac
                 local intruder = otherGroupInThisServer()
                 if intruder then
+                    -- CHI reset MOT LAN khi moi phat hien group khac (khong reset moi vong, neu khong se xoa ket qua tim server)
                     if _intruderWarned ~= intruder then
                         warn("[JoinV4][HopFM] Co account group khac trong server: " .. intruder .. " -> tim server khac")
                         _intruderWarned = intruder
+                        writeHopFMJobIdFile("")
+                        fmJoinedCache[game.JobId] = os.time()
+                        lastFmApiResult = nil
+                        lastHopT = ""
+                        setStatus("Group khac trong server (" .. intruder .. ") - tim server khac")
                     end
-                    writeHopFMJobIdFile("")
-                    fmJoinedCache[game.JobId] = os.time()
-                    lastFmApiResult = nil
-                    lastHopT = ""
-                    setStatus("Group khac trong server (" .. intruder .. ") - tim server khac")
                 else
                     _intruderWarned = nil
                 end
