@@ -1119,7 +1119,7 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER (API 162.4.177.49 /jobid/fullmoon/300): format { data: [ { jobid, placeid, players } ] }
+    -- FIND FM SERVER (API 162.4.177.49 /jobid/fullmoon/300): { Amount, data: [ { name, Jobid, place_id, players = "cur/max" } ] }
     -- Loc: dung placeid hien tai, 2-6 player, khong phai JobId minh, khong bi group khac giu, khong cache
     local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
@@ -1140,10 +1140,20 @@ end
                 break
             end
         end
-        if not resp or resp.StatusCode ~= 200 then return nil end
+        if not resp then
+            getgenv().JoinV4FMFilterStatus = "API 162 khong phan hoi"
+            return nil
+        end
+        if resp.StatusCode ~= 200 then
+            getgenv().JoinV4FMFilterStatus = "API 162 HTTP " .. tostring(resp.StatusCode)
+            return nil
+        end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
-        if not ok2 or type(parsed) ~= "table" then return nil end
+        if not ok2 or type(parsed) ~= "table" then
+            getgenv().JoinV4FMFilterStatus = "API 162 sai format JSON"
+            return nil
+        end
 
         local entries
         if type(parsed.data) == "table" and #parsed.data > 0 then
@@ -1151,14 +1161,16 @@ end
         elseif #parsed > 0 then
             entries = parsed
         else
+            getgenv().JoinV4FMFilterStatus = "API 162 data rong"
             return nil
         end
 
         local candidates = {}
         for _, s in ipairs(entries) do
             if type(s) == "table" then
-                local jid     = tostring(s.jobid or s.JobId or s.jobId or "")
-                local placeId = s.placeid or s.PlaceID or s.placeId
+                -- format API 162 (/jobid/fullmoon/300): { Amount, data: [ { name, Jobid, place_id, players = "cur/max" } ] }
+                local jid     = tostring(s.Jobid or s.jobid or s.JobId or s.jobId or "")
+                local placeId = s.place_id or s.placeid or s.PlaceID or s.placeId
                 local pRaw    = s.players or s.PlayerCount or s.Players
                 local players = tonumber(pRaw)
                 if type(pRaw) == "string" then
@@ -1173,7 +1185,11 @@ end
                 end
             end
         end
-        if #candidates == 0 then return nil end
+        if #candidates == 0 then
+            getgenv().JoinV4FMFilterStatus = "API co " .. #entries .. " server, khong co 2-6p cung placeid " .. tostring(game.PlaceId)
+            return nil
+        end
+        getgenv().JoinV4FMFilterStatus = "API 162 ok"
         table.sort(candidates, function(a, b) return a.players < b.players end)
         return candidates[1].jobId
     end
@@ -2195,7 +2211,7 @@ end
                             lastFmApiResult = nil
                         else
                             lastFmApiResult = (found and found ~= game.JobId) and found or nil
-                            if not lastFmApiResult then setStatus("No FM server, retrying...") end
+                            if not lastFmApiResult then setStatus("No FM: " .. tostring(getgenv().JoinV4FMFilterStatus or "?")) end
                         end
                         isFetching = false
                     end)
