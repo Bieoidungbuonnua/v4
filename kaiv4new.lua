@@ -1119,8 +1119,8 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER: API kurinian hien tai tra ve moon = "Fullmoon"/"Full Moon" (khong co endfullmoon/fullmoonin)
-    -- Uu tien: endfullmoon 4:00-9:00 (neu co field) -> server moon Fullmoon 2-8 player (it player nhat truoc)
+    -- FIND FM SERVER (API kurinian-hub): { data: [ { jobid, placeid, players (so), moon, endfullmoon?, fullmoonin? } ] }
+    -- Uu tien 1: endfullmoon 4:00-9:00 (con lai lau nhat). Uu tien 2: moon "Fullmoon", chua co fullmoonin, 2-8 player.
     local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
@@ -1154,46 +1154,51 @@ end
                 break
             end
         end
-        if not resp or resp.StatusCode ~= 200 then
-            getgenv().JoinV4FMFilterStatus = "API loi"
+        if not resp then
+            getgenv().JoinV4FMFilterStatus = "API kurinian khong phan hoi"
+            return nil
+        end
+        if resp.StatusCode ~= 200 then
+            getgenv().JoinV4FMFilterStatus = "API kurinian HTTP " .. tostring(resp.StatusCode)
             return nil
         end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
         if not ok2 or type(parsed) ~= "table" then
-            getgenv().JoinV4FMFilterStatus = "API loi"
+            getgenv().JoinV4FMFilterStatus = "API kurinian sai format JSON"
             return nil
         end
 
         local entries = parsed.data
         if type(entries) ~= "table" or #entries == 0 then
-            getgenv().JoinV4FMFilterStatus = "API rong"
+            getgenv().JoinV4FMFilterStatus = "API kurinian data rong"
             return nil
         end
 
         local endCands, plainCands = {}, {}
         for _, v in ipairs(entries) do
-            if type(v) ~= "table" then continue end
-            local jobId   = v.jobid
-            local placeId = v.placeid
-            local players = tonumber(v.players)
-            if not jobId or jobId == "" then continue end
-            local jid = tostring(jobId)
-            if jid == tostring(game.JobId) then continue end
-            if excluded and excluded[jid] then continue end
-            local cached = fmJoinedCache[jid]
-            if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
-            if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            if not players or players < FM_MIN_PLAYERS or players > FM_MAX_PLAYERS then continue end
-
-            local ttf = parseMMSS(v.endfullmoon)
-            local moonName = tostring(v.moon or ""):lower():gsub("%s+", "")
-            if ttf then
-                if ttf >= FM_MIN_SECONDS and ttf <= FM_MAX_SECONDS then
-                    table.insert(endCands, {jobId = jid, players = players, ttf = ttf})
+            if type(v) == "table" then
+                local jobId   = v.jobid
+                local placeId = v.placeid
+                local players = tonumber(v.players)
+                if jobId and jobId ~= "" then
+                    local jid = tostring(jobId)
+                    if jid ~= tostring(game.JobId)
+                        and not (excluded and excluded[jid])
+                        and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
+                        and placeId and tonumber(placeId) == tonumber(game.PlaceId)
+                        and players and players >= FM_MIN_PLAYERS and players <= FM_MAX_PLAYERS then
+                        local ttf = parseMMSS(v.endfullmoon)
+                        local moonName = tostring(v.moon or ""):lower():gsub("%s+", "")
+                        if ttf then
+                            if ttf >= FM_MIN_SECONDS and ttf <= FM_MAX_SECONDS then
+                                table.insert(endCands, {jobId = jid, players = players, ttf = ttf})
+                            end
+                        elseif v.fullmoonin == nil and moonName == "fullmoon" then
+                            table.insert(plainCands, {jobId = jid, players = players})
+                        end
+                    end
                 end
-            elseif v.fullmoonin == nil and moonName == "fullmoon" then
-                table.insert(plainCands, {jobId = jid, players = players})
             end
         end
 
@@ -1210,7 +1215,7 @@ end
             table.sort(plainCands, function(a, b) return a.players < b.players end)
             return plainCands[1].jobId
         end
-        getgenv().JoinV4FMFilterStatus = "khong co server Fullmoon 2-8p"
+        getgenv().JoinV4FMFilterStatus = "kurinian co " .. #entries .. " server, khong co server FM 2-8p cung placeid " .. tostring(game.PlaceId)
         return nil
     end
 
@@ -2055,15 +2060,16 @@ end
                 -- Group khac trong server (Players that) -> khong giu server nay, roi di tim server khac
                 local intruder = otherGroupInThisServer()
                 if intruder then
+                    -- CHI reset MOT LAN khi moi phat hien group khac (khong reset moi vong, neu khong se xoa ket qua tim server)
                     if _intruderWarned ~= intruder then
                         warn("[JoinV4][HopFM] Co account group khac trong server: " .. intruder .. " -> tim server khac")
                         _intruderWarned = intruder
+                        writeHopFMJobIdFile("")
+                        fmJoinedCache[game.JobId] = os.time()
+                        lastFmApiResult = nil
+                        lastHopT = ""
+                        setStatus("Group khac trong server (" .. intruder .. ") - tim server khac")
                     end
-                    writeHopFMJobIdFile("")
-                    fmJoinedCache[game.JobId] = os.time()
-                    lastFmApiResult = nil
-                    lastHopT = ""
-                    setStatus("Group khac trong server (" .. intruder .. ") - tim server khac")
                 else
                     _intruderWarned = nil
                 end
@@ -2219,7 +2225,7 @@ end
                     lastFmApiAt = nowTick; isFetching = true
                     task.spawn(function()
                         local found = findFMServer(takenJobIds)
-                        -- Fallback: neu FM API khong co server, thu Near Moon API
+                        -- Fallback cuoi: Near Moon API
                         if not found and NEAR_MOON_ENABLED then
                             found = findNearMoonServer()
                             if found then
@@ -2231,7 +2237,7 @@ end
                             lastFmApiResult = nil
                         else
                             lastFmApiResult = (found and found ~= game.JobId) and found or nil
-                            if not lastFmApiResult then setStatus("No FM server, retrying...") end
+                            if not lastFmApiResult then setStatus("No FM: " .. tostring(getgenv().JoinV4FMFilterStatus or "?")) end
                         end
                         isFetching = false
                     end)
