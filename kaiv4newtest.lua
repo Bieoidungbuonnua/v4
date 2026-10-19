@@ -1180,7 +1180,7 @@ end
                     and not (excluded and excluded[jid])
                     and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
                     and placeId and tonumber(placeId) == tonumber(game.PlaceId)
-                    and players and players >= 2 and players <= 6 then
+                    and players and players >= 2 and players <= 8 then
                     table.insert(candidates, {jobId = jid, players = players})
                 end
             end
