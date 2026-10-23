@@ -258,7 +258,7 @@ do
 
     task.spawn(function()
         loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_0nB2RAnYf1TPA/stream/init"))()
-        end)
+    end)
 end
 
 -- ══════════════════════════════════════════════════════════════════
