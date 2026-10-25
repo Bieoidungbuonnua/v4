@@ -16,7 +16,7 @@ pcall(function()
 end)
 
 -- ══════════════════════════════════════════════════════════════════
--- CẤU HÌNH DÙNG CHUNG (Tất cả 3 script tự động nhận từ JoinV4Config)
+-- CẤU HÌNH DÙNG CHUNG (Tự động nhận từ JoinV4Config)
 -- ══════════════════════════════════════════════════════════════════
 local _DEFAULT_CFG = {
     ["Key-Banana"]        = "31d4bebb966b95e8bd94d7a6",
@@ -24,7 +24,7 @@ local _DEFAULT_CFG = {
         {"Cart3rRid3rDrag0n", "penel0peScott1"},
     },
     ["Note"]              = {"trietautov4"},
-    ["LimitMainPerGroup"] = 10,   -- tối đa main được vào mỗi group
+    ["LimitMainPerGroup"] = 10,
 }
 
 if not getgenv().JoinV4Config or type(getgenv().JoinV4Config) ~= "table" then
@@ -37,7 +37,7 @@ else
     end
 end
 
--- Tự động build HelperList phẳng từ JoinV4Config.Helper cho BNN & TurnV3
+-- Tự động build HelperList phẳng từ JoinV4Config.Helper
 do
     local seen, list = {}, {}
     for _, grp in ipairs(getgenv().JoinV4Config["Helper"] or {}) do
@@ -205,7 +205,7 @@ do
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- [1/3] BNN (Banana Hub) - Whitelist từ HelperList chung
+-- [1/3] BNN (Banana Hub)
 -- ══════════════════════════════════════════════════════════════════
 do
     local player = game:GetService("Players").LocalPlayer
@@ -260,7 +260,7 @@ do
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- [2/3] TURNV3 (Đồng bộ V3 Countdown & Watchdog Ghost Temple)
+-- [2/3] TURNV3 (Đồng bộ V3 Countdown)
 -- ══════════════════════════════════════════════════════════════════
 do
     local V3_COUNTDOWN      = 4
@@ -364,11 +364,6 @@ do
 
     local v4Cache       = { at = 0, data = nil }
     local V4_CACHE_TIME = 10.0
-
-    local function invalidateV4Cache()
-        v4Cache.at   = 0
-        v4Cache.data = nil
-    end
 
     local function getV4StatusSimple()
         if v4Cache.data and tick() - v4Cache.at < V4_CACHE_TIME then
@@ -681,68 +676,10 @@ do
             pcall(tryActivateAbility)
         end
     end)
-
-    local function hopRandomServer()
-        local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser")
-            or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-        if not sb then return false end
-
-        local servers = nil
-        for page = 1, 10 do
-            local ok, res = pcall(function()
-                return sb:InvokeServer("getServers", page) or sb:InvokeServer(page)
-            end)
-            if ok and type(res) == "table" and next(res) ~= nil then
-                servers = res
-                break
-            end
-        end
-
-        if not servers then return false end
-
-        local validList = {}
-        for jobId, data in pairs(servers) do
-            local jid = tostring(jobId or (type(data) == "table" and data.JobId) or "")
-            local count = tonumber(type(data) == "table" and (data.Count or data.Players or data.PlayerCount) or 0) or 0
-            if jid ~= "" and jid ~= tostring(game.JobId) and count > 0 and count <= 11 then
-                table.insert(validList, jid)
-            end
-        end
-
-        if #validList > 0 then
-            local target = validList[math.random(1, #validList)]
-            pcall(function()
-                sb:InvokeServer("teleport", target)
-            end)
-            return true
-        end
-        return false
-    end
-
-    local lastRandomHopAt = 0
-    task.spawn(function()
-        task.wait(25)
-        while task.wait(5) do
-            pcall(function()
-                if isAlly then return end
-                local fmNow = isnight() and isfullmoon()
-                if fmNow then return end
-                if isPreFMReady() then return end
-                local v4 = getV4StatusSimple()
-                if not v4 or v4.key == nil then return end
-                if v4.needsTraining or v4.needsPurchase then return end
-                if v4.canTrial or v4.complete then return end
-                if tick() - lastRandomHopAt >= 10 then
-                    lastRandomHopAt = tick()
-                    hopRandomServer()
-                end
-            end)
-        end
-    end)
 end
 
 -- ══════════════════════════════════════════════════════════════════
--- [3/3] JOINV4 (Kaiv4-BNN/joinv4.lua) - API Moon Hop & Group Management
+-- [3/3] JOINV4 (Kaiv4-BNN/joinv4.lua) - API & Sync Fix cho HopFM
 -- ══════════════════════════════════════════════════════════════════
 ;(function()
     local CFG = getgenv().JoinV4Config
@@ -808,8 +745,6 @@ end
     local isMain   = not isHelper
 
     local GROUP_ID = isHelper and (MY_GROUP_NOTE or trim(noteList[1] or "joinv4")) or ""
-    local myAssignedGroupId = ""
-    local myDefaultGroup = trim(noteList[1] or "group1")
 
     local MY_HopFMSet = {}
     for _, h in ipairs(MY_GROUP_HELPERS) do
@@ -862,7 +797,6 @@ end
         return Lighting:GetAttribute("MoonPhase") == 5
     end
 
-    -- Tìm server FM qua API (Parse đúng key Jobid, place_id và players dạng "7/12")
     local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
@@ -999,9 +933,6 @@ end
         return ok
     end
 
-    -- =========================================================================
-    -- HAM HOP SERVER KHAN CAP DANG CHO HELPER FM KHI PHONG DONG (> 8 NGƯỜI)
-    -- =========================================================================
     local function executeHopForCrowdedServer()
         fmJoinedCache[game.JobId] = os.time()
         
@@ -1039,45 +970,9 @@ end
         return false
     end
 
-    local _CommF_ = nil
-    pcall(function() _CommF_ = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("CommF_", 5) end)
-
-    local function getLocalV4Status()
-        if not _CommF_ then return nil end
-        local char = Player.Character
-        if not char then return nil end
-        local raceTransformed = char:FindFirstChild("RaceTransformed")
-        if not raceTransformed then
-            local ok, progress = pcall(function() return _CommF_:InvokeServer("RaceV4Progress", "Check") end)
-            if not ok then return nil end
-            progress = tonumber(progress)
-            if progress == nil then return { key = "check_failed", needsTraining = false, needsPurchase = false, canTrial = false, complete = false } end
-            if progress < 4 then
-                return { key = "pre_v4", needsTraining = true, needsPurchase = false, canTrial = false, complete = false }
-            else
-                return { key = "ready", needsTraining = false, needsPurchase = false, canTrial = true, complete = false }
-            end
-        else
-            local ok, code = pcall(function() return _CommF_:InvokeServer("UpgradeRace", "Check") end)
-            if not ok then return nil end
-            code = tonumber(code)
-            if code == 0 then return { key = "trial_ready", canTrial = true }
-            elseif code == 5 then return { key = "completed", complete = true }
-            else return { key = "training", needsTraining = true } end
-        end
-    end
-
-    local _v4Cache   = { needsTraining=nil, needsPurchase=nil, canTrial=false, complete=false, key=nil }
-    local _v4CacheAt = 0
-    local function updateV4Cache()
-        if not isMain then return end
-        if tick() - _v4CacheAt < 4 then return end
-        local v4s = getLocalV4Status()
-        if v4s then _v4Cache = v4s; _v4CacheAt = tick() end
-    end
-
-    local function buildPayload(hasFM)
-        local gid = isHelper and GROUP_ID or myAssignedGroupId
+    -- ĐỒNG BỘ PAYLOAD ĐẢM BẢO BAO GỒM ĐỦ MỌI KEY
+    local function buildPayload(forceReady)
+        local isFMNow = forceReady or (isNight() and isFullMoon())
         local groupsArr = {}
         for i, helperList in ipairs(helperGroups) do
             if type(helperList) == "table" then
@@ -1093,32 +988,37 @@ end
         return {
             username      = USERNAME,
             role          = isHelper and "helper" or "main",
-            groupId       = gid,
+            groupId       = GROUP_ID,
             jobId         = tostring(game.JobId),
             placeId       = tostring(game.PlaceId),
-            fullMoon      = hasFM,
+            fullMoon      = isFMNow,
             jobid         = tostring(game.JobId),
+            placeid       = tostring(game.PlaceId),
             status        = currentStatus,
-            ready         = hasFM,
+            ready         = isFMNow,
             alive         = true,
             groups        = groupsArr,
         }
     end
 
-    local function syncToAPI()
-        local hasFM = isNight() and isFullMoon()
-        return httpPost(API_BASE .. "/data", buildPayload(hasFM))
+    local function syncToAPI(forceReady)
+        return httpPost(API_BASE .. "/data", buildPayload(forceReady))
     end
 
     local function getMergedAccounts(resp)
         local merged = {}
-        if type(resp) == "table" and type(resp.accounts) == "table" then
-            for k, v in pairs(resp.accounts) do merged[k] = v end
+        if type(resp) == "table" then
+            if type(resp.accounts) == "table" then
+                for k, v in pairs(resp.accounts) do merged[k] = v end
+            end
+            if type(resp.data) == "table" then
+                for k, v in pairs(resp.data) do merged[k] = v end
+            end
         end
         return merged
     end
 
-    local ScreenGui, MainCard, RolePill, GroupPill, MoonLabel, StatusLabel, MinBtn
+    local ScreenGui, StatusLabel, MinBtn
     local isCollapsed = false
 
     local function makeDraggable(frame, handle)
@@ -1177,23 +1077,16 @@ end
         local r1Layout = Instance.new("UIListLayout", row1)
         r1Layout.FillDirection = Enum.FillDirection.Horizontal; r1Layout.Padding = UDim.new(0, 6)
 
-        RolePill = Instance.new("TextLabel", row1)
-        RolePill.Size = UDim2.new(0.5, -3, 1, 0); RolePill.BackgroundColor3 = Color3.fromRGB(20, 24, 36); RolePill.Text = "👑 MAIN"; RolePill.Font = Enum.Font.GothamBold; RolePill.TextSize = 12; RolePill.TextColor3 = Color3.fromRGB(185, 120, 255); RolePill.BorderSizePixel = 0
+        local RolePill = Instance.new("TextLabel", row1)
+        RolePill.Size = UDim2.new(0.5, -3, 1, 0); RolePill.BackgroundColor3 = Color3.fromRGB(20, 24, 36); RolePill.Text = isHelper and (isHopFM and "🛡️ HELPER [FM]" or "🛡️ HELPER [G1]") or "👑 MAIN"; RolePill.Font = Enum.Font.GothamBold; RolePill.TextSize = 12; RolePill.TextColor3 = Color3.fromRGB(185, 120, 255); RolePill.BorderSizePixel = 0
         Instance.new("UICorner", RolePill)
 
-        GroupPill = Instance.new("TextLabel", row1)
-        GroupPill.Size = UDim2.new(0.5, -3, 1, 0); GroupPill.BackgroundColor3 = Color3.fromRGB(20, 24, 36); GroupPill.Text = "📌 Group: ..."; GroupPill.Font = Enum.Font.GothamBold; GroupPill.TextSize = 12; GroupPill.TextColor3 = Color3.fromRGB(255, 205, 75); GroupPill.BorderSizePixel = 0
+        local GroupPill = Instance.new("TextLabel", row1)
+        GroupPill.Size = UDim2.new(0.5, -3, 1, 0); GroupPill.BackgroundColor3 = Color3.fromRGB(20, 24, 36); GroupPill.Text = "📌 Group: " .. GROUP_ID; GroupPill.Font = Enum.Font.GothamBold; GroupPill.TextSize = 12; GroupPill.TextColor3 = Color3.fromRGB(255, 205, 75); GroupPill.BorderSizePixel = 0
         Instance.new("UICorner", GroupPill)
 
-        local MoonCard = Instance.new("Frame", content)
-        MoonCard.Size = UDim2.new(1, 0, 0, 32); MoonCard.BackgroundColor3 = Color3.fromRGB(20, 24, 36); MoonCard.BorderSizePixel = 0
-        Instance.new("UICorner", MoonCard)
-        MoonLabel = Instance.new("TextLabel", MoonCard)
-        MoonLabel.Size = UDim2.new(1, 0, 1, 0); MoonLabel.BackgroundTransparency = 1; MoonLabel.Text = "🌑 Moon: Checking..."; MoonLabel.Font = Enum.Font.GothamMedium; MoonLabel.TextSize = 12; MoonLabel.TextColor3 = Color3.fromRGB(150, 160, 180); MoonLabel.TextXAlignment = Enum.TextXAlignment.Left
-        Instance.new("UIPadding", MoonLabel).PaddingLeft = UDim.new(0, 8)
-
         local StatusCard = Instance.new("Frame", content)
-        StatusCard.Size = UDim2.new(1, 0, 0, 68); StatusCard.BackgroundColor3 = Color3.fromRGB(20, 24, 36); StatusCard.BorderSizePixel = 0
+        StatusCard.Size = UDim2.new(1, 0, 0, 100); StatusCard.BackgroundColor3 = Color3.fromRGB(20, 24, 36); StatusCard.BorderSizePixel = 0
         Instance.new("UICorner", StatusCard)
         StatusLabel = Instance.new("TextLabel", StatusCard)
         StatusLabel.Size = UDim2.new(1, 0, 1, 0); StatusLabel.BackgroundTransparency = 1; StatusLabel.Text = "⏳ Starting..."; StatusLabel.Font = Enum.Font.GothamMedium; StatusLabel.TextSize = 12; StatusLabel.TextColor3 = Color3.fromRGB(255, 205, 75); StatusLabel.TextXAlignment = Enum.TextXAlignment.Left; StatusLabel.TextWrapped = true
@@ -1221,7 +1114,7 @@ end
 
     if not isHelper and not isMain then return end
 
-    -- LOGIC DÀNH RIÊNG CHO HELPER FM (TỰ ĐỘNG HOP NẾU PHÒNG > 8 NGƯỜI)
+    -- LOGIC HELPER FM: CHỌN SERVER <= 8 NGƯỜI & ÉP PHÁT TÍN HIỆU NGAY
     if isHelper and isHopFM then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY)
@@ -1230,81 +1123,88 @@ end
                 pcall(function()
                     local currentCount = #Players:GetPlayers()
 
-                    -- BƯỚC 1: KIỂM TRA SĨ SỐ NGƯỜI CHƠI TRONG SERVER (ƯU TIÊN HÀNG ĐẦU)
+                    -- NẾU PHÒNG ĐÔNG > 8 -> HOP NGAY
                     if currentCount > 8 then
-                        setStatus(string.format("Phong dong (%d > 8 nguoi) -> Hop server khac...", currentCount))
-                        warn(string.format("[JoinV4 Anti-Crowd] Server hien tai co %d nguoi (> 8), dang hop...", currentCount))
+                        setStatus(string.format("Phong dong (%d > 8) -> Hop server khac...", currentCount))
                         executeHopForCrowdedServer()
                         task.wait(10)
                         return
                     end
 
-                    -- BƯỚC 2: NẾU SĨ SỐ <= 8 THÌ MỚI XỬ LÝ LÀM FULL MOON
-                    if isNight() and isFullMoon() then
-                        setStatus(string.format("Full Moon (%d/12 nguoi) -> Gui jobId...", currentCount))
-                        task.wait(3)
-                        return
-                    end
+                    -- PHÒNG VẮNG <= 8 NGƯỜI -> NÓI VỚI API LÀ DÃ SẴN SÀNG (GỬI JOBID)
+                    setStatus(string.format("Phong dat chuan (%d <= 8) -> Phat JobId cho Helper G1...", currentCount))
+                    syncToAPI(true)
 
-                    -- BƯỚC 3: SĂN SERVER FULL MOON MỚI TỪ API
-                    if not isFetching and tick() - lastFmApiAt >= FM_API_INTERVAL then
-                        lastFmApiAt = tick()
-                        task.spawn(function()
-                            local found = findFMServer()
-                            if not found and NEAR_MOON_ENABLED then found = findNearMoonServer() end
-                            lastFmApiResult = (found and found ~= game.JobId) and found or nil
-                        end)
-                    end
+                    -- SĂN SERVER FM MỚI QUA API NẾU CHƯA CÓ TRĂNG
+                    if not (isNight() and isFullMoon()) then
+                        if tick() - lastFmApiAt >= FM_API_INTERVAL then
+                            lastFmApiAt = tick()
+                            task.spawn(function()
+                                local found = findFMServer()
+                                if not found and NEAR_MOON_ENABLED then found = findNearMoonServer() end
+                                lastFmApiResult = (found and found ~= game.JobId) and found or nil
+                            end)
+                        end
 
-                    if lastFmApiResult and lastFmApiResult ~= game.JobId then
-                        setStatus("Hop sang server FM moi tim duoc...")
-                        hopTo(lastFmApiResult, game.PlaceId, true)
-                        task.wait(12)
-                    else
-                        setStatus(string.format("Phong vang dat chuan (%d <= 8 nguoi) -> Canh FM...", currentCount))
+                        if lastFmApiResult and lastFmApiResult ~= game.JobId then
+                            setStatus("Hop sang server FM moi tim duoc...")
+                            hopTo(lastFmApiResult, game.PlaceId, true)
+                            task.wait(12)
+                        end
                     end
                 end)
             end
         end)
     end
 
-    -- LOGIC DÀNH CHO HELPER THƯỜNG
+    -- LOGIC HELPER THƯỜNG (G1): SỬA ĐỂ TÌM TẤT CẢ TÊN TRONG NHÓM MY_GROUP_HELPERS
     if isHelper and not isHopFM then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY + 1)
             while task.wait(SYNC_INTERVAL) do
                 pcall(function()
-                    local resp = syncToAPI()
-                    if not resp or not resp.accounts then return end
+                    local resp = syncToAPI(false)
+                    if not resp then 
+                        setStatus("Dang ket noi den Server API...")
+                        return 
+                    end
+
                     local viewAccounts = getMergedAccounts(resp)
                     local fmJobId, fmPlaceId = nil, nil
-                    for name, data in pairs(viewAccounts) do
-                        if MY_HopFMSet[name] and name ~= USERNAME then
-                            if data.fullMoon == true then
-                                fmJobId = tostring(data.jobid or data.jobId or "")
-                                fmPlaceId = tonumber(data.placeid or data.placeId)
-                                break
-                            end
+                    local targetHopFM = ""
+
+                    -- Tìm thông tin của bất kỳ Helper FM nào thuộc nhóm
+                    for name, _ in pairs(MY_HopFMSet) do
+                        targetHopFM = name
+                        local data = viewAccounts[name]
+                        if data and (data.fullMoon == true or data.ready == true) then
+                            fmJobId = tostring(data.jobid or data.jobId or "")
+                            fmPlaceId = tonumber(data.placeid or data.placeId or game.PlaceId)
+                            if fmJobId ~= "" then break end
                         end
                     end
+
                     if fmJobId and fmJobId ~= game.JobId then
+                        setStatus(string.format("Hop theo HopFM [%s] -> Server %s...", targetHopFM, fmJobId:sub(1,6)))
                         hopTo(fmJobId, fmPlaceId, true)
-                        task.wait(0.5)
+                        task.wait(2)
+                    else
+                        setStatus(string.format("Dang cho HopFM [%s] phat tin hieu...", targetHopFM))
                     end
                 end)
             end
         end)
     end
 
-    -- LOGIC DÀNH CHO MAIN
+    -- LOGIC MAIN: TỰ ĐỘNG THEO DÕI CÁC HELPER CÙNG GROUP
     if isMain then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY + 2)
             while task.wait(1.5) do
                 pcall(function()
-                    local resp = syncToAPI()
-                    if not resp or not resp.accounts then return end
-                    updateV4Cache()
+                    local resp = syncToAPI(false)
+                    if not resp then return end
+                    
                     local myGroupHelpers = {}
                     for i, helperList in ipairs(helperGroups) do
                         if type(helperList) == "table" then
@@ -1315,19 +1215,22 @@ end
                             break
                         end
                     end
+
                     local viewAccounts = getMergedAccounts(resp)
                     local fmJobId, fmPlaceId = nil, nil
                     for name, _ in pairs(myGroupHelpers) do
                         local data = viewAccounts[name]
-                        if data and data.fullMoon == true then
+                        if data and (data.fullMoon == true or data.ready == true) then
                             fmJobId = tostring(data.jobid or data.jobId or "")
-                            fmPlaceId = tonumber(data.placeid or data.placeId)
+                            fmPlaceId = tonumber(data.placeid or data.placeId or game.PlaceId)
                             if fmJobId ~= "" then break end
                         end
                     end
+
                     if fmJobId and fmJobId ~= game.JobId then
+                        setStatus("Hop sang server HopFM dang dung...")
                         hopTo(fmJobId, fmPlaceId, true)
-                        task.wait(0.5)
+                        task.wait(2)
                     end
                 end)
             end
