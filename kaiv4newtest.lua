@@ -824,7 +824,6 @@ end
     local lastFmApiResult = nil
     local fmJoinedCache   = {}
     local FM_CACHE_EXPIRE = 180
-    local _failedHopJobId = ""
 
     local function setStatus(txt)
         currentStatus = tostring(txt or "")
@@ -841,7 +840,7 @@ end
             Url     = url,
             Method  = "POST",
             Headers = { ["Content-Type"] = "application/json" },
-            Body    = HttpService:JSONDecode(body)
+            Body    = HttpService:JSONEncode(body)
         })
         if ok and res then
             local b = res.Body or res.body
@@ -912,7 +911,7 @@ end
                         and not (excluded and excluded[jid])
                         and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
                         and placeId and tonumber(placeId) == tonumber(game.PlaceId)
-                        and curPlayers < 11 then
+                        and curPlayers <= 8 then
                         
                         table.insert(candidates, { jobId = jid, players = curPlayers })
                     end
@@ -957,7 +956,7 @@ end
                 local placeId = v.place_id or v.placeId or v.PlaceId
                 local pStr = tostring(v.players or "0/12")
                 local curPlayers = tonumber(pStr:match("(%d+)")) or 0
-                if jobId and jobId ~= "" and tostring(jobId) ~= tostring(game.JobId) and placeId and tonumber(placeId) == tonumber(game.PlaceId) and curPlayers >= 2 and curPlayers <= 7 then
+                if jobId and jobId ~= "" and tostring(jobId) ~= tostring(game.JobId) and placeId and tonumber(placeId) == tonumber(game.PlaceId) and curPlayers >= 2 and curPlayers <= 8 then
                     table.insert(candidates, {jobId = tostring(jobId), players = curPlayers})
                 end
             end
@@ -978,7 +977,6 @@ end
         end
         if not failedJobId or failedJobId == "" then failedJobId = lastFmApiResult end
         if failedJobId and failedJobId ~= "" then
-            _failedHopJobId = failedJobId
             fmJoinedCache[failedJobId] = os.time()
             if lastFmApiResult == failedJobId then lastFmApiResult = nil end
             lastFmApiAt = 0
@@ -1002,58 +1000,41 @@ end
     end
 
     -- =========================================================================
-    -- KIỂM TRA SỐ LƯỢNG NGƯỜI CHƠI DÀNH RIÊNG CHO HELPER FM (> 8 NGƯỜI -> HOP)
+    -- HAM HOP SERVER KHAN CAP DANG CHO HELPER FM KHI PHONG DONG (> 8 NGƯỜI)
     -- =========================================================================
-    local function checkHelperFMCrowd()
-        if not isHopFM then return false end
+    local function executeHopForCrowdedServer()
+        fmJoinedCache[game.JobId] = os.time()
         
-        task.wait(2)
-        local playersList = Players:GetPlayers()
-        local currentCount = #playersList
+        local targetJobId = nil
+        pcall(function()
+            targetJobId = findFMServer()
+            if not targetJobId and NEAR_MOON_ENABLED then
+                targetJobId = findNearMoonServer()
+            end
+        end)
         
-        print(string.format("[JoinV4] Helper FM check sĩ số: %d/12 người.", currentCount))
-        
-        if currentCount > 8 then
-            setStatus(string.format("Phòng đông (%d > 8 người) -> Tìm server khác...", currentCount))
-            warn(string.format("[JoinV4] Server có %d người (> 8), Helper FM tự động hop...", currentCount))
-            
-            -- Đánh dấu không quay lại server quá đông này
-            fmJoinedCache[game.JobId] = os.time()
-            
-            local targetJobId = nil
-            pcall(function()
-                targetJobId = findFMServer()
-                if not targetJobId and NEAR_MOON_ENABLED then
-                    targetJobId = findNearMoonServer()
-                end
-            end)
-            
-            if targetJobId and targetJobId ~= game.JobId then
-                setStatus("Đã tìm thấy server FM vắng hơn -> Đang chuyển...")
-                hopTo(targetJobId, game.PlaceId, true)
-                return true
-            else
-                local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
-                if sb then
-                    for page = 1, 5 do
-                        local ok, res = pcall(function() return sb:InvokeServer("getServers", page) end)
-                        if ok and type(res) == "table" then
-                            for jid, data in pairs(res) do
-                                local jIdStr = tostring(jid)
-                                local cnt = tonumber(type(data) == "table" and (data.Count or data.Players) or 0) or 0
-                                if jIdStr ~= "" and jIdStr ~= game.JobId and cnt > 0 and cnt <= 8 then
-                                    setStatus(string.format("Hop khẩn cấp sang server %s (%d người)...", jIdStr:sub(1,8), cnt))
-                                    sb:InvokeServer("teleport", jIdStr)
-                                    return true
-                                end
+        if targetJobId and targetJobId ~= game.JobId then
+            setStatus("Tim thay server FM vang -> Dang chuyen...")
+            hopTo(targetJobId, game.PlaceId, true)
+            return true
+        else
+            local sb = ReplicatedStorage:FindFirstChild("__ServerBrowser") or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
+            if sb then
+                for page = 1, 5 do
+                    local ok, res = pcall(function() return sb:InvokeServer("getServers", page) end)
+                    if ok and type(res) == "table" then
+                        for jid, data in pairs(res) do
+                            local jIdStr = tostring(jid)
+                            local cnt = tonumber(type(data) == "table" and (data.Count or data.Players) or 0) or 0
+                            if jIdStr ~= "" and jIdStr ~= game.JobId and cnt > 0 and cnt <= 8 then
+                                setStatus(string.format("Hop khan cap -> %s (%d nguoi)...", jIdStr:sub(1,8), cnt))
+                                sb:InvokeServer("teleport", jIdStr)
+                                return true
                             end
                         end
                     end
                 end
             end
-        else
-            setStatus(string.format("Server đạt chuẩn vắng (%d <= 8 người)", currentCount))
-            print(string.format("[JoinV4] Server vắng (%d người), Helper FM ở lại.", currentCount))
         end
         return false
     end
@@ -1240,34 +1221,49 @@ end
 
     if not isHelper and not isMain then return end
 
-    -- LOGIC DÀNH RIÊNG CHO HELPER FM
+    -- LOGIC DÀNH RIÊNG CHO HELPER FM (TỰ ĐỘNG HOP NẾU PHÒNG > 8 NGƯỜI)
     if isHelper and isHopFM then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY)
 
-            -- Kiểm tra số lượng người chơi ngay khi Helper FM vừa vào server (> 8 người -> hop)
-            local isCrowded = false
-            pcall(function()
-                isCrowded = checkHelperFMCrowd()
-            end)
-            if isCrowded then return end
+            while task.wait(0.5) do
+                pcall(function()
+                    local currentCount = #Players:GetPlayers()
 
-            while task.wait(0.25) do
-                if isNight() and isFullMoon() then
-                    task.wait(3); continue
-                end
-                if not isFetching and tick() - lastFmApiAt >= FM_API_INTERVAL then
-                    lastFmApiAt = tick()
-                    task.spawn(function()
-                        local found = findFMServer()
-                        if not found and NEAR_MOON_ENABLED then found = findNearMoonServer() end
-                        lastFmApiResult = (found and found ~= game.JobId) and found or nil
-                    end)
-                end
-                if lastFmApiResult and lastFmApiResult ~= game.JobId then
-                    hopTo(lastFmApiResult, game.PlaceId, true)
-                    task.wait(12)
-                end
+                    -- BƯỚC 1: KIỂM TRA SĨ SỐ NGƯỜI CHƠI TRONG SERVER (ƯU TIÊN HÀNG ĐẦU)
+                    if currentCount > 8 then
+                        setStatus(string.format("Phong dong (%d > 8 nguoi) -> Hop server khac...", currentCount))
+                        warn(string.format("[JoinV4 Anti-Crowd] Server hien tai co %d nguoi (> 8), dang hop...", currentCount))
+                        executeHopForCrowdedServer()
+                        task.wait(10)
+                        return
+                    end
+
+                    -- BƯỚC 2: NẾU SĨ SỐ <= 8 THÌ MỚI XỬ LÝ LÀM FULL MOON
+                    if isNight() and isFullMoon() then
+                        setStatus(string.format("Full Moon (%d/12 nguoi) -> Gui jobId...", currentCount))
+                        task.wait(3)
+                        return
+                    end
+
+                    -- BƯỚC 3: SĂN SERVER FULL MOON MỚI TỪ API
+                    if not isFetching and tick() - lastFmApiAt >= FM_API_INTERVAL then
+                        lastFmApiAt = tick()
+                        task.spawn(function()
+                            local found = findFMServer()
+                            if not found and NEAR_MOON_ENABLED then found = findNearMoonServer() end
+                            lastFmApiResult = (found and found ~= game.JobId) and found or nil
+                        end)
+                    end
+
+                    if lastFmApiResult and lastFmApiResult ~= game.JobId then
+                        setStatus("Hop sang server FM moi tim duoc...")
+                        hopTo(lastFmApiResult, game.PlaceId, true)
+                        task.wait(12)
+                    else
+                        setStatus(string.format("Phong vang dat chuan (%d <= 8 nguoi) -> Canh FM...", currentCount))
+                    end
+                end)
             end
         end)
     end
