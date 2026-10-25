@@ -1119,24 +1119,9 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER (API kurinian-hub): { data: [ { jobid, placeid, players (so), moon, endfullmoon?, fullmoonin? } ] }
-    -- Uu tien 1: endfullmoon 4:00-9:00 (con lai lau nhat). Uu tien 2: moon "Fullmoon", chua co fullmoonin, 2-8 player.
+    -- FIND FM SERVER (Tương thích định dạng JSON mới: Jobid, place_id, players "7/12")
     local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
-
-        local FM_MIN_PLAYERS = 2
-        local FM_MAX_PLAYERS = 8
-        local FM_MIN_SECONDS = 240   -- endfullmoon toi thieu 4:00
-        local FM_MAX_SECONDS = 540   -- endfullmoon toi da 9:00
-
-        -- "9:15" -> 555 giay
-        local function parseMMSS(s)
-            if type(s) == "number" then return s end
-            if type(s) ~= "string" then return nil end
-            local m, sec = s:match("^(%d+):(%d+)$")
-            if m then return tonumber(m) * 60 + tonumber(sec) end
-            return nil
-        end
 
         local resp = nil
         local httpMethods = {
@@ -1154,72 +1139,69 @@ end
                 break
             end
         end
-        if not resp then
-            getgenv().JoinV4FMFilterStatus = "API kurinian khong phan hoi"
-            return nil
-        end
-        if resp.StatusCode ~= 200 then
-            getgenv().JoinV4FMFilterStatus = "API kurinian HTTP " .. tostring(resp.StatusCode)
+        if not resp or resp.StatusCode ~= 200 then
+            getgenv().JoinV4FMFilterStatus = "API FM không phản hồi hoặc lỗi HTTP"
             return nil
         end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
-        if not ok2 or type(parsed) ~= "table" then
-            getgenv().JoinV4FMFilterStatus = "API kurinian sai format JSON"
+        if not ok2 then
+            getgenv().JoinV4FMFilterStatus = "API FM sai format JSON"
             return nil
         end
 
-        local entries = parsed.data
+        local entries = parsed
+        if type(parsed) == "table" then
+            if parsed[1] == nil then
+                entries = parsed.data or parsed.servers or parsed.result or {}
+            end
+        end
+
         if type(entries) ~= "table" or #entries == 0 then
-            getgenv().JoinV4FMFilterStatus = "API kurinian data rong"
+            getgenv().JoinV4FMFilterStatus = "API FM data rỗng"
             return nil
         end
 
-        local endCands, plainCands = {}, {}
+        local candidates = {}
         for _, v in ipairs(entries) do
             if type(v) == "table" then
-                local jobId   = v.jobid
-                local placeId = v.placeid
-                local players = tonumber(v.players)
+                local jobId   = v.Jobid or v.jobid or v.JobId or v.id
+                local placeId = v.place_id or v.placeId or v.PlaceId
+                local pStr    = tostring(v.players or "0/12")
+                
+                local curPlayers, maxPlayers = pStr:match("(%d+)%s*/%s*(%d+)")
+                curPlayers = tonumber(curPlayers) or tonumber(pStr) or 0
+
                 if jobId and jobId ~= "" then
                     local jid = tostring(jobId)
                     if jid ~= tostring(game.JobId)
                         and not (excluded and excluded[jid])
                         and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
                         and placeId and tonumber(placeId) == tonumber(game.PlaceId)
-                        and players and players >= FM_MIN_PLAYERS and players <= FM_MAX_PLAYERS then
-                        local ttf = parseMMSS(v.endfullmoon)
-                        local moonName = tostring(v.moon or ""):lower():gsub("%s+", "")
-                        if ttf then
-                            if ttf >= FM_MIN_SECONDS and ttf <= FM_MAX_SECONDS then
-                                table.insert(endCands, {jobId = jid, players = players, ttf = ttf})
-                            end
-                        elseif v.fullmoonin == nil and moonName == "fullmoon" then
-                            table.insert(plainCands, {jobId = jid, players = players})
-                        end
+                        and curPlayers < 11 then
+                        
+                        table.insert(candidates, {
+                            jobId   = jid,
+                            players = curPlayers
+                        })
                     end
                 end
             end
         end
 
-        if #endCands > 0 then
-            getgenv().JoinV4FMFilterStatus = "endfullmoon"
-            table.sort(endCands, function(a, b)
-                if a.ttf ~= b.ttf then return a.ttf > b.ttf end
+        if #candidates > 0 then
+            getgenv().JoinV4FMFilterStatus = "Tìm thấy " .. #candidates .. " server FM phù hợp"
+            table.sort(candidates, function(a, b)
                 return a.players < b.players
             end)
-            return endCands[1].jobId
+            return candidates[1].jobId
         end
-        if #plainCands > 0 then
-            getgenv().JoinV4FMFilterStatus = "Fullmoon 2-8p"
-            table.sort(plainCands, function(a, b) return a.players < b.players end)
-            return plainCands[1].jobId
-        end
-        getgenv().JoinV4FMFilterStatus = "kurinian co " .. #entries .. " server, khong co server FM 2-8p cung placeid " .. tostring(game.PlaceId)
+
+        getgenv().JoinV4FMFilterStatus = "Không có server FM phù hợp với PlaceId hiện tại"
         return nil
     end
 
-    -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
+    -- FIND NEAR MOON SERVER
     local function findNearMoonServer()
         if not NEAR_MOON_ENABLED or not NEAR_MOON_API_URL or NEAR_MOON_API_URL == "" then return nil end
 
@@ -1276,26 +1258,23 @@ end
         local candidates = {}
         for _, v in ipairs(entries) do
             if type(v) ~= "table" then continue end
-            local jobId   = getField(v, "jobid","JobId","JobID","jobId","job_id")
-            local placeId = getField(v, "placeid","PlaceId","placeId","place_id")
+            local jobId   = getField(v, "jobid","Jobid","JobId","JobID","jobId","job_id")
+            local placeId = getField(v, "place_id","placeid","PlaceId","placeId","PlaceID")
             local players = parsePlayers(getField(v, "players","Players","playerCount","PlayerCount"))
             if not jobId or jobId == "" then continue end
             if tostring(jobId) == tostring(game.JobId) then continue end
             local cached = fmJoinedCache[tostring(jobId)]
             if cached and (os.time() - cached) < FM_CACHE_EXPIRE then continue end
             if not placeId or tonumber(placeId) ~= tonumber(game.PlaceId) then continue end
-            -- Loc: players 2..7
             if players and tonumber(players) >= 2 and tonumber(players) <= 7 then
                 table.insert(candidates, {jobId = tostring(jobId), players = tonumber(players)})
             end
         end
         if #candidates == 0 then return nil end
-        -- Chon server it player nhat de tranh race condition
         table.sort(candidates, function(a, b) return a.players < b.players end)
         return candidates[1].jobId
     end
 
-    -- Tinh timetonight (seconds) tu ClockTime hien tai trong server
     local function getServerTimeToNight()
         local ok, val = pcall(function()
             local NS = 18
@@ -1325,8 +1304,6 @@ end
         if not failedJobId or failedJobId == "" then
             failedJobId = lastFmApiResult
         end
-        -- This event only fires for a failed teleport. Handle every result,
-        -- including GameNotFound/GameFull/Flooded (771 was previously missed).
         if failedJobId and failedJobId ~= "" then
             warn("[JoinV4] TeleportInitFailed (" .. tostring(result) .. ") -> blacklist " .. failedJobId:sub(1,8))
             _failedHopJobId = failedJobId
@@ -1352,9 +1329,6 @@ end
             return false, "rejected"
         end
 
-        -- Never send an unverified or cross-place JobId to __ServerBrowser.
-        -- Account sync and the Full Moon endpoint must both prove that the
-        -- JobId belongs to the exact sub-place the player is currently in.
         local verifiedPlaceId = tonumber(targetPlaceId)
         local currentPlaceId = tonumber(game.PlaceId)
         if not verifiedPlaceId or verifiedPlaceId ~= currentPlaceId then
@@ -1371,8 +1345,6 @@ end
             or ReplicatedStorage:WaitForChild("__ServerBrowser", 5)
         if not sb then return false, "no_server_browser" end
 
-        -- Exact mechanism from the stable reference: callers control the retry
-        -- window; every call sends one __ServerBrowser teleport request.
         local now = tick()
         getgenv().JoinV4LastHopAttempt = {
             JobId = jobId,
@@ -1387,7 +1359,6 @@ end
         return ok, ok and "sent" or "invoke_failed"
     end
 
-    -- NATIVE V4 STATUS CHECK
     local _CommF_ = nil
     pcall(function()
         _CommF_ = ReplicatedStorage:WaitForChild("Remotes", 5):WaitForChild("CommF_", 5)
@@ -1471,7 +1442,6 @@ end
         end
     end
 
-    -- BUILD PAYLOAD
     local function buildPayload(hasFM)
         local gid = isHelper and GROUP_ID or myAssignedGroupId
 
@@ -1535,8 +1505,6 @@ end
         return httpPost(API_BASE .. "/data", buildPayload(hasFM))
     end
 
-    -- /v4info tra ve DAY DU account (jobid/fullmoon/placeid). /data cho helper co the thieu HopFM
-    -- -> gop them /v4info de helper/main thay HopFM cung group.
     local _v4AccCache   = nil
     local _v4AccCacheAt = 0
     local function fetchV4InfoAccounts()
@@ -1574,7 +1542,6 @@ end
         return merged
     end
 
-    -- Ten account thuoc group KHAC (config + /v4info groupid khac note cua minh)
     local function getOtherGroupNames()
         local set = {}
         local myNote = tostring(MY_GROUP_NOTE or ""):lower()
@@ -1599,7 +1566,6 @@ end
         return set
     end
 
-    -- KIEM TRA TRONG SERVER THAT (Players): co account group khac dang trong server nay khong
     local function otherGroupInThisServer()
         local set = getOtherGroupNames()
         for _, p in ipairs(Players:GetPlayers()) do
@@ -1610,14 +1576,10 @@ end
         return nil
     end
 
-    -- STATUS TEXT
     local function setStatus(txt)
         currentStatus = tostring(txt or "")
     end
 
-    -- ══════════════════════════════════════════════════════════════════
-    -- UI SYSTEM (Modern Cyber Glassmorphism HUD - Draggable & Sleek)
-    -- ══════════════════════════════════════════════════════════════════
     local FONT_TITLE = Enum.Font.GothamBold
     local FONT_BODY  = Enum.Font.GothamMedium
     local FONT_TAG   = Enum.Font.GothamBold
@@ -1706,7 +1668,6 @@ end
         stroke.Thickness = 1.5
         stroke.Transparency = 0.35
 
-        -- Header Bar
         local header = Instance.new("Frame", Card)
         header.Name = "Header"
         header.Size = UDim2.new(1, 0, 0, 36)
@@ -1749,10 +1710,8 @@ end
         MinBtn.BorderSizePixel = 0
         Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
 
-        -- Make Card draggable from Header
         makeDraggable(Card, header)
 
-        -- Content Container
         local content = Instance.new("Frame", Card)
         content.Name = "Content"
         content.Size = UDim2.new(1, 0, 1, -36)
@@ -1770,7 +1729,6 @@ end
         layout.SortOrder = Enum.SortOrder.LayoutOrder
         layout.Padding = UDim.new(0, 6)
 
-        -- Row 1: Role & Group Badges
         local row1 = Instance.new("Frame", content)
         row1.Name = "Row1"
         row1.Size = UDim2.new(1, 0, 0, 28)
@@ -1808,7 +1766,6 @@ end
         gPillStroke.Color = Color3.fromRGB(40, 46, 68)
         gPillStroke.Thickness = 1
 
-        -- Row 2: Moon Radar Card
         MoonCard = Instance.new("Frame", content)
         MoonCard.Name = "MoonCard"
         MoonCard.Size = UDim2.new(1, 0, 0, 32)
@@ -1833,7 +1790,6 @@ end
         MoonLabel.TextColor3 = C_MUTED
         MoonLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-        -- Row 3: Live Status Card
         StatusCard = Instance.new("Frame", content)
         StatusCard.Name = "StatusCard"
         StatusCard.Size = UDim2.new(1, 0, 0, 68)
@@ -1845,7 +1801,6 @@ end
         sStroke.Color = Color3.fromRGB(40, 46, 68)
         sStroke.Thickness = 1
 
-        -- Left Accent Bar
         local sBar = Instance.new("Frame", StatusCard)
         sBar.Size = UDim2.new(0, 3, 1, 0)
         sBar.BackgroundColor3 = C_CYAN
@@ -1869,7 +1824,6 @@ end
         StatusLabel.TextYAlignment = Enum.TextYAlignment.Center
         StatusLabel.TextWrapped = true
 
-        -- Toggle Collapse Logic
         MinBtn.MouseButton1Click:Connect(function()
             isCollapsed = not isCollapsed
             if isCollapsed then
@@ -1890,7 +1844,6 @@ end
         end
         local hasFM = isNight() and isFullMoon()
 
-        -- Update Role
         if RolePill then
             if isMain then
                 RolePill.Text = "👑 MAIN"
@@ -1904,7 +1857,6 @@ end
             end
         end
 
-        -- Update Group
         if GroupPill then
             if isHelper then
                 GroupPill.Text = "📌 " .. tostring(MY_GROUP_NOTE or "?")
@@ -1918,7 +1870,6 @@ end
             end
         end
 
-        -- Update Moon Card
         if MoonLabel then
             if hasFM then
                 MoonLabel.Text = "🌕 FULL MOON (ACTIVE)"
@@ -1934,7 +1885,6 @@ end
             end
         end
 
-        -- Update Status Card
         if StatusLabel then
             local s = currentStatus:lower()
             local col = C_WHITE
@@ -1956,7 +1906,6 @@ end
         end
     end
 
-    -- BOOT
     task.spawn(createUI)
     pcall(function()
         if not Player:FindFirstChild("DataLoaded") then
@@ -1975,7 +1924,6 @@ end
         return
     end
 
-    -- HELPER: HOP FM LOOP
     if isHelper and isHopFM then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY)
@@ -1983,26 +1931,19 @@ end
             local lastHopAt_ = 0
             local isFetching = false
             local takenJobIds        = {}
-            local isHopping  = false   -- guard: khong retry khi dang teleport
+            local isHopping  = false
             local lastConflictCheckAt = 0
 
-            -- ══════════════════════════════════════════════════════════════
-            -- Cross-group HopFM conflict detection (file-based, cung may)
-            -- Moi HopFM ghi jobId ra file. Group khac doc de tranh trung server.
-            -- File: jv4_hopfm_g{groupIdx}.txt | Content: jobId hoac ""
-            -- ══════════════════════════════════════════════════════════════
             local _myGrpIdx  = AllHopFMSet[USERNAME] or 999
             local _numGroups = #helperGroups
             local CXFILE_PFX = "jv4_hopfm_g"
 
-            -- Ghi jobId cua minh (khi dang FM/pre-FM) hoac "" (khi seeking)
             local function writeHopFMJobIdFile(jobId)
                 pcall(function()
                     writefile(CXFILE_PFX .. _myGrpIdx .. ".txt", tostring(jobId or ""))
                 end)
             end
 
-            -- Doc jobId cua cac HopFM group KHAC tu file; tra ve {[gi] = jobId}
             local function readCrossGroupHopFMJobIds()
                 local out = {}
                 for gi = 1, _numGroups do
@@ -2019,9 +1960,6 @@ end
                 return out
             end
 
-            -- Fetch jobId cua HopFM cac group KHAC qua GET /v4info (cross-machine)
-            -- /v4info tra ve tat ca accounts dang active voi jobid, role, groupid,...
-            -- Cache SYNC_INTERVAL giay de tranh spam request
             local _v4InfoCache   = {}
             local _v4InfoCacheAt = 0
 
@@ -2041,7 +1979,6 @@ end
                     local decoded = HttpService:JSONDecode(body)
                     if type(decoded) ~= "table" or type(decoded.accounts) ~= "table" then return end
                     for name, info in pairs(decoded.accounts) do
-                        -- Chi lay HopFM cua group KHAC: co trong AllHopFMSet, khac chinh minh
                         if AllHopFMSet[name] and AllHopFMSet[name] ~= _myGrpIdx and name ~= USERNAME then
                             local jid = tostring(info.jobid or "")
                             if jid ~= "" then result[name] = jid end
@@ -2057,10 +1994,8 @@ end
             while task.wait(0.25) do
                 local nowTick = tick()
 
-                -- Group khac trong server (Players that) -> khong giu server nay, roi di tim server khac
                 local intruder = otherGroupInThisServer()
                 if intruder then
-                    -- CHI reset MOT LAN khi moi phat hien group khac (khong reset moi vong, neu khong se xoa ket qua tim server)
                     if _intruderWarned ~= intruder then
                         warn("[JoinV4][HopFM] Co account group khac trong server: " .. intruder .. " -> tim server khac")
                         _intruderWarned = intruder
@@ -2079,7 +2014,6 @@ end
                     local conflictWith   = nil
                     local conflictSource = nil
 
-                    -- Quang ba: ghi jobId ra file de HopFM group khac biet ta dang o day
                     writeHopFMJobIdFile(game.JobId)
 
                     if nowTick - lastConflictCheckAt >= SYNC_INTERVAL then
@@ -2094,7 +2028,6 @@ end
                                         local jid = tostring(data.jobid or data.jobId or "")
                                         if jid ~= "" then
                                             if jid == game.JobId then
-                                                -- Ca 2 HopFM cung server -> ca 2 deu phai hop di
                                                 conflictWith   = name
                                                 conflictSource = "API"
                                             else
@@ -2104,7 +2037,6 @@ end
                                     end
                                 end
                             end
-                            -- API cross-machine: doc /v4info lay jobId HopFM moi group (ca may khac)
                             if not conflictWith then
                                 local crossHopFMs = fetchCrossGroupHopFMJobIds()
                                 for name, jid in pairs(crossHopFMs) do
@@ -2119,17 +2051,14 @@ end
                             end
                         end)
 
-                        -- File-based: doc cac HopFM group khac de kiem tra conflict
                         if not conflictWith then
                             local crossJids = readCrossGroupHopFMJobIds()
                             for gi, jid in pairs(crossJids) do
                                 if jid == game.JobId then
-                                    -- Conflict phat hien qua file: ca 2 cung o server nay
                                     conflictWith   = "G" .. gi .. "-HopFM"
                                     conflictSource = "FILE"
                                     break
                                 elseif jid ~= "" then
-                                    -- Server khac group dang giu -> danh dau taken
                                     takenJobIds[jid] = "G" .. gi .. "-HopFM"
                                 end
                             end
@@ -2140,7 +2069,7 @@ end
                         warn("[JoinV4][HopFM] Conflict[" .. (conflictSource or "?") .. "] voi "
                             .. conflictWith .. " cung o " .. game.JobId:sub(1,8)
                             .. " -> ca 2 phai hop sang FM khac")
-                        writeHopFMJobIdFile("")   -- Xoa claim truoc khi roi server
+                        writeHopFMJobIdFile("")
                         fmJoinedCache[game.JobId] = os.time()
                         lastFmApiResult = nil
                         lastFmApiAt     = 0
@@ -2154,14 +2083,12 @@ end
                 end
 
                 if isPreFMReady() and not intruder then
-                    -- Ghi file: reserve server nay cho group minh de group khac tranh vao
                     writeHopFMJobIdFile(game.JobId)
-                    -- Kiem tra timetonight: neu > NEAR_MOON_MAX_TTN (300s) thi la fake moon -> hop di
                     if NEAR_MOON_ENABLED then
                         local ttn = getServerTimeToNight()
                         if ttn > NEAR_MOON_MAX_TTN then
                             warn("[JoinV4][HopFM] Near Moon fake: timetonight=" .. ttn .. "s > " .. NEAR_MOON_MAX_TTN .. "s -> hop away")
-                            writeHopFMJobIdFile("")   -- Fake moon: xoa reserve, se tim server khac
+                            writeHopFMJobIdFile("")
                             fmJoinedCache[game.JobId] = os.time()
                             lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
                             setStatus("Near Moon fake (" .. ttn .. "s) - tim server khac...")
@@ -2188,7 +2115,6 @@ end
                                 end
                             end
                         end
-                        -- API cross-machine: /v4info -> takenJobIds cho HopFM cac group khac
                         local crossHopFMs = fetchCrossGroupHopFMJobIds()
                         for name, jid in pairs(crossHopFMs) do
                             if jid ~= "" and not takenJobIds[jid] then
@@ -2196,8 +2122,7 @@ end
                             end
                         end
                     end)
-                    -- File-based: seeking phase - xoa claim va load takenJobIds tu cac group khac
-                    writeHopFMJobIdFile("")   -- Dang seeking: chua giu server nao
+                    writeHopFMJobIdFile("")
                     local crossJids = readCrossGroupHopFMJobIds()
                     for gi, jid in pairs(crossJids) do
                         if jid ~= "" and not takenJobIds[jid] then
@@ -2206,7 +2131,6 @@ end
                     end
                 end
 
-                -- Nap server dang co account group khac (/v4info) vao takenJobIds de tim server khac
                 do
                     local v4all = fetchV4InfoAccounts()
                     local myNoteL = tostring(MY_GROUP_NOTE or ""):lower()
@@ -2225,7 +2149,6 @@ end
                     lastFmApiAt = nowTick; isFetching = true
                     task.spawn(function()
                         local found = findFMServer(takenJobIds)
-                        -- Fallback cuoi: Near Moon API
                         if not found and NEAR_MOON_ENABLED then
                             found = findNearMoonServer()
                             if found then
@@ -2252,11 +2175,11 @@ end
                         lastHopAt_ = nowTick; lastHopT = hopT
                         isHopping = true
                         setStatus("Hop FM: " .. hopT:sub(1,8) .. "...")
-                        writeHopFMJobIdFile("")   -- Xoa claim cu truoc khi teleport sang FM moi
+                        writeHopFMJobIdFile("")
                         pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
                         task.spawn(function()
                             hopTo(hopT, game.PlaceId)
-                            task.wait(12)   -- cho teleport hoan tat (toi da 12s)
+                            task.wait(12)
                             isHopping = false
                         end)
                     else
@@ -2282,7 +2205,6 @@ end
         end)
     end
 
-    -- HELPER: SYNC STATUS + JOIN FM
     if isHelper then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY + 1)
@@ -2303,7 +2225,6 @@ end
                     local settling = fmHopPending and tick() < fmPendingCheckAt
                     local hasFM = isNight() and isFullMoon()
 
-                    -- LUON gui sync, ke ca luc settling, de HopFM khong bi server xoa khoi accounts
                     local resp = syncToAPI()
 
                     if settling then
@@ -2326,8 +2247,8 @@ end
                     local fmJobId = nil
                     local fmPlaceId = nil
                     local fmWho   = nil
-                    local hopFMFound = false   -- debug: co tim thay HopFM trong accounts khong
-                    local hopFMFMState = "?"  -- debug: fullMoon cua HopFM la gi
+                    local hopFMFound = false
+                    local hopFMFMState = "?"
                     local rejectedPlaceId = nil
                     local accCount = 0
 
@@ -2347,7 +2268,6 @@ end
                                     rejectedPlaceId = accountPlaceId or "missing"
                                 end
                             elseif helperNearFM then
-                                -- HopFM dang o near-moon server, follow vao de chuan bi
                                 local jid = tostring(data.jobid or data.jobId or "")
                                 if jid ~= "" and jid ~= game.JobId
                                     and accountPlaceId == tonumber(game.PlaceId)
@@ -2401,7 +2321,6 @@ end
         end)
     end
 
-    -- MAIN: JOIN FM SERVER
     if isMain then
         task.spawn(function()
             task.wait(HOP_STARTUP_DELAY + 2)
@@ -2469,8 +2388,6 @@ end
                                 skipHop = true; skipReason = "Buy Gear (API flag) - skip join"
                             end
                         else
-                            -- Không có trong accounts → group đã full / chưa gán
-                            -- Reset để sync tiếp theo tự assign group mới
                             myAssignedGroupId = ""
                             setStatus("Group full - reassigning...")
                             lastHopTMain = ""; return
@@ -2489,7 +2406,6 @@ end
                     local myGroupHelpers = {}
                     local myGroupHopFMs  = {}
 
-                    -- Ưu tiên lấy helpers của myAssignedGroupId từ local config
                     for i, helperList in ipairs(helperGroups) do
                         if type(helperList) == "table" then
                             local note = trim(noteList[i] or ("group" .. i))
@@ -2508,7 +2424,6 @@ end
                         end
                     end
 
-                    -- Fallback nếu local config không tìm thấy
                     if next(myGroupHelpers) == nil and resp.group and resp.group.helpers then
                         for _, h in ipairs(resp.group.helpers) do
                             h = trim(tostring(h))
