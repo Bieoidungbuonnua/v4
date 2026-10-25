@@ -941,8 +941,8 @@ end
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "http://162.4.177.49:8080/jobid/fullmoon/300"
-    local NEAR_MOON_API_URL = ""
-    local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == false
+    local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
+    local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
     local API_BASE        = "http://mbasic7.pikamc.vn:25082"
     local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
@@ -1119,10 +1119,24 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER (API 162.4.177.49 /jobid/fullmoon/300): { Amount, data: [ { name, Jobid, place_id, players = "cur/max" } ] }
-    -- Loc: dung placeid hien tai, 2-6 player, khong phai JobId minh, khong bi group khac giu, khong cache
+    -- FIND FM SERVER (API kurinian-hub): { data: [ { jobid, placeid, players (so), moon, endfullmoon?, fullmoonin? } ] }
+    -- Uu tien 1: endfullmoon 4:00-9:00 (con lai lau nhat). Uu tien 2: moon "Fullmoon", chua co fullmoonin, 2-8 player.
     local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
+
+        local FM_MIN_PLAYERS = 2
+        local FM_MAX_PLAYERS = 8
+        local FM_MIN_SECONDS = 240   -- endfullmoon toi thieu 4:00
+        local FM_MAX_SECONDS = 540   -- endfullmoon toi da 9:00
+
+        -- "9:15" -> 555 giay
+        local function parseMMSS(s)
+            if type(s) == "number" then return s end
+            if type(s) ~= "string" then return nil end
+            local m, sec = s:match("^(%d+):(%d+)$")
+            if m then return tonumber(m) * 60 + tonumber(sec) end
+            return nil
+        end
 
         local resp = nil
         local httpMethods = {
@@ -1141,57 +1155,68 @@ end
             end
         end
         if not resp then
-            getgenv().JoinV4FMFilterStatus = "API 162 khong phan hoi"
+            getgenv().JoinV4FMFilterStatus = "API kurinian khong phan hoi"
             return nil
         end
         if resp.StatusCode ~= 200 then
-            getgenv().JoinV4FMFilterStatus = "API 162 HTTP " .. tostring(resp.StatusCode)
+            getgenv().JoinV4FMFilterStatus = "API kurinian HTTP " .. tostring(resp.StatusCode)
             return nil
         end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
         if not ok2 or type(parsed) ~= "table" then
-            getgenv().JoinV4FMFilterStatus = "API 162 sai format JSON"
+            getgenv().JoinV4FMFilterStatus = "API kurinian sai format JSON"
             return nil
         end
 
-        local entries
-        if type(parsed.data) == "table" and #parsed.data > 0 then
-            entries = parsed.data
-        elseif #parsed > 0 then
-            entries = parsed
-        else
-            getgenv().JoinV4FMFilterStatus = "API 162 data rong"
+        local entries = parsed.data
+        if type(entries) ~= "table" or #entries == 0 then
+            getgenv().JoinV4FMFilterStatus = "API kurinian data rong"
             return nil
         end
 
-        local candidates = {}
-        for _, s in ipairs(entries) do
-            if type(s) == "table" then
-                -- format API 162 (/jobid/fullmoon/300): { Amount, data: [ { name, Jobid, place_id, players = "cur/max" } ] }
-                local jid     = tostring(s.Jobid or s.jobid or s.JobId or s.jobId or "")
-                local placeId = s.place_id or s.placeid or s.PlaceID or s.placeId
-                local pRaw    = s.players or s.PlayerCount or s.Players
-                local players = tonumber(pRaw)
-                if type(pRaw) == "string" then
-                    players = tonumber(pRaw:match("(%d+)%s*/%s*%d+") or pRaw)
-                end
-                if jid ~= "" and jid ~= tostring(game.JobId)
-                    and not (excluded and excluded[jid])
-                    and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
-                    and placeId and tonumber(placeId) == tonumber(game.PlaceId)
-                    and players and players >= 2 and players <= 8 then
-                    table.insert(candidates, {jobId = jid, players = players})
+        local endCands, plainCands = {}, {}
+        for _, v in ipairs(entries) do
+            if type(v) == "table" then
+                local jobId   = v.jobid
+                local placeId = v.placeid
+                local players = tonumber(v.players)
+                if jobId and jobId ~= "" then
+                    local jid = tostring(jobId)
+                    if jid ~= tostring(game.JobId)
+                        and not (excluded and excluded[jid])
+                        and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
+                        and placeId and tonumber(placeId) == tonumber(game.PlaceId)
+                        and players and players >= FM_MIN_PLAYERS and players <= FM_MAX_PLAYERS then
+                        local ttf = parseMMSS(v.endfullmoon)
+                        local moonName = tostring(v.moon or ""):lower():gsub("%s+", "")
+                        if ttf then
+                            if ttf >= FM_MIN_SECONDS and ttf <= FM_MAX_SECONDS then
+                                table.insert(endCands, {jobId = jid, players = players, ttf = ttf})
+                            end
+                        elseif v.fullmoonin == nil and moonName == "fullmoon" then
+                            table.insert(plainCands, {jobId = jid, players = players})
+                        end
+                    end
                 end
             end
         end
-        if #candidates == 0 then
-            getgenv().JoinV4FMFilterStatus = "API co " .. #entries .. " server, khong co 2-6p cung placeid " .. tostring(game.PlaceId)
-            return nil
+
+        if #endCands > 0 then
+            getgenv().JoinV4FMFilterStatus = "endfullmoon"
+            table.sort(endCands, function(a, b)
+                if a.ttf ~= b.ttf then return a.ttf > b.ttf end
+                return a.players < b.players
+            end)
+            return endCands[1].jobId
         end
-        getgenv().JoinV4FMFilterStatus = "API 162 ok"
-        table.sort(candidates, function(a, b) return a.players < b.players end)
-        return candidates[1].jobId
+        if #plainCands > 0 then
+            getgenv().JoinV4FMFilterStatus = "Fullmoon 2-8p"
+            table.sort(plainCands, function(a, b) return a.players < b.players end)
+            return plainCands[1].jobId
+        end
+        getgenv().JoinV4FMFilterStatus = "kurinian co " .. #entries .. " server, khong co server FM 2-8p cung placeid " .. tostring(game.PlaceId)
+        return nil
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
