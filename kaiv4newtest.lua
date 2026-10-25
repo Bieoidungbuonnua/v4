@@ -941,8 +941,8 @@ end
 
     -- API / TIMING CONSTANTS
     local FM_API_URL      = "http://162.4.177.49:8080/jobid/fullmoon/300"
-    local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
-    local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
+    local NEAR_MOON_API_URL = ""
+    local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == false
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
     local API_BASE        = "http://mbasic7.pikamc.vn:25082"
     local FM_API_INTERVAL  = 3      -- giây giữa các lần poll FM API
