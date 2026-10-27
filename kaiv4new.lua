@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_0nB2RAnYf1TPA/stream/init"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Dex-Bear/VxezeHubLoader/refs/heads/main/MainHub.lua"))()
     end)
 end
 
@@ -940,7 +940,7 @@ end
     local CFG = getgenv().JoinV4Config
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "http://163.227.231.102:25038/api/bloxfruit/fullmoon"
+    local FM_API_URL      = "https://apiibf.kurinian-hub.xyz/api/bloxfruit/fullmoon"
     local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
@@ -1574,40 +1574,186 @@ end
         return merged
     end
 
-    -- Ten account thuoc group KHAC (config + /v4info groupid khac note cua minh)
-    local function getOtherGroupNames()
-        local set = {}
-        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
-        for i, hl in ipairs(helperGroups) do
-            local note = trim(noteList[i] or ("group" .. i))
-            if note:lower() ~= myNote then
-                for _, h in ipairs(hl) do
-                    local n = trim(h)
-                    if n ~= "" then set[n:lower()] = true end
-                end
-            end
-        end
-        local v4 = fetchV4InfoAccounts()
-        if type(v4) == "table" then
-            for name, info in pairs(v4) do
-                local g = type(info) == "table" and tostring(info.groupid or info.groupId or "") or ""
-                if g ~= "" and g:lower() ~= myNote then
-                    set[tostring(name):lower()] = true
-                end
-            end
-        end
-        return set
+    -- ════════════════════════════════════════════════════════════════
+    -- PRESENCE + RESERVATION CUC BO (file trong workspace, cung may)
+    -- Moi helper ghi jv4_pres_<ten>.json (jobid, group, since = luc vao server nay)
+    -- HopFM ghi jv4_res_<group>.json (jobid dang dat cho de nhay toi)
+    -- Ket hop voi Players that trong server de biet helper group khac co o day khong
+    -- ════════════════════════════════════════════════════════════════
+    local PRES_PREFIX = "jv4_pres_"
+    local RES_PREFIX  = "jv4_res_"
+    local PRES_FRESH  = 5     -- presence cu hon 5s = khong con o do
+    local RES_FRESH   = 30    -- dat cho cu hon 30s = het han
+    local _presJob    = nil
+    local _presSince  = 0
+
+    local function wsSanitize(s)
+        return (tostring(s):gsub("[^%w%-_]", "_"))
     end
 
-    -- KIEM TRA TRONG SERVER THAT (Players): co account group khac dang trong server nay khong
-    local function otherGroupInThisServer()
-        local set = getOtherGroupNames()
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= Player and set[p.Name:lower()] then
-                return p.Name
+    local function wsRead(path)
+        local ok, data = pcall(function()
+            if type(isfile) == "function" and isfile(path) then return readfile(path) end
+            return nil
+        end)
+        if not ok or type(data) ~= "string" or data == "" then return nil end
+        local ok2, tbl = pcall(function() return HttpService:JSONDecode(data) end)
+        if ok2 and type(tbl) == "table" then return tbl end
+        return nil
+    end
+
+    local function wsWrite(path, tbl)
+        pcall(function() writefile(path, HttpService:JSONEncode(tbl)) end)
+    end
+
+    -- since = thoi diem vao jobId hien tai (doi jobId thi reset)
+    local function refreshPresence()
+        local j = tostring(game.JobId)
+        if j ~= _presJob then
+            _presJob   = j
+            _presSince = os.time()
+        end
+    end
+
+    local function writePresence()
+        if not isHelper then return end
+        refreshPresence()
+        wsWrite(PRES_PREFIX .. wsSanitize(USERNAME) .. ".json", {
+            user   = USERNAME,
+            group  = tostring(MY_GROUP_NOTE or ""):lower(),
+            role   = isHopFM and "hopfm" or "helper",
+            jobid  = tostring(game.JobId),
+            placeid = tostring(game.PlaceId),
+            since  = _presSince,
+            t      = os.time(),
+        })
+    end
+
+    -- lower(ten helper) -> { name = ten goc trong config, group = note (lowercase) } cho cac group KHAC
+    local function buildOtherHelperMap()
+        local map = {}
+        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
+        for i, hl in ipairs(helperGroups) do
+            if type(hl) == "table" then
+                local note = trim(noteList[i] or ("group" .. i)):lower()
+                if note ~= myNote then
+                    for _, h in ipairs(hl) do
+                        local n = trim(h)
+                        if n ~= "" then map[n:lower()] = { name = n, group = note } end
+                    end
+                end
             end
         end
-        return nil
+        return map
+    end
+
+    -- Helper group khac DANG O trong server nay (Players that + presence + v4info role helper)
+    local function findIntruders()
+        local out = {}
+        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
+        local otherMap = buildOtherHelperMap()
+        local v4 = fetchV4InfoAccounts()
+        local v4lower = {}
+        if type(v4) == "table" then
+            for name, info in pairs(v4) do
+                if type(info) == "table" then v4lower[tostring(name):lower()] = info end
+            end
+        end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= Player then
+                local ln = p.Name:lower()
+                local grp = otherMap[ln] and otherMap[ln].group or nil
+                if not grp then
+                    local info = v4lower[ln]
+                    if info and tostring(info.role or ""):lower() == "helper" then
+                        local g = tostring(info.groupid or ""):lower()
+                        if g ~= "" and g ~= myNote then grp = g end
+                    end
+                end
+                if grp then
+                    local rec = wsRead(PRES_PREFIX .. wsSanitize(p.Name) .. ".json")
+                    local since = nil
+                    if rec and tostring(rec.jobid) == tostring(game.JobId)
+                        and (os.time() - (tonumber(rec.t) or 0)) <= PRES_FRESH then
+                        since = tonumber(rec.since)
+                    end
+                    table.insert(out, { name = p.Name, group = grp, since = since })
+                end
+            end
+        end
+        return out
+    end
+
+    -- Quy tac: group DEN SAU la nguoi vao. Group DEN TRUOC (o san) phai roi.
+    -- Khong biet thoi gian -> tie-break theo ten group (ten lon hon roi) de khong ca 2 deu roi.
+    local function shouldLeave(list)
+        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
+        for _, x in ipairs(list) do
+            if x.since and _presSince and _presSince > 0 then
+                if x.since > _presSince then return true, x end
+                if x.since == _presSince and myNote > x.group then return true, x end
+            else
+                if myNote > x.group then return true, x end
+            end
+        end
+        return false, nil
+    end
+
+    -- Dat cho cua cac group khac (jobid -> { group, user }) con han
+    local function readOtherReservations()
+        local out = {}
+        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
+        local now = os.time()
+        for i, note in ipairs(noteList) do
+            local n = trim(note or ("group" .. i)):lower()
+            if n ~= "" and n ~= myNote then
+                local rec = wsRead(RES_PREFIX .. wsSanitize(n) .. ".json")
+                if rec and tostring(rec.jobid or "") ~= "" and (now - (tonumber(rec.t) or 0)) <= RES_FRESH then
+                    out[tostring(rec.jobid)] = { group = n, user = tostring(rec.user or "") }
+                end
+            end
+        end
+        return out
+    end
+
+    -- Tap server dang bi group khac chiem (presence helper khac + dat cho khac) -> khong nhay vao
+    local function buildBlockedJobs()
+        local blocked = {}
+        local curJob = tostring(game.JobId)
+        for _, info in pairs(buildOtherHelperMap()) do
+            local rec = wsRead(PRES_PREFIX .. wsSanitize(info.name) .. ".json")
+            if rec and tostring(rec.jobid or "") ~= "" and tostring(rec.jobid) ~= curJob
+                and (os.time() - (tonumber(rec.t) or 0)) <= PRES_FRESH then
+                blocked[tostring(rec.jobid)] = "helper " .. info.name .. " (" .. info.group .. ")"
+            end
+        end
+        for jid, r in pairs(readOtherReservations()) do
+            if jid ~= curJob then blocked[jid] = "dat cho " .. r.group end
+        end
+        return blocked
+    end
+
+    local function resPath()
+        return RES_PREFIX .. wsSanitize(tostring(MY_GROUP_NOTE or USERNAME):lower()) .. ".json"
+    end
+
+    local function writeReservation(jid)
+        wsWrite(resPath(), {
+            jobid = tostring(jid), user = USERNAME,
+            group = tostring(MY_GROUP_NOTE or ""):lower(), t = os.time(),
+        })
+    end
+
+    local function clearReservation()
+        wsWrite(resPath(), { jobid = "", user = USERNAME, group = tostring(MY_GROUP_NOTE or ""):lower(), t = 0 })
+    end
+
+    -- Sau khi ghi dat cho: neu group khac cung dat dung server nay thi ten lon hon nhuong
+    local function reservationClash(jid)
+        local myNote = tostring(MY_GROUP_NOTE or ""):lower()
+        local r = readOtherReservations()[tostring(jid)]
+        if r and myNote > r.group then return true, r end
+        return false, r
     end
 
     -- STATUS TEXT
@@ -1975,6 +2121,13 @@ end
         return
     end
 
+    -- PRESENCE: moi helper ghi file jv4_pres_<ten>.json moi giay
+    if isHelper then
+        task.spawn(function()
+            while task.wait(1) do pcall(writePresence) end
+        end)
+    end
+
     -- HELPER: HOP FM LOOP
     if isHelper and isHopFM then
         task.spawn(function()
@@ -2053,212 +2206,129 @@ end
                 return result
             end
 
-            local _intruderWarned = nil
+            local _intrKey    = ""
+            local _blockedAt  = 0
+            local _blockedCache = {}
+
             while task.wait(0.25) do
                 local nowTick = tick()
+                refreshPresence()
 
-                -- Group khac trong server (Players that) -> khong giu server nay, roi di tim server khac
-                local intruder = otherGroupInThisServer()
-                if intruder then
-                    -- CHI reset MOT LAN khi moi phat hien group khac (khong reset moi vong, neu khong se xoa ket qua tim server)
-                    if _intruderWarned ~= intruder then
-                        warn("[JoinV4][HopFM] Co account group khac trong server: " .. intruder .. " -> tim server khac")
-                        _intruderWarned = intruder
+                -- 1) Helper group khac co trong server nay khong, va minh co phai roi khong
+                local intr = findIntruders()
+                local leave, who = shouldLeave(intr)
+
+                if leave then
+                    local key = who.name .. "@" .. tostring(game.JobId)
+                    if _intrKey ~= key then
+                        _intrKey = key
+                        warn("[JoinV4][HopFM] Helper group khac " .. who.name .. " (" .. who.group .. ") vao server -> group minh roi sang FM khac")
+                        writeHopFMJobIdFile("")
+                        clearReservation()
+                        fmJoinedCache[game.JobId] = os.time()
+                        lastFmApiResult = nil
+                        lastHopT = ""
+                    end
+                    setStatus("Group khac vao server (" .. who.name .. ") - tim FM khac")
+                else
+                    _intrKey = ""
+                    if isNight() and isFullMoon() then
+                        -- dang FM va khong bi group khac lan at: giu server, quang ba
+                        writeHopFMJobIdFile(game.JobId)
+                        setStatus("Full Moon - giu server" .. (#intr > 0 and (" | helper khac chi thay: " .. #intr) or ""))
+                        lastHopT = ""
+                        task.wait(1)
+                        continue
+                    end
+                    if isPreFMReady() then
+                        writeHopFMJobIdFile(game.JobId)
+                        local fake = NEAR_MOON_ENABLED and getServerTimeToNight() > NEAR_MOON_MAX_TTN
+                        if not fake then
+                            setStatus("Pre-FM ready - waiting night (" .. getServerTimeToNight() .. "s)...")
+                            task.wait(2)
+                            continue
+                        end
+                        warn("[JoinV4][HopFM] Near Moon fake -> tim server khac")
                         writeHopFMJobIdFile("")
                         fmJoinedCache[game.JobId] = os.time()
-                        lastFmApiResult = nil
-                        lastHopT = ""
-                        setStatus("Group khac trong server (" .. intruder .. ") - tim server khac")
+                        lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
                     end
-                else
-                    _intruderWarned = nil
                 end
 
-                if isNight() and isFullMoon() and not intruder then
-                    local myGroupIdx  = AllHopFMSet[USERNAME] or 999
-                    local conflictWith   = nil
-                    local conflictSource = nil
-
-                    -- Quang ba: ghi jobId ra file de HopFM group khac biet ta dang o day
-                    writeHopFMJobIdFile(game.JobId)
-
-                    if nowTick - lastConflictCheckAt >= SYNC_INTERVAL then
-                        lastConflictCheckAt = nowTick
-                        pcall(function()
-                            local resp = syncToAPI()
-                            takenJobIds = {}
-                            if resp and resp.accounts then
-                                for name, data in pairs(resp.accounts) do
-                                    if AllHopFMSet[name] and name ~= USERNAME
-                                        and AllHopFMSet[name] ~= myGroupIdx then
-                                        local jid = tostring(data.jobid or data.jobId or "")
-                                        if jid ~= "" then
-                                            if jid == game.JobId then
-                                                -- Ca 2 HopFM cung server -> ca 2 deu phai hop di
-                                                conflictWith   = name
-                                                conflictSource = "API"
-                                            else
-                                                takenJobIds[jid] = name
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                            -- API cross-machine: doc /v4info lay jobId HopFM moi group (ca may khac)
-                            if not conflictWith then
-                                local crossHopFMs = fetchCrossGroupHopFMJobIds()
-                                for name, jid in pairs(crossHopFMs) do
-                                    if jid == game.JobId then
-                                        conflictWith   = name
-                                        conflictSource = "API-V4INFO"
-                                        break
-                                    elseif not takenJobIds[jid] then
-                                        takenJobIds[jid] = name
-                                    end
-                                end
-                            end
-                        end)
-
-                        -- File-based: doc cac HopFM group khac de kiem tra conflict
-                        if not conflictWith then
-                            local crossJids = readCrossGroupHopFMJobIds()
-                            for gi, jid in pairs(crossJids) do
-                                if jid == game.JobId then
-                                    -- Conflict phat hien qua file: ca 2 cung o server nay
-                                    conflictWith   = "G" .. gi .. "-HopFM"
-                                    conflictSource = "FILE"
-                                    break
-                                elseif jid ~= "" then
-                                    -- Server khac group dang giu -> danh dau taken
-                                    takenJobIds[jid] = "G" .. gi .. "-HopFM"
-                                end
-                            end
-                        end
-                    end
-
-                    if conflictWith then
-                        warn("[JoinV4][HopFM] Conflict[" .. (conflictSource or "?") .. "] voi "
-                            .. conflictWith .. " cung o " .. game.JobId:sub(1,8)
-                            .. " -> ca 2 phai hop sang FM khac")
-                        writeHopFMJobIdFile("")   -- Xoa claim truoc khi roi server
-                        fmJoinedCache[game.JobId] = os.time()
-                        lastFmApiResult = nil
-                        lastFmApiAt     = 0
-                        lastHopT        = ""
-                        setStatus("Conflict FM[" .. (conflictSource or "?") .. "] - tim server khac...")
-                    else
-                        setStatus("Full Moon - broadcasting...")
-                        lastHopT = ""
-                    end
-                    task.wait(3); continue
-                end
-
-                if isPreFMReady() and not intruder then
-                    -- Ghi file: reserve server nay cho group minh de group khac tranh vao
-                    writeHopFMJobIdFile(game.JobId)
-                    -- Kiem tra timetonight: neu > NEAR_MOON_MAX_TTN (300s) thi la fake moon -> hop di
-                    if NEAR_MOON_ENABLED then
-                        local ttn = getServerTimeToNight()
-                        if ttn > NEAR_MOON_MAX_TTN then
-                            warn("[JoinV4][HopFM] Near Moon fake: timetonight=" .. ttn .. "s > " .. NEAR_MOON_MAX_TTN .. "s -> hop away")
-                            writeHopFMJobIdFile("")   -- Fake moon: xoa reserve, se tim server khac
-                            fmJoinedCache[game.JobId] = os.time()
-                            lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
-                            setStatus("Near Moon fake (" .. ttn .. "s) - tim server khac...")
-                            task.wait(2); continue
-                        end
-                    end
-                    setStatus("Pre-FM ready - waiting night (" .. getServerTimeToNight() .. "s)...")
-                    task.wait(2); continue
-                end
-
+                -- 2) takenJobIds tu API (v4info): jobId cua group khac, cap nhat moi SYNC_INTERVAL
                 if nowTick - lastConflictCheckAt >= SYNC_INTERVAL then
                     lastConflictCheckAt = nowTick
-                    pcall(function()
-                        local resp = syncToAPI()
-                        takenJobIds = {}
-                        if resp and resp.accounts then
-                            for name, data in pairs(resp.accounts) do
-                                if AllHopFMSet[name] and name ~= USERNAME
-                                    and AllHopFMSet[name] ~= AllHopFMSet[USERNAME] then
-                                    local jid = tostring(data.jobid or data.jobId or "")
-                                    if jid ~= "" and jid ~= game.JobId then
-                                        takenJobIds[jid] = name
-                                    end
-                                end
-                            end
-                        end
-                        -- API cross-machine: /v4info -> takenJobIds cho HopFM cac group khac
-                        local crossHopFMs = fetchCrossGroupHopFMJobIds()
-                        for name, jid in pairs(crossHopFMs) do
-                            if jid ~= "" and not takenJobIds[jid] then
-                                takenJobIds[jid] = name .. "[V4INFO]"
-                            end
-                        end
-                    end)
-                    -- File-based: seeking phase - xoa claim va load takenJobIds tu cac group khac
-                    writeHopFMJobIdFile("")   -- Dang seeking: chua giu server nao
-                    local crossJids = readCrossGroupHopFMJobIds()
-                    for gi, jid in pairs(crossJids) do
-                        if jid ~= "" and not takenJobIds[jid] then
-                            takenJobIds[jid] = "G" .. gi .. "-HopFM(file)"
-                        end
-                    end
-                end
-
-                -- Nap server dang co account group khac (/v4info) vao takenJobIds de tim server khac
-                do
+                    takenJobIds = {}
                     local v4all = fetchV4InfoAccounts()
                     local myNoteL = tostring(MY_GROUP_NOTE or ""):lower()
                     if type(v4all) == "table" then
                         for name, info in pairs(v4all) do
-                            local g   = type(info) == "table" and tostring(info.groupid or info.groupId or ""):lower() or ""
-                            local jid = type(info) == "table" and tostring(info.jobid or "") or ""
-                            if g ~= "" and g ~= myNoteL and jid ~= "" and not takenJobIds[jid] then
-                                takenJobIds[jid] = tostring(name) .. "[v4-group " .. g .. "]"
+                            if type(info) == "table" then
+                                local g   = tostring(info.groupid or ""):lower()
+                                local jid = tostring(info.jobid or "")
+                                if g ~= "" and g ~= myNoteL and jid ~= "" and jid ~= tostring(game.JobId) then
+                                    takenJobIds[jid] = tostring(name) .. "[v4 " .. g .. "]"
+                                end
                             end
                         end
                     end
                 end
 
+                -- 3) excl = API + presence helper khac + dat cho khac (moi vong, cuc bo la chinh)
+                local excl = {}
+                for jid, why2 in pairs(takenJobIds) do excl[jid] = why2 end
+                if nowTick - _blockedAt >= 1 then   -- doc file presence/dat cho moi 1s (tranh doc 0.25s/lan)
+                    _blockedAt = nowTick
+                    _blockedCache = buildBlockedJobs()
+                end
+                for jid, why2 in pairs(_blockedCache) do excl[jid] = why2 end
+
+                -- 4) Tim FM server moi (khi phai roi, hoac khong o FM / preFM)
                 if not isFetching and nowTick - lastFmApiAt >= FM_API_INTERVAL then
                     lastFmApiAt = nowTick; isFetching = true
+                    local excludeNow = excl
                     task.spawn(function()
-                        local found = findFMServer(takenJobIds)
-                        -- Fallback cuoi: Near Moon API
+                        local found = findFMServer(excludeNow)
                         if not found and NEAR_MOON_ENABLED then
                             found = findNearMoonServer()
-                            if found then
-                                warn("[JoinV4][HopFM] Dung Near Moon server: " .. found:sub(1,8) .. "...")
-                            end
                         end
-                        if found and takenJobIds[found] then
-                            warn("[JoinV4][HopFM] Server " .. found:sub(1,8) .. "... da bi " .. takenJobIds[found] .. " claim - tim server khac")
-                            lastFmApiResult = nil
-                        else
-                            lastFmApiResult = (found and found ~= game.JobId) and found or nil
-                            if not lastFmApiResult then setStatus("No FM: " .. tostring(getgenv().JoinV4FMFilterStatus or "?")) end
+                        if found and excludeNow[found] then
+                            warn("[JoinV4][HopFM] FM " .. found:sub(1,8) .. " bi giu (" .. tostring(excludeNow[found]) .. ") -> bo qua")
+                            found = nil
+                        end
+                        lastFmApiResult = (found and found ~= game.JobId) and found or nil
+                        if not lastFmApiResult then
+                            setStatus("No FM: " .. tostring(getgenv().JoinV4FMFilterStatus or "?"))
                         end
                         isFetching = false
                     end)
                 end
 
+                -- 5) Nhay sang FM da chon, sau khi dat cho va kiem tra khong trung
                 if lastFmApiResult and lastFmApiResult ~= game.JobId then
                     local hopT = lastFmApiResult
-                    if takenJobIds[hopT] then
-                        warn("[JoinV4][HopFM] Truoc hop phat hien " .. takenJobIds[hopT] .. " dang o server nay - bo qua")
+                    if excl[hopT] then
                         lastFmApiResult = nil; lastHopT = ""
                     elseif hopT ~= lastHopT then
-                        lastHopAt_ = nowTick; lastHopT = hopT
-                        isHopping = true
-                        setStatus("Hop FM: " .. hopT:sub(1,8) .. "...")
-                        writeHopFMJobIdFile("")   -- Xoa claim cu truoc khi teleport sang FM moi
-                        pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
-                        task.spawn(function()
-                            hopTo(hopT, game.PlaceId)
-                            task.wait(12)   -- cho teleport hoan tat (toi da 12s)
-                            isHopping = false
-                        end)
+                        writeReservation(hopT)
+                        task.wait(0.4)   -- cho group khac ghi dat cho
+                        local clash, other = reservationClash(hopT)
+                        if clash then
+                            warn("[JoinV4][HopFM] Trung dat cho FM " .. hopT:sub(1,8) .. " voi " .. tostring(other and other.group) .. " -> nhuong")
+                            clearReservation()
+                            lastFmApiResult = nil; lastHopT = ""
+                        else
+                            lastHopAt_ = tick(); lastHopT = hopT
+                            isHopping = true
+                            setStatus("Hop FM: " .. hopT:sub(1,8) .. "...")
+                            writeHopFMJobIdFile("")
+                            pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
+                            task.spawn(function()
+                                hopTo(hopT, game.PlaceId)
+                                task.wait(12)
+                                isHopping = false
+                            end)
+                        end
                     else
                         if _failedHopJobId == hopT then
                             _failedHopJobId = ""
