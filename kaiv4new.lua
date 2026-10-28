@@ -1127,7 +1127,7 @@ end
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
         local FM_MIN_PLAYERS = 2
-        local FM_MAX_PLAYERS = 6
+        local FM_MAX_PLAYERS = 7
 
         local resp = nil
         local httpMethods = {
