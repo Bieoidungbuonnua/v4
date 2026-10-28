@@ -940,8 +940,8 @@ end
     local CFG = getgenv().JoinV4Config
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "https://apiibf.kurinian-hub.xyz/api/bloxfruit/fullmoon"
-    local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
+    local FM_API_URL      = "http://ember.pikamc.vn:26178/api/servers?type=FullMoon"
+    local NEAR_MOON_API_URL = "http://ember.pikamc.vn:26178/api/servers?type=Near%20Full%20Moon"
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
     local API_BASE        = "http://mbasic7.pikamc.vn:25082"
