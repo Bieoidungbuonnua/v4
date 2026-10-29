@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_0nB2RAnYf1TPA/stream/init"))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Dex-Bear/VxezeHubLoader/refs/heads/main/MainHub.lua"))()
     end)
 end
 
@@ -1085,6 +1085,24 @@ end
         return Lighting:GetAttribute("MoonPhase") == 5
     end
 
+    -- Hết Full Moon: theo moon check, Time To End dem theo ClockTime trong dem (18h-6h).
+    -- Khi con <= FM_END_MARGIN giay (UI bien mat) thi coi nhu da het FM -> tim FM moi.
+    local FM_END_MARGIN = 45
+    local function fmSecondsLeft()
+        local C, D, NE, NS = 24, 1200, 6, 18
+        local n = Lighting.ClockTime
+        local inNight = (n >= NS) or (n < NE)
+        if not inNight then return 0 end
+        local d = n >= NS and ((C - n) + NE) or (NE - n)
+        return math.floor((d / C) * D)
+    end
+    local function fmNowActive()
+        if not isFullMoon() then return false end
+        local n = Lighting.ClockTime
+        if not ((n >= 18) or (n < 6)) then return false end
+        return fmSecondsLeft() > FM_END_MARGIN
+    end
+
     local function isPreFMReady()
         local ok, result = pcall(function()
             local function checkSea(v)
@@ -1127,7 +1145,7 @@ end
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
         local FM_MIN_PLAYERS = 2
-        local FM_MAX_PLAYERS = 7
+        local FM_MAX_PLAYERS = 6
 
         local resp = nil
         local httpMethods = {
@@ -1511,7 +1529,7 @@ end
     end
 
     local function syncToAPI()
-        local hasFM = isNight() and isFullMoon()
+        local hasFM = fmNowActive()
         return httpPost(API_BASE .. "/data", buildPayload(hasFM))
     end
 
@@ -2014,7 +2032,7 @@ end
         if not ScreenGui or not ScreenGui.Parent or not MainCard or not MainCard.Parent then
             pcall(createUI); return
         end
-        local hasFM = isNight() and isFullMoon()
+        local hasFM = fmNowActive()
 
         -- Update Role
         if RolePill then
@@ -2212,7 +2230,7 @@ end
                     setStatus("Group khac vao server (" .. who.name .. ") - tim FM khac")
                 else
                     _intrKey = ""
-                    if isNight() and isFullMoon() then
+                    if fmNowActive() then
                         -- dang FM va khong bi group khac lan at: giu server, quang ba
                         writeHopFMJobIdFile(game.JobId)
                         setStatus("Full Moon - giu server" .. (#intr > 0 and (" | helper khac chi thay: " .. #intr) or ""))
@@ -2220,7 +2238,9 @@ end
                         task.wait(1)
                         continue
                     end
-                    if isPreFMReady() then
+                    -- preFM khong ap dung trong 45s cuoi cua FM (da het FM -> tim FM moi)
+                    local fmEnding = isFullMoon() and fmSecondsLeft() > 0 and fmSecondsLeft() <= FM_END_MARGIN
+                    if isPreFMReady() and not fmEnding then
                         writeHopFMJobIdFile(game.JobId)
                         local fake = NEAR_MOON_ENABLED and getServerTimeToNight() > NEAR_MOON_MAX_TTN
                         if not fake then
@@ -2351,7 +2371,7 @@ end
             while task.wait(SYNC_INTERVAL) do
                 pcall(function()
                     local settling = fmHopPending and tick() < fmPendingCheckAt
-                    local hasFM = isNight() and isFullMoon()
+                    local hasFM = fmNowActive()
 
                     -- LUON gui sync, ke ca luc settling, de HopFM khong bi server xoa khoi accounts
                     local resp = syncToAPI()
