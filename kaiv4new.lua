@@ -257,7 +257,7 @@ do
     end
 
     task.spawn(function()
-        loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_0nB2RAnYf1TPA/stream/init"))()
+        loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_TPPmq0qWYeA1r/stream/init"))()
     end)
 end
 
