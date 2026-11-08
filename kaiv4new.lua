@@ -1035,7 +1035,6 @@ end
     local fmJoinedCache   = {}
     local FM_CACHE_EXPIRE = 180
     local HOP_STARTUP     = tick()
-    local isOverloadedServer = false
     local fmHopPending    = false
     local fmPendingCheckAt = 0
     local _failedHopJobId = ""
@@ -1531,7 +1530,7 @@ end
     end
 
     local function syncToAPI()
-        local hasFM = fmNowActive() and not isOverloadedServer
+        local hasFM = fmNowActive()
         return httpPost(API_BASE .. "/data", buildPayload(hasFM))
     end
 
@@ -2214,27 +2213,11 @@ end
                 local nowTick = tick()
                 refreshPresence()
 
-                -- Kiem tra so luong player trong 10 giay dau: neu > 9 player thi tu dong hop qua API
-                if (nowTick - HOP_STARTUP) <= 10 then
-                    local pCount = #Players:GetPlayers()
-                    if pCount > 9 and not isOverloadedServer then
-                        isOverloadedServer = true
-                        lastFmApiAt = 0
-                        fmJoinedCache[game.JobId] = os.time()
-                        writeHopFMJobIdFile("")
-                        clearReservation()
-                        lastFmApiResult = nil
-                        lastHopT = ""
-                    end
-                end
-
                 -- 1) Helper group khac co trong server nay khong, va minh co phai roi khong
                 local intr = findIntruders()
                 local leave, who = shouldLeave(intr)
 
-                if isOverloadedServer then
-                    setStatus(string.format("Server dong (%d/12 player) - hop qua API...", #Players:GetPlayers()))
-                elseif leave then
+                if leave then
                     local key = who.name .. "@" .. tostring(game.JobId)
                     if _intrKey ~= key then
                         _intrKey = key
@@ -2401,11 +2384,7 @@ end
                     fmHopPending = false
 
                     if isHopFM then
-                        if isOverloadedServer then
-                            setStatus(string.format("Server dong (%d/12 player) - hop qua API...", #Players:GetPlayers()))
-                        else
-                            setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
-                        end
+                        setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
                         return
                     end
 
