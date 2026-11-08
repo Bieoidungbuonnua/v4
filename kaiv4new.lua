@@ -1035,6 +1035,7 @@ end
     local fmJoinedCache   = {}
     local FM_CACHE_EXPIRE = 180
     local HOP_STARTUP     = tick()
+    local isOverloadedServer = false
     local fmHopPending    = false
     local fmPendingCheckAt = 0
     local _failedHopJobId = ""
@@ -1146,7 +1147,7 @@ end
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
         local FM_MIN_PLAYERS = 2
-        local FM_MAX_PLAYERS = 7
+        local FM_MAX_PLAYERS = 8
 
         local resp = nil
         local httpMethods = {
@@ -1530,7 +1531,7 @@ end
     end
 
     local function syncToAPI()
-        local hasFM = fmNowActive()
+        local hasFM = fmNowActive() and not isOverloadedServer
         return httpPost(API_BASE .. "/data", buildPayload(hasFM))
     end
 
@@ -2213,11 +2214,27 @@ end
                 local nowTick = tick()
                 refreshPresence()
 
+                -- Kiem tra so luong player trong 10 giay dau: neu > 9 player thi tu dong hop qua API
+                if (nowTick - HOP_STARTUP) <= 10 then
+                    local pCount = #Players:GetPlayers()
+                    if pCount > 9 and not isOverloadedServer then
+                        isOverloadedServer = true
+                        lastFmApiAt = 0
+                        fmJoinedCache[game.JobId] = os.time()
+                        writeHopFMJobIdFile("")
+                        clearReservation()
+                        lastFmApiResult = nil
+                        lastHopT = ""
+                    end
+                end
+
                 -- 1) Helper group khac co trong server nay khong, va minh co phai roi khong
                 local intr = findIntruders()
                 local leave, who = shouldLeave(intr)
 
-                if leave then
+                if isOverloadedServer then
+                    setStatus(string.format("Server dong (%d/12 player) - hop qua API...", #Players:GetPlayers()))
+                elseif leave then
                     local key = who.name .. "@" .. tostring(game.JobId)
                     if _intrKey ~= key then
                         _intrKey = key
@@ -2384,7 +2401,11 @@ end
                     fmHopPending = false
 
                     if isHopFM then
-                        setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
+                        if isOverloadedServer then
+                            setStatus(string.format("Server dong (%d/12 player) - hop qua API...", #Players:GetPlayers()))
+                        else
+                            setStatus(hasFM and "FM active - broadcast jobId" or "Waiting Full Moon...")
+                        end
                         return
                     end
 
