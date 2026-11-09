@@ -1,35 +1,3 @@
-if not game:IsLoaded() then
-    pcall(function() game.Loaded:Wait() end)
-end
-
-local _Players_init = game:GetService("Players")
-local _LP_init = _Players_init.LocalPlayer
-while not _LP_init do
-    task.wait(0.1)
-    _LP_init = _Players_init.LocalPlayer
-end
-
-pcall(function()
-    if not _LP_init:FindFirstChild("DataLoaded") then
-        _LP_init:WaitForChild("DataLoaded", 15)
-    end
-end)
-
--- ══════════════════════════════════════════════════════════════════
--- CẤU HÌNH DÙNG CHUNG (Tất cả 3 script tự động nhận từ JoinV4Config)
--- ══════════════════════════════════════════════════════════════════
-local _DEFAULT_CFG = {
-    ["Key-Banana"]        = "31d4bebb966b95e8bd94d7a6",
-    ["Helper"]            = {
-        {"Cart3rRid3rDrag0n", "penel0peScott1"},
-    },
-    ["Note"]              = {"trietautov4"},
-    ["LimitMainPerGroup"] = 10,   -- tối đa main được vào mỗi group
-}
-
-if not getgenv().JoinV4Config or type(getgenv().JoinV4Config) ~= "table" then
-    getgenv().JoinV4Config = _DEFAULT_CFG
-else
     for k, v in pairs(_DEFAULT_CFG) do
         if getgenv().JoinV4Config[k] == nil then
             getgenv().JoinV4Config[k] = v
@@ -94,3 +62,99 @@ do
             ["http://www.roblox.com/asset/?id=9709149680"]="0/8",
         })[t] or "nil"
     end)
+    getgenv().CheckMoon = CheckMoon
+
+    local CheckMoonPhase = newcclosure(function()
+        local m = game.Lighting:GetAttribute("MoonPhase")
+        if not m then return "Unknown","Unknown Phase",nil end
+        if m > 5 then return "Fake Moon","Fake Moon",m
+        elseif m < 5 then return "Bad Moon","Bad Moon",m
+        elseif m == 5 and not getgenv().isfmended then return "Full Moon","Full Moon Up",m
+        elseif m == 5 and getgenv().isfmended then return "Ended","Full Moon End",m end
+    end)
+    getgenv().CheckMoonPhase = CheckMoonPhase
+
+    local function S2T(s)
+        if s < 0 then s = 0 end
+        return string.format("%dm %ds",math.floor(s/60),s%60)
+    end
+    local C, D, NS, NE = 24, 1200, 18, 6
+    local function IsNight(c) return (c >= NS) or (c < NE) end
+    local function ToStart()
+        local n = game.Lighting.ClockTime
+        if IsNight(n) then return 0 end
+        local d = n < NS and (NS-n) or 0
+        return math.floor((d/C)*D)
+    end
+    local function ToEnd()
+        local n = game.Lighting.ClockTime
+        if not IsNight(n) then return 0 end
+        local d = n >= NS and ((C-n)+NE) or (NE-n)
+        return math.floor((d/C)*D)
+    end
+    local function HMS(c)
+        local h = math.floor(c)
+        local m = math.floor((c-h)*60)
+        local s = math.floor(((c-h)*60-m)*60)
+        return string.format("%02d:%02d:%02d",h,m,s)
+    end
+
+    local function CreateGUI()
+        local pg = L:FindFirstChildOfClass("PlayerGui") or L:WaitForChild("PlayerGui", 10)
+        if not pg then return nil, nil end
+        local g = pg:FindFirstChild("MoonStatusGUI")
+        if g then g:Destroy() end
+        g = Instance.new("ScreenGui")
+        g.Name = "MoonStatusGUI"
+        g.ResetOnSpawn = false
+        g.IgnoreGuiInset = true
+        g.DisplayOrder = 999999999
+        g.ZIndexBehavior = Enum.ZIndexBehavior.Global
+        g.Enabled = false
+        g.Parent = pg
+        local l = Instance.new("TextLabel")
+        l.Name = "MainLabel"
+        l.Size = UDim2.new(0,600,0,130)
+        l.Position = UDim2.new(0.5,-300,0.5,-65)
+        l.BackgroundTransparency = 1
+        l.Font = Enum.Font.GothamBold
+        l.TextSize = 20
+        l.TextColor3 = Color3.fromRGB(255,255,255)
+        l.TextWrapped = true
+        l.TextStrokeTransparency = 0.3
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        l.TextYAlignment = Enum.TextYAlignment.Top
+        l.ZIndex = 2147483647
+        l.RichText = true
+        l.Parent = g
+        return g,l
+    end
+
+    local G, Lb = CreateGUI()
+
+    local function Upd()
+        if not G or not G.Parent or not Lb or not Lb.Parent then
+            G, Lb = CreateGUI()
+            if not G then return end
+        end
+        local ms = CheckMoon()
+        local ps,_,pv = CheckMoonPhase()
+        local ct = game.Lighting.ClockTime
+        local ts = ToStart()
+        local te = ToEnd()
+        local tsStr, teStr = S2T(ts), S2T(te)
+        local pc = #P:GetPlayers()
+        local isFull = (ms == "8/8" and ps == "Full Moon")
+        local show = isFull and (ts > 0 or te > 0)
+        G.Enabled = show
+        if not show then return end
+        local function T(t,r)
+            return string.format('<font color="rgb(%d,%d,%d)">%s</font>',r.R*255,r.G*255,r.B*255,t)
+        end
+        local tc = isFull and Color3.fromRGB(255,215,0) or Color3.fromRGB(255,100,100)
+        local kc = Color3.fromRGB(100,200,255)
+        local vc = Color3.fromRGB(255,255,255)
+        local sc = Color3.fromRGB(0,255,150)
+        local pc2 = ps=="Full Moon" and Color3.fromRGB(0,255,150) or Color3.fromRGB(255,100,100)
+        Lb.Text = string.format(
+            "%s\n%s %s\n%s %s\n%s %s\n%s %s [Time: %s]\n%s %s",
