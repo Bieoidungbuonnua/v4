@@ -1,3 +1,2 @@
-getgenv().Key = "31d4bebb966b95e8bd94d7a6" 
-getgenv().__BANANA_SCRIPT_ROUTE = "bf_main"
-return loadstring(game:HttpGet("https://banana-hub.xyz/loader/banana.lua"))()
+getgenv().Custom = true
+loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_05VKL1nyK8FCt/stream/init"))()
