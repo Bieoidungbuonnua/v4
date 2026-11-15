@@ -941,7 +941,7 @@ end
     local CFG = getgenv().JoinV4Config
 
     -- API / TIMING CONSTANTS
-    local FM_API_URL      = "http://162.4.177.49:8080/jobid/fullmoon/300"
+    local FM_API_URL      = "https://baorph.pythonanywhere.com/token?api_key=baorapi&token=F4DVHq6GH-oqeOs2FnvSPp3Od-grzilS&key=fullmoon"
     local NEAR_MOON_API_URL = "http://162.4.177.49:8080/jobid/nearmoon/gay"
     local NEAR_MOON_ENABLED = CFG["Hop Near Moon"] == true
     local NEAR_MOON_MAX_TTN = 300   -- neu timetonight > 300s thi hop di (fake moon)
@@ -1138,16 +1138,18 @@ end
         return ok and result == true
     end
 
-    -- FIND FM SERVER (API 162.4.177.49 /jobid/fullmoon/300)
-    -- JSON: { Amount, data: [ { name, Jobid, place_id, players = "cur/max" } ] }
-    -- Loc: place_id = placeId hien tai, 2-6 player hien tai, name chua "fullmoon", khong phai minh,
-    -- khong nam trong excluded (group khac / dat cho), khong bi cache
+    -- FIND FM SERVER (BaorPH API /token?api_key=...&key=fullmoon)
+    -- JSON: {ok=true, count=N, items={"job id: UUID; type: fulllmoon; player: N; placeid: ID; age: 4m 58s; age_s: 298", ...}}
+    -- Loc: dung game.PlaceId, fullmoon/fulllmoon, 2-8 player, age_s tu 0 den 300 giay (5 phut).
+    -- Giu nguyen excluded, fmJoinedCache va uu tien server it player nhat nhu script goc.
     local function findFMServer(excluded)
         if not FM_API_URL or FM_API_URL == "" then return nil end
 
-        local FM_MIN_PLAYERS = 2
-        local FM_MAX_PLAYERS = 8
+        local FM_MIN_PLAYERS   = 2
+        local FM_MAX_PLAYERS   = 8
+        local FM_MAX_AGE_S     = 300
 
+        -- Giu nguyen cac HTTP request method cua script goc.
         local resp = nil
         local httpMethods = {
             function(u) if type(syn) == "table" and type(syn.request) == "function" then return syn.request({Url=u,Method="GET"}) end end,
@@ -1165,56 +1167,111 @@ end
             end
         end
         if not resp then
-            getgenv().JoinV4FMFilterStatus = "API 162 khong phan hoi"
+            getgenv().JoinV4FMFilterStatus = "BaorPH FM API khong phan hoi"
             return nil
         end
         if resp.StatusCode ~= 200 then
-            getgenv().JoinV4FMFilterStatus = "API 162 HTTP " .. tostring(resp.StatusCode)
+            getgenv().JoinV4FMFilterStatus = "BaorPH FM API HTTP " .. tostring(resp.StatusCode)
             return nil
         end
 
         local ok2, parsed = pcall(function() return HttpService:JSONDecode(resp.Body) end)
         if not ok2 or type(parsed) ~= "table" then
-            getgenv().JoinV4FMFilterStatus = "API 162 sai format JSON"
+            getgenv().JoinV4FMFilterStatus = "BaorPH FM API JSON khong hop le"
+            return nil
+        end
+        if parsed.ok == false then
+            getgenv().JoinV4FMFilterStatus = "BaorPH FM API tra ve ok=false"
             return nil
         end
 
-        local entries = parsed.data
+        -- API moi: `items` la MANG CHUOI, khong phai `data` la mang object.
+        local entries = parsed.items
         if type(entries) ~= "table" or #entries == 0 then
-            getgenv().JoinV4FMFilterStatus = "API 162 data rong"
+            getgenv().JoinV4FMFilterStatus = "BaorPH FM API items rong/sai format"
             return nil
         end
 
         local candidates = {}
-        local fmCount = 0
-        for _, v in ipairs(entries) do
-            if type(v) == "table" then
-                local jid     = tostring(v.Jobid or v.jobid or v.JobId or "")
-                local placeId = v.place_id or v.placeid or v.PlaceID or v.placeId
-                local pRaw    = v.players or v.Players or v.PlayerCount
-                local players = tonumber(pRaw)
-                if type(pRaw) == "string" then
-                    players = tonumber(pRaw:match("^(%d+)%s*/") or pRaw)
+        local fmCount, placeCount, playersCount, ageCount = 0, 0, 0, 0
+
+        for _, rawItem in ipairs(entries) do
+            if type(rawItem) == "string" then
+                -- Parse tung truong theo dau `;` va `:`; khong phu thuoc thu tu.
+                local fields = {}
+                for item in rawItem:gmatch("[^;]+") do
+                    local fieldName, value = item:match("^%s*([^:]+):%s*(.-)%s*$")
+                    if fieldName and value then
+                        fieldName = fieldName:lower():gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+                        fields[fieldName] = value
+                    end
                 end
-                local moonName = tostring(v.name or v.moon or ""):lower():gsub("%s+", "")
-                if moonName:find("fullmoon", 1, true) then fmCount = fmCount + 1 end
-                if jid ~= "" and jid ~= tostring(game.JobId)
-                    and not (excluded and excluded[jid])
-                    and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE)
-                    and placeId and tonumber(placeId) == tonumber(game.PlaceId)
-                    and moonName:find("fullmoon", 1, true)
-                    and players and players >= FM_MIN_PLAYERS and players <= FM_MAX_PLAYERS then
-                    table.insert(candidates, {jobId = jid, players = players})
+
+                local jid      = tostring(fields["job id"] or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                local moonType = tostring(fields["type"] or ""):lower():gsub("%s+", "")
+                local placeId  = tonumber(fields["placeid"])
+                local players  = tonumber(fields["player"])
+                local ageS     = tonumber(fields["age_s"])
+
+                -- age_s duoc uu tien; neu thieu thi thu quy doi age ("4m 58s", "58s", "4m").
+                -- Neu ca hai khong doc duoc thi BO QUA, khong hop khi chua biet tuoi moon.
+                if not ageS then
+                    local ageText = tostring(fields["age"] or ""):lower()
+                    local minutes, seconds = ageText:match("^(%d+)%s*m%s*(%d+)%s*s$")
+                    if minutes and seconds then
+                        ageS = tonumber(minutes) * 60 + tonumber(seconds)
+                    else
+                        local onlySeconds = ageText:match("^(%d+)%s*s$")
+                        local onlyMinutes = ageText:match("^(%d+)%s*m$")
+                        if onlySeconds then
+                            ageS = tonumber(onlySeconds)
+                        elseif onlyMinutes then
+                            ageS = tonumber(onlyMinutes) * 60
+                        end
+                    end
+                end
+
+                -- API ghi "fulllmoon" (3 chu l); chap nhan ca "fullmoon" de tuong thich.
+                if moonType == "fulllmoon" or moonType == "fullmoon" then
+                    fmCount = fmCount + 1
+                    if placeId and placeId == tonumber(game.PlaceId) then
+                        placeCount = placeCount + 1
+                        if players and players >= FM_MIN_PLAYERS and players <= FM_MAX_PLAYERS
+                            and players % 1 == 0 then
+                            playersCount = playersCount + 1
+                            if ageS and ageS >= 0 and ageS <= FM_MAX_AGE_S then
+                                ageCount = ageCount + 1
+                                if jid ~= "" and jid ~= tostring(game.JobId)
+                                    and not (excluded and excluded[jid])
+                                    and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE) then
+                                    table.insert(candidates, {jobId = jid, players = players, ageS = ageS})
+                                end
+                            end
+                        end
+                    end
                 end
             end
         end
 
         if #candidates == 0 then
-            getgenv().JoinV4FMFilterStatus = "API 162 co " .. #entries .. " server (" .. fmCount .. " FM), khong co 2-6p cung placeid " .. tostring(game.PlaceId)
+            getgenv().JoinV4FMFilterStatus = string.format(
+                "BaorPH FM: %d items, %d moon, %d cung place, %d (2-8p), %d (<=300s), 0 hop",
+                #entries, fmCount, placeCount, playersCount, ageCount
+            )
             return nil
         end
-        getgenv().JoinV4FMFilterStatus = "API 162 ok"
-        table.sort(candidates, function(a, b) return a.players < b.players end)
+
+        -- Uu tien it player nhu cu; neu bang nhau, chon moon tre hon.
+        table.sort(candidates, function(a, b)
+            if a.players == b.players then
+                if a.ageS == b.ageS then return a.jobId < b.jobId end
+                return a.ageS < b.ageS
+            end
+            return a.players < b.players
+        end)
+        getgenv().JoinV4FMFilterStatus = string.format(
+            "BaorPH FM OK: %d/%d hop duoc (2-8p, age<=300s)", #candidates, #entries
+        )
         return candidates[1].jobId
     end
 
