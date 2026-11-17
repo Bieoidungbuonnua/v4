@@ -258,7 +258,7 @@ do
 
     task.spawn(function()
         getgenv().Custom = true
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/deo.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/ccc.lua"))()
     end)
 end
 
@@ -1010,6 +1010,11 @@ end
     local isHopFM  = AllHopFMSet[USERNAME]  ~= nil   -- là slot[1] của group nào đó
     local isMain   = not isHelper
 
+    -- Slot [1] là HopFM; slot [2] là helper G1 mà HopFM cần chờ.
+    local MY_G1_NAME = trim(MY_GROUP_HELPERS[2] or "")
+    -- HopFM chỉ broadcast Full Moon sau khi đã xác minh population thực tế.
+    local hopFMServerValidated = not isHopFM
+
     -- GROUP_ID
     local GROUP_ID = isHelper and (MY_GROUP_NOTE or trim(noteList[1] or "joinv4")) or ""
     local myAssignedGroupId = ""  -- main: được cập nhật từ resp.group.id sau sync đầu tiên
@@ -1032,6 +1037,7 @@ end
     local currentStatus   = "Starting..."
     local lastFmApiAt     = 0
     local lastFmApiResult = nil
+    local lastFmApiExpectedPlayers = nil -- chỉ là số API báo, không dùng thay population thực tế
     local fmJoinedCache   = {}
     local FM_CACHE_EXPIRE = 180
     local HOP_STARTUP     = tick()
@@ -1243,6 +1249,8 @@ end
                                 ageCount = ageCount + 1
                                 if jid ~= "" and jid ~= tostring(game.JobId)
                                     and not (excluded and excluded[jid])
+                                    and not (getgenv().JoinV4RejectedHopJobs and getgenv().JoinV4RejectedHopJobs[jid]
+                                        and (os.time() - getgenv().JoinV4RejectedHopJobs[jid]) < 1800)
                                     and not (fmJoinedCache[jid] and (os.time() - fmJoinedCache[jid]) < FM_CACHE_EXPIRE) then
                                     table.insert(candidates, {jobId = jid, players = players, ageS = ageS})
                                 end
@@ -1272,7 +1280,7 @@ end
         getgenv().JoinV4FMFilterStatus = string.format(
             "BaorPH FM OK: %d/%d hop duoc (2-8p, age<=300s)", #candidates, #entries
         )
-        return candidates[1].jobId
+        return candidates[1].jobId, candidates[1].players
     end
 
     -- FIND NEAR MOON SERVER (API khong co timetonight, chi loc player + placeId)
@@ -1390,6 +1398,7 @@ end
             getgenv().JoinV4RejectedHopJobs[failedJobId] = os.time()
             if lastFmApiResult == failedJobId then
                 lastFmApiResult = nil
+                lastFmApiExpectedPlayers = nil
             end
             lastFmApiAt = 0
             getgenv().JoinV4LastHopAttempt = nil
@@ -1548,6 +1557,17 @@ end
             end
         end
 
+        -- Không cho helper/main follow HopFM trong lúc HopFM còn đang xác minh
+        -- số player sau teleport; tránh cả nhóm đuổi theo một JobId đã quá đông.
+        local hopFMValidatingActiveMoon = isHopFM and fmNowActive() and not hopFMServerValidated
+        if hopFMValidatingActiveMoon then
+            hasFM = false
+        end
+        local nearFM = isPreFMReady()
+        if hopFMValidatingActiveMoon then
+            nearFM = false
+        end
+
         local isTrain = _v4Cache.needsTraining == true
         local isBuy   = _v4Cache.needsPurchase == true
         local isTrial = _v4Cache.canTrial      == true
@@ -1569,9 +1589,9 @@ end
             jobId         = tostring(game.JobId),
             placeId       = tostring(game.PlaceId),
             fullMoon      = hasFM,
-            nearFM        = isPreFMReady(),
+            nearFM        = nearFM,
             fullmoon      = hasFM,
-            nearfm        = isPreFMReady(),
+            nearfm        = nearFM,
             jobid         = tostring(game.JobId),
             status        = syncStatus,
             ready         = hasFM,
@@ -2195,6 +2215,14 @@ end
             local isHopping  = false   -- guard: khong retry khi dang teleport
             local lastConflictCheckAt = 0
 
+            -- Xác minh population sau khi vừa vào JobId mới.
+            -- Chờ vài giây để Players list ổn định, rồi tiếp tục theo dõi khi chờ G1.
+            local populationJobId = tostring(game.JobId)
+            local populationSettleUntil = tick() + 5
+            local overflowJobId = ""
+            local mustFindFullMoon = false
+            local g1Name = MY_G1_NAME
+
             -- ══════════════════════════════════════════════════════════════
             -- Cross-group HopFM conflict detection (file-based, cung may)
             -- Moi HopFM ghi jobId ra file. Group khac doc de tranh trung server.
@@ -2270,6 +2298,20 @@ end
                 local nowTick = tick()
                 refreshPresence()
 
+                -- Nếu script vẫn sống qua teleport, reset bộ đếm theo JobId mới.
+                local liveJobId = tostring(game.JobId)
+                if liveJobId ~= populationJobId then
+                    populationJobId = liveJobId
+                    populationSettleUntil = tick() + 5
+                    overflowJobId = ""
+                    mustFindFullMoon = false
+                    hopFMServerValidated = false
+                    lastFmApiResult = nil
+                    lastFmApiExpectedPlayers = nil
+                    lastHopT = ""
+                    isHopping = false
+                end
+
                 -- 1) Helper group khac co trong server nay khong, va minh co phai roi khong
                 local intr = findIntruders()
                 local leave, who = shouldLeave(intr)
@@ -2283,22 +2325,72 @@ end
                         clearReservation()
                         fmJoinedCache[game.JobId] = os.time()
                         lastFmApiResult = nil
+                        lastFmApiExpectedPlayers = nil
                         lastHopT = ""
                     end
                     setStatus("Group khac vao server (" .. who.name .. ") - tim FM khac")
                 else
                     _intrKey = ""
+                    local populationOverflow = false
                     if fmNowActive() then
-                        -- dang FM va khong bi group khac lan at: giu server, quang ba
-                        writeHopFMJobIdFile(game.JobId)
-                        setStatus("Full Moon - giu server" .. (#intr > 0 and (" | helper khac chi thay: " .. #intr) or ""))
-                        lastHopT = ""
-                        task.wait(1)
-                        continue
+                        local actualPlayers = #Players:GetPlayers()
+                        local g1Joined = g1Name ~= "" and Players:FindFirstChild(g1Name) ~= nil
+
+                        -- Đếm population thực tế tại server hiện tại; không dùng số API
+                        -- làm kết luận vì slot có thể bị người khác chiếm trước khi mình vào.
+                        -- Ưu tiên G1 đã vào để không tự rời ngay khi G1 vừa chiếm slot thứ 10.
+                        if g1Joined then
+                            mustFindFullMoon = false
+                            hopFMServerValidated = true
+                            writeHopFMJobIdFile(game.JobId)
+                            setStatus("G1 joined | FM " .. actualPlayers .. "/12 - keep server")
+                            lastHopT = ""
+                            task.wait(1)
+                            continue
+                        elseif actualPlayers >= 10 then
+                            mustFindFullMoon = true
+                            -- 10..12 (hoặc cao hơn do dữ liệu bất thường): server quá đông,
+                            -- bỏ JobId này và tìm Full Moon khác qua API ngay.
+                            populationOverflow = true
+                            hopFMServerValidated = false
+                            if overflowJobId ~= liveJobId then
+                                overflowJobId = liveJobId
+                                fmJoinedCache[liveJobId] = os.time()
+                                getgenv().JoinV4RejectedHopJobs[liveJobId] = os.time()
+                                writeHopFMJobIdFile("")
+                                clearReservation()
+                                lastFmApiResult = nil
+                                lastFmApiExpectedPlayers = nil
+                                lastFmApiAt = 0
+                                lastHopT = ""
+                                warn("[JoinV4][HopFM] Server overcrowded (" .. actualPlayers .. "/12), reject " .. liveJobId:sub(1,8) .. " -> find another FM")
+                            end
+                            setStatus("FM " .. actualPlayers .. "/12 - too many players, hopping another")
+                        elseif tick() < populationSettleUntil then
+                            -- Nếu mới thấy 1..9 player thì đợi ngắn để danh sách ổn định;
+                            -- vòng tiếp theo vẫn đếm lại, tránh tin snapshot đầu tiên.
+                            hopFMServerValidated = false
+                            setStatus("FM joined - verifying players (" .. actualPlayers .. ")...")
+                            task.wait(1)
+                            continue
+                        else
+                            -- 1..9 ổn định: giữ server chờ helper G1. Nếu population tăng
+                            -- lên 10+ trước khi G1 tới, vòng kế tiếp sẽ chuyển sang overflow.
+                            mustFindFullMoon = false
+                            hopFMServerValidated = true
+                            writeHopFMJobIdFile(liveJobId)
+                            local waitingName = g1Name ~= "" and g1Name or "G1 (not configured)"
+                            setStatus("FM " .. actualPlayers .. "/12 - waiting " .. waitingName)
+                            lastHopT = ""
+                            task.wait(1)
+                            continue
+                        end
+                    else
+                        hopFMServerValidated = false
                     end
                     -- preFM khong ap dung trong 45s cuoi cua FM (da het FM -> tim FM moi)
                     local fmEnding = isFullMoon() and fmSecondsLeft() > 0 and fmSecondsLeft() <= FM_END_MARGIN
-                    if isPreFMReady() and not fmEnding then
+                    if not populationOverflow and isPreFMReady() and not fmEnding then
                         writeHopFMJobIdFile(game.JobId)
                         local fake = NEAR_MOON_ENABLED and getServerTimeToNight() > NEAR_MOON_MAX_TTN
                         if not fake then
@@ -2309,7 +2401,7 @@ end
                         warn("[JoinV4][HopFM] Near Moon fake -> tim server khac")
                         writeHopFMJobIdFile("")
                         fmJoinedCache[game.JobId] = os.time()
-                        lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
+                        lastFmApiResult = nil; lastFmApiExpectedPlayers = nil; lastFmApiAt = 0; lastHopT = ""
                     end
                 end
 
@@ -2345,16 +2437,21 @@ end
                 if not isFetching and nowTick - lastFmApiAt >= FM_API_INTERVAL then
                     lastFmApiAt = nowTick; isFetching = true
                     local excludeNow = excl
+                    local fullMoonOnly = mustFindFullMoon
                     task.spawn(function()
-                        local found = findFMServer(excludeNow)
-                        if not found and NEAR_MOON_ENABLED then
+                        local found, expectedPlayers = findFMServer(excludeNow)
+                        -- Khi server FM vừa join bị quá đông, chỉ được chuyển sang FM
+                        -- khác; không fallback sang NearMoon trong nhánh này.
+                        if not found and NEAR_MOON_ENABLED and not fullMoonOnly then
                             found = findNearMoonServer()
+                            expectedPlayers = nil
                         end
                         if found and excludeNow[found] then
                             warn("[JoinV4][HopFM] FM " .. found:sub(1,8) .. " bi giu (" .. tostring(excludeNow[found]) .. ") -> bo qua")
                             found = nil
                         end
                         lastFmApiResult = (found and found ~= game.JobId) and found or nil
+                        lastFmApiExpectedPlayers = lastFmApiResult and tonumber(expectedPlayers) or nil
                         if not lastFmApiResult then
                             setStatus("No FM: " .. tostring(getgenv().JoinV4FMFilterStatus or "?"))
                         end
@@ -2366,7 +2463,7 @@ end
                 if lastFmApiResult and lastFmApiResult ~= game.JobId then
                     local hopT = lastFmApiResult
                     if excl[hopT] then
-                        lastFmApiResult = nil; lastHopT = ""
+                        lastFmApiResult = nil; lastFmApiExpectedPlayers = nil; lastHopT = ""
                     elseif hopT ~= lastHopT then
                         writeReservation(hopT)
                         task.wait(0.4)   -- cho group khac ghi dat cho
@@ -2374,11 +2471,12 @@ end
                         if clash then
                             warn("[JoinV4][HopFM] Trung dat cho FM " .. hopT:sub(1,8) .. " voi " .. tostring(other and other.group) .. " -> nhuong")
                             clearReservation()
-                            lastFmApiResult = nil; lastHopT = ""
+                            lastFmApiResult = nil; lastFmApiExpectedPlayers = nil; lastHopT = ""
                         else
                             lastHopAt_ = tick(); lastHopT = hopT
                             isHopping = true
-                            setStatus("Hop FM: " .. hopT:sub(1,8) .. "...")
+                            setStatus("Hop FM: " .. hopT:sub(1,8)
+                                .. (lastFmApiExpectedPlayers and (" (API " .. lastFmApiExpectedPlayers .. "p)") or "") .. "...")
                             writeHopFMJobIdFile("")
                             pcall(function() writefile("jv4_fmhop_pending.txt", "true") end)
                             task.spawn(function()
@@ -2391,15 +2489,16 @@ end
                         if _failedHopJobId == hopT then
                             _failedHopJobId = ""
                             isHopping = false
-                            lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
+                            lastFmApiResult = nil; lastFmApiExpectedPlayers = nil; lastFmApiAt = 0; lastHopT = ""
                         elseif isHopping then
                             setStatus("Teleporting to " .. hopT:sub(1,8) .. "...")
                         else
                             local el = nowTick - lastHopAt_
                             if el >= 10 then
                                 setStatus("Hop timeout - try next server")
-                                fmJoinedCache[hopT] = os.time() - (FM_CACHE_EXPIRE - 60)
-                                lastFmApiResult = nil; lastFmApiAt = 0; lastHopT = ""
+                                fmJoinedCache[hopT] = os.time()
+                                getgenv().JoinV4RejectedHopJobs[hopT] = os.time()
+                                lastFmApiResult = nil; lastFmApiExpectedPlayers = nil; lastFmApiAt = 0; lastHopT = ""
                             else
                                 setStatus("Waiting teleport " .. hopT:sub(1,8) .. " (" .. math.floor(el) .. "s)...")
                             end
