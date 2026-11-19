@@ -258,7 +258,7 @@ do
 
     task.spawn(function()
         getgenv().Custom = true
-loadstring(game:HttpGet("https://vxezestudio.online/api/scripts/script_05VKL1nyK8FCt/stream/init"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Bieoidungbuonnua/v4/refs/heads/main/ccc.lua"))()
     end)
 end
 
